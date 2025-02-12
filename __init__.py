@@ -16,6 +16,9 @@ from safetensors.torch import save_file, load_file
 import comfy.utils
 from typing import Dict, List 
 
+import argparse # <--- ADDED argparse import HERE
+
+from . import flux_merge_lora_sa  # Import flux_merge_lora_sa.py as a module
 
 from nodes import NODE_CLASS_MAPPINGS as GLOBAL_NODE_CLASS_MAPPINGS
 from .nodes import (
@@ -397,42 +400,33 @@ class MergeFluxLoRAsQuantizeAndLoad:
     FUNCTION = "load_and_quantize"
     CATEGORY = "loaders"
 
-    def merge_flux_loras(self, model_sd: dict, lora_paths: list, weights: list, device="cuda") -> dict:
-        for lora_path, weight in zip(lora_paths, weights):
-            logging.info(f"[DEBUG] Merging LoRA file: {lora_path} with weight: {weight}")
-            lora_sd = load_file(lora_path, device=device)
-            for key in list(lora_sd.keys()):
-                if "lora_down" not in key:
-                    continue
-                base_name = key[: key.rfind(".lora_down")]
-                up_key = key.replace("lora_down", "lora_up")
-                module_name = base_name.replace("_", ".")
-                alpha_key = f"{base_name}.alpha"
-                if module_name not in model_sd:
-                    logging.info(f"[DEBUG] Module {module_name} not found in model_sd; skipping key {key}")
-                    continue
-                down_weight = lora_sd[key].float()
-                up_weight = lora_sd[up_key].float()
-                alpha = float(lora_sd.get(alpha_key, up_weight.shape[0]))
-                scale = weight * alpha / up_weight.shape[0]
-                logging.info(f"[DEBUG] Merging module: {module_name} with alpha: {alpha}, scale: {scale}")
-                target_weight = model_sd[module_name]
-                if len(target_weight.shape) == 2:
-                    update = (up_weight @ down_weight) * scale
-                else:
-                    if down_weight.shape[2:4] == (1, 1):
-                        update = (up_weight.squeeze(3).squeeze(2) @ down_weight.squeeze(3).squeeze(2))
-                        update = update.unsqueeze(2).unsqueeze(3) * scale
-                    else:
-                        update = torch.nn.functional.conv2d(
-                            down_weight.permute(1, 0, 2, 3), up_weight
-                        ).permute(1, 0, 2, 3) * scale
-                model_sd[module_name] = target_weight + update.to(target_weight.dtype)
-                logging.info(f"[DEBUG] Updated module: {module_name}")
-                del up_weight, down_weight, update
-            del lora_sd
-            torch.cuda.empty_cache()
-        return model_sd
+    def merge_flux_loras(self, model_path: str, lora_paths: list, weights: list, device="cuda") -> str:
+        import argparse
+        import flux_merge_lora_sa
+        import os
+
+        merge_args = argparse.Namespace(
+            flux_model=model_path,
+            save_to="./flux1-lora-merged.safetensors",
+            models=lora_paths,
+            ratios=weights,
+            save_precision="fp16",
+            precision="float",
+            clip_l=None,
+            t5xxl=None,
+            mem_eff_load_save=True,
+            mem_eff_save=True,
+            loading_device=device,
+            working_device=device,
+            clip_l_save_to=None,
+            t5xxl_save_to=None,
+            no_metadata=False,
+            concat=False,
+            shuffle=False,
+            diffusers=False
+        )
+        flux_merge_lora_sa.merge(merge_args)
+        return os.path.join(os.path.dirname(os.path.abspath(__file__)), "./flux1-lora-merged.safetenors")
 
     def convert_to_gguf(self, model_path, working_dir):
         base_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -462,18 +456,45 @@ class MergeFluxLoRAsQuantizeAndLoad:
                 else:
                     logging.info(f"[DEBUG] Slot {i} is inactive")
             logging.info(f"[DEBUG] Total active LoRAs: {len(lora_list)}")
+
             if lora_list:
-                model_sd = load_file(model_path, device="cuda")
-                model_sd = self.merge_flux_loras(
-                    model_sd,
-                    [lp for lp, _ in lora_list],
-                    [w for _, w in lora_list]
+                logging.info("[DEBUG] Calling flux_merge_lora_sa.merge function directly...") # Indicate direct function call
+                # Create the argparse.Namespace object - include ALL arguments and DEFAULTS
+                merge_args = argparse.Namespace(
+                    save_precision="fp16", # User-defined save precision
+                    precision="float", # Default merge precision (float32)
+                    flux_model=model_path,
+                    clip_l=None, # Default None
+                    t5xxl=None, # Default None
+                    mem_eff_load_save=True, # User-defined
+                    loading_device="cpu", # User-defined
+                    working_device="cpu", # User-defined
+                    save_to=merged_model_path,
+                    clip_l_save_to=None, # Default None
+                    t5xxl_save_to=None, # Default None
+                    models=[lp for lp, _ in lora_list],
+                    ratios=[w for _, w in lora_list],
+                    no_metadata=False, # Default False
+                    concat=False, # Default False
+                    shuffle=False, # Default False
+                    diffusers=False, # Default False
                 )
-                save_file(model_sd, merged_model_path)
-                del model_sd
-                torch.cuda.empty_cache()
+
+                # --- START DEBUG LOGGING of args object BEFORE calling merge ---
+                logging.info("--- Args object BEFORE calling flux_merge_lora_sa.merge ---")
+                logging.info(merge_args) # Log the args object being passed
+                logging.info("--- Args object DEBUG END ---")
+                # --- END DEBUG LOGGING ---
+
+                # Directly call the merge function from flux_merge_lora_sa module
+                flux_merge_lora_sa.merge(merge_args) # Pass the constructed args object
+                logging.info("[DEBUG] flux_merge_lora_sa.merge function call completed.") # Confirm function call completion
+                logging.info(f"[DEBUG] Merged model saved to path: {merged_model_path}") # Log merged model path
+
             else:
-                shutil.copy2(model_path, merged_model_path)
+                merged_model_path = model_path # No LoRAs, use base model path directly
+                logging.info(f"[DEBUG] No LoRAs, using base model path directly: {merged_model_path}")
+
             initial_gguf = self.convert_to_gguf(merged_model_path, merge_dir)
             logging.info("[DEBUG] Initial GGUF file created.")
             if quantization == "FP16":
