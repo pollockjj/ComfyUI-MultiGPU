@@ -1,6 +1,9 @@
 import os
 import torch
 import folder_paths
+import comfy.model_detection
+import comfy.utils
+import gguf
 from pathlib import Path
 from nodes import NODE_CLASS_MAPPINGS
 
@@ -474,3 +477,119 @@ class DownloadAndLoadHyVideoTextEncoder:
         from nodes import NODE_CLASS_MAPPINGS
         original_loader = NODE_CLASS_MAPPINGS["DownloadAndLoadHyVideoTextEncoder"]()
         return original_loader.loadmodel(llm_model, clip_model, precision, apply_final_norm, hidden_state_skip_layer, quantization)
+    
+class ConverterFP16GGUF:
+    QUANTIZATION_THRESHOLD = 1024
+    REARRANGE_THRESHOLD = 512
+    MAX_TENSOR_NAME_LENGTH = 127
+    BLACKLIST = {"time_embedding.", "add_embedding.", "time_in.", "txt_in.", "vector_in.", "img_in.", "guidance_in.","final_layer.",}
+
+    def __init__(self):
+        self.output_dir = folder_paths.get_output_directory()
+
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "safetensors_model": (s.get_diffusion_models_list(),),
+            }
+        }
+
+    RETURN_TYPES = ()
+    OUTPUT_NODE = True
+    CATEGORY = "multigpu"
+    FUNCTION = "execute"
+
+    @classmethod
+    def get_diffusion_models_list(s, folder_name="diffusion_models"):
+        files = folder_paths.get_filename_list(folder_name)
+        return sorted(files)
+
+    def convert_to_fp16_gguf(self, safetensors_model):
+        safetensors_path = folder_paths.get_full_path("diffusion_models", safetensors_model)
+        base_filename = os.path.basename(os.path.splitext(safetensors_model)[0])
+        output_name = f"{base_filename}-FP16"
+        output_path = os.path.join(self.output_dir, f"{output_name}.gguf")
+
+        try:
+            state_dict = self.load_state_dict(safetensors_path)
+            model_config, architecture_name = self.detect_architecture(state_dict)
+
+            writer = gguf.GGUFWriter(path=None, arch=architecture_name)
+            writer.add_quantization_version(gguf.GGML_QUANT_VERSION)
+            writer.add_file_type(gguf.LlamaFileType.MOSTLY_F16)
+
+            self.handle_tensors(writer, state_dict, output_path)
+
+            writer.write_header_to_file(path=output_path)
+            writer.write_kv_data_to_file()
+            writer.write_tensors_to_file()
+            writer.close()
+
+            return output_path
+
+        except Exception as e:
+            return None
+
+    def load_state_dict(self, path):
+        state_dict = comfy.utils.load_torch_file(path, safe_load=True)
+        diffusion_model_prefix = comfy.model_detection.unet_prefix_from_state_dict(state_dict)
+        temp_sd = comfy.utils.state_dict_prefix_replace(state_dict, {diffusion_model_prefix: ""}, filter_keys=True)
+        if len(temp_sd) > 0:
+            state_dict = temp_sd
+        return state_dict
+
+    def detect_architecture(self, state_dict):
+        model_config = comfy.model_detection.model_config_from_unet(state_dict, "")
+        
+        if model_config is None:
+            raise ValueError("ComfyUI could not detect model architecture.")
+
+        architecture_name = type(model_config).__name__
+        return model_config, architecture_name
+
+    def handle_tensors(self, writer, state_dict, output_path):
+        name_lengths = tuple(sorted(((key, len(key)) for key in state_dict.keys()), key=lambda item: item[1], reverse=True))
+        if not name_lengths:
+            return
+        max_name_len = name_lengths[0][1]
+        if max_name_len > self.MAX_TENSOR_NAME_LENGTH:
+            bad_list = ', '.join(f'{key!r} ({namelen})' for key, namelen in name_lengths if namelen > self.MAX_TENSOR_NAME_LENGTH)
+            raise ValueError(f'Can only handle tensor names up to {self.MAX_TENSOR_NAME_LENGTH} characters. Tensors exceeding the limit: {bad_list}')
+            
+        for key, data in state_dict.items():
+            old_dtype = data.dtype
+            if data.dtype == torch.bfloat16:
+                data = data.to(torch.float32).numpy()
+            elif data.dtype in [getattr(torch, 'float8_e4m3fn', '_invalid'), getattr(torch, 'float8_e5m2', '_invalid')]:
+                data = data.to(torch.float16).numpy()
+            else:
+                data = data.numpy()
+            
+            n_dims = len(data.shape)
+            data_shape = data.shape
+            data_qtype = getattr(gguf.GGMLQuantizationType, 'BF16' if old_dtype == torch.bfloat16 else 'F16')
+            
+            n_params = 1
+            for dim_size in data_shape:
+                n_params *= dim_size
+                
+            if old_dtype in (torch.float32, torch.bfloat16):
+                if n_dims == 1:
+                    data_qtype = gguf.GGMLQuantizationType.F32
+                elif n_params <= self.QUANTIZATION_THRESHOLD:
+                    data_qtype = gguf.GGMLQuantizationType.F32
+                elif '.weight' in key and any(x in key for x in self.BLACKLIST):
+                    data_qtype = gguf.GGMLQuantizationType.F32
+                    
+            try:
+                data = gguf.quants.quantize(data, data_qtype)
+            except (AttributeError, gguf.QuantError):
+                data_qtype = gguf.GGMLQuantizationType.F16
+                data = gguf.quants.quantize(data, data_qtype)
+                
+            writer.add_tensor(key, data, raw_dtype=data_qtype)
+
+    def execute(self, safetensors_model):
+        self.convert_to_fp16_gguf(safetensors_model)
+        return ()
