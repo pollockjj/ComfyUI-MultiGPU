@@ -579,6 +579,20 @@ if check_module_exists("ComfyUI-MMAudio") or check_module_exists("comfyui-mmaudi
     NODE_CLASS_MAPPINGS["MMAudioSamplerMultiGPU"] = override_class(MMAudioSampler)
 
 if check_module_exists("ComfyUI-GGUF") or check_module_exists("comfyui-gguf"):
+    # Monkey patch get_weight
+    import importlib
+    from .ggml_weight_utils import get_weight as enhanced_get_weight
+    
+    # Get the ops module and patch it
+    ops_module = importlib.import_module("custom_nodes.ComfyUI-GGUF.ops")
+    ops_module.get_weight_util = enhanced_get_weight
+    
+    # Log that we've patched the function
+    logging.info("="*50)
+    logging.info("MultiGPU: GGUF get_weight monkey patching active")
+    logging.info("MultiGPU: Using ping-pong buffer implementation for tensor caching")
+    logging.info("="*50)
+    
     NODE_CLASS_MAPPINGS["UnetLoaderGGUFMultiGPU"] = override_class(UnetLoaderGGUF)
     NODE_CLASS_MAPPINGS["UnetLoaderGGUFDisTorchMultiGPU"] = override_class_with_distorch(UnetLoaderGGUF)
     NODE_CLASS_MAPPINGS["UnetLoaderGGUFAdvancedMultiGPU"] = override_class(UnetLoaderGGUFAdvanced)
