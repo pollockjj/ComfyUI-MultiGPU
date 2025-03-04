@@ -5,6 +5,9 @@ import numpy as np
 from collections import deque
 import importlib
 import sys
+import torch.cuda.nvtx as nvtx 
+
+cache_config = {'use_tensor_cache': False}
 
 # Import from ComfyUI-GGUF
 gguf_module = importlib.import_module('custom_nodes.ComfyUI-GGUF.dequant')
@@ -40,8 +43,13 @@ use_level_zero_cache = False
 total_tensors_processed = 0
 tensor_printed = False
 
+# Create dedicated streams for each device
 cuda0_stream = torch.cuda.Stream(device="cuda:0")
 cuda1_stream = torch.cuda.Stream(device="cuda:1")
+
+# Setup events for cross-device synchronization
+cuda0_event = torch.cuda.Event(enable_timing=False)
+cuda1_event = torch.cuda.Event(enable_timing=False)
 
 def move_patch_to_device(item, device):
     if "cuda:0" in str(device):
@@ -50,7 +58,6 @@ def move_patch_to_device(item, device):
         stream = cuda1_stream
     else:
         stream = None
-
     if isinstance(item, torch.Tensor):
         if stream is not None:
             with torch.cuda.stream(stream):
@@ -73,139 +80,102 @@ def retrieve_cached_patch(patches_item, device, key):
     return patch
 
 def prefetch_next_batch():
-    """Prefetch the next batch of tensors into the inactive buffer"""
     global active_buffer_index, prefetch_buffers, next_batch_to_prefetch
-    
-    # Determine which buffer to fill
     inactive_buffer = 1 - active_buffer_index
-    
-    # Skip if nothing to prefetch
     if not next_batch_to_prefetch[inactive_buffer]:
         return
-        
-    # Clear the inactive buffer
     prefetch_buffers[inactive_buffer].clear()
-    
-    # Fill the inactive buffer
     with torch.cuda.stream(cuda0_stream):
         for tensor_ptr in next_batch_to_prefetch[inactive_buffer]:
             if tensor_ptr in cached_tensor_map and 'level_two_cache_location' in cached_tensor_map[tensor_ptr]:
-                # Get tensor from cuda:1
                 tensor = cached_tensor_map[tensor_ptr]['level_two_cache_location']()
                 if tensor is not None:
-                    # Transfer to cuda:0
                     prefetch_buffers[inactive_buffer][tensor_ptr] = tensor.clone().to("cuda:0", non_blocking=True)
-    
-    # Clear the batch list for next time
     next_batch_to_prefetch[inactive_buffer] = []
-
+@profile
 def get_weight(tensor, dtype, dequant_dtype=None, patch_dtype=None):
-    global cached_tensor_map, cached_tensors, level_zero_tensors
-    global active_buffer_index, prefetch_buffers, prefetch_batch_size, current_tensor_in_batch, next_batch_to_prefetch
-    global total_tensors_processed, tensor_printed
-    
-    # Debug output on first call only
+    global total_tensors_processed, active_buffer_index, current_tensor_in_batch, next_batch_to_prefetch
+    nvtx.range_push("get_weight entry")
+    if not cache_config["use_tensor_cache"]:
+        nvtx.range_push("patch-transfer branch")
+        if tensor is None:
+            nvtx.range_pop()  # end patch-transfer branch
+            nvtx.range_pop()  # end get_weight entry
+            return None
+        patch_list = []
+        d = tensor.device
+        for func, item, key in getattr(tensor, "patches", []):
+            patch_list += retrieve_cached_patch(item, d, key)
+        w = dequantize_tensor(tensor, dtype, dequant_dtype)
+        if GGMLTensor is not None and isinstance(w, GGMLTensor):
+            w.__class__ = torch.Tensor
+        if patch_list:
+            w = func(patch_list, w, key) if patch_dtype is None else func(patch_list, w, key, dtype if patch_dtype=="target" else patch_dtype)
+            total_tensors_processed += 1
+        nvtx.range_pop()  # end patch-transfer branch
+        nvtx.range_pop()  # end get_weight entry
+        return w
+
+    # Full ping-pong caching branch (dynamically evaluated each call)
     if not hasattr(get_weight, "_first_call_logged"):
         print("\n" + "="*80)
-        print("MultiGPU: Enhanced get_weight with ping-pong buffer is active")
-        print(f"MultiGPU: Using prefetch batch size of {prefetch_batch_size}")
-        print("="*80 + "\n")
+        print("MultiGPU: Full tensor caching is ENABLED")
+        print(f"Using prefetch batch size of {prefetch_batch_size}")
+        print("="*80+"\n")
         get_weight._first_call_logged = True
-    
     if tensor is None:
+        nvtx.range_pop()
         return None
-    
-    ggml_tensor_ptr = tensor.data_ptr()
-
-    # Check for Level 0 cache (permanent)
-    if ggml_tensor_ptr in cached_tensor_map and 'level_zero_cache_location' in cached_tensor_map[ggml_tensor_ptr]:
-        return cached_tensor_map[ggml_tensor_ptr]['level_zero_cache_location']
-    
-    # Check active prefetch buffer
-    active_buffer = prefetch_buffers[active_buffer_index]
-    if ggml_tensor_ptr in active_buffer:
-        # Found in active buffer
+    ptr = tensor.data_ptr()
+    if ptr in cached_tensor_map and "level_zero_cache_location" in cached_tensor_map[ptr]:
+        nvtx.range_pop(); nvtx.range_pop()
+        return cached_tensor_map[ptr]["level_zero_cache_location"]
+    buf = prefetch_buffers[active_buffer_index]
+    if ptr in buf:
         current_tensor_in_batch += 1
-        
-        # If we've used 2/3 of the active buffer, start filling the inactive one
         if current_tensor_in_batch == prefetch_batch_size // 2:
-            # Start prefetching into inactive buffer
             prefetch_next_batch()
-        
-        # If we've used all tensors in active buffer, swap buffers
         if current_tensor_in_batch >= prefetch_batch_size:
-            # Wait for prefetch to complete
             torch.cuda.synchronize("cuda:0")
-            
-            # Swap active buffer
             active_buffer_index = 1 - active_buffer_index
             current_tensor_in_batch = 0
-        
-        return active_buffer[ggml_tensor_ptr]
-    
-    # Not in prefetch, check Level 2 cache (cuda:1)
-    if ggml_tensor_ptr in cached_tensor_map and 'level_two_cache_location' in cached_tensor_map[ggml_tensor_ptr]:
+        nvtx.range_pop(); nvtx.range_pop()
+        return buf[ptr]
+    if ptr in cached_tensor_map and "level_two_cache_location" in cached_tensor_map[ptr]:
         with torch.cuda.stream(cuda1_stream):
-            weight = cached_tensor_map[ggml_tensor_ptr]['level_two_cache_location']().clone()
-            
-        # Add to the appropriate next batch to prefetch
-        inactive_buffer = 1 - active_buffer_index
-        if len(next_batch_to_prefetch[inactive_buffer]) < prefetch_batch_size:
-            next_batch_to_prefetch[inactive_buffer].append(ggml_tensor_ptr)
-        
-        return weight
-
-    # Not in any cache, process normally
+            w = cached_tensor_map[ptr]["level_two_cache_location"]().clone()
+        ib = 1 - active_buffer_index
+        if len(next_batch_to_prefetch[ib]) < prefetch_batch_size:
+            next_batch_to_prefetch[ib].append(ptr)
+        nvtx.range_pop(); nvtx.range_pop()
+        return w
     patch_list = []
-    device = tensor.device
-    patches_data = getattr(tensor, "patches", [])
-    for function, patches_item, key in patches_data:
-        patch_result = retrieve_cached_patch(patches_item, device, key)
-        patch_list += patch_result
-
-    weight = dequantize_tensor(tensor, dtype, dequant_dtype)
-    if GGMLTensor is not None and isinstance(weight, GGMLTensor):
-        weight.__class__ = torch.Tensor
-    
-    # Process patches if any
+    d = tensor.device
+    for func, item, key in getattr(tensor, "patches", []):
+        patch_list += retrieve_cached_patch(item, d, key)
+    w = dequantize_tensor(tensor, dtype, dequant_dtype)
+    if GGMLTensor is not None and isinstance(w, GGMLTensor):
+        w.__class__ = torch.Tensor
     if patch_list:
-        # Apply patches
-        if patch_dtype is None:
-            weight = function(patch_list, weight, key)
-        else:
-            computed_patch_dtype = dtype if patch_dtype == "target" else patch_dtype
-            weight = function(patch_list, weight, key, computed_patch_dtype)
-        
-        # Count tensors processed
+        w = func(patch_list, w, key) if patch_dtype is None else func(patch_list, w, key, dtype if patch_dtype=="target" else patch_dtype)
         total_tensors_processed += 1
-
-    # Add to appropriate cache
-    if ggml_tensor_ptr % 5 == 0 and use_level_zero_cache:
-        # Level 0 cache - direct on cuda:0
+    if ptr % 5 == 0 and use_level_zero_cache:
         with torch.cuda.stream(cuda0_stream):
-            level0_tensor = weight.clone().to("cuda:0", non_blocking=True)
-        
-        level_zero_tensors.append(level0_tensor)
-        
-        if ggml_tensor_ptr not in cached_tensor_map:
-            cached_tensor_map[ggml_tensor_ptr] = {}
-        
-        cached_tensor_map[ggml_tensor_ptr]['level_zero_cache_location'] = level0_tensor
+            l0 = w.clone().to("cuda:0", non_blocking=True)
+        level_zero_tensors.append(l0)
+        if ptr not in cached_tensor_map:
+            cached_tensor_map[ptr] = {}
+        cached_tensor_map[ptr]["level_zero_cache_location"] = l0
     else:
-        # Level 2 cache - on cuda:1
         with torch.cuda.stream(cuda1_stream):
-            level2_tensor = weight.clone().to("cuda:1", non_blocking=True)
-        
-        cached_tensors.append(level2_tensor)
-        
-        if ggml_tensor_ptr not in cached_tensor_map:
-            cached_tensor_map[ggml_tensor_ptr] = {}
-        
-        cached_tensor_map[ggml_tensor_ptr]['level_two_cache_location'] = weakref.ref(level2_tensor)
-        
-        # Add to next batch to prefetch
-        inactive_buffer = 1 - active_buffer_index
-        if len(next_batch_to_prefetch[inactive_buffer]) < prefetch_batch_size:
-            next_batch_to_prefetch[inactive_buffer].append(ggml_tensor_ptr)
-    
-    return weight
+            l2 = w.clone().to("cuda:1", non_blocking=True)
+        cached_tensors.append(l2)
+        if ptr not in cached_tensor_map:
+            cached_tensor_map[ptr] = {}
+        cached_tensor_map[ptr]["level_two_cache_location"] = weakref.ref(l2)
+        ib = 1 - active_buffer_index
+        if len(next_batch_to_prefetch[ib]) < prefetch_batch_size:
+            next_batch_to_prefetch[ib].append(ptr)
+    nvtx.range_pop()  # end full caching branch
+    nvtx.range_pop()  # end get_weight entry
+    return w

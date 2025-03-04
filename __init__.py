@@ -15,6 +15,8 @@ import gc
 from safetensors.torch import save_file, load_file
 import comfy.utils
 from typing import Dict, List 
+from .ggml_weight_utils import cache_config
+
 
 
 from nodes import NODE_CLASS_MAPPINGS as GLOBAL_NODE_CLASS_MAPPINGS
@@ -436,53 +438,46 @@ def override_class_with_distorch(cls):
             inputs["optional"]["device"] = (devices, {"default": default_device})
             inputs["optional"]["virtual_vram_gb"] = ("FLOAT", {"default": 4.0, "min": 0.0, "max": 24.0, "step": 0.1})
             inputs["optional"]["use_other_vram"] = ("BOOLEAN", {"default": False})
-            inputs["optional"]["expert_mode_allocations"] = ("STRING", {
-                "multiline": False, 
-                "default": "",
-                "tooltip": "Expert use only: Manual VRAM allocation string. Incorrect values can cause crashes. Do not modify unless you fully understand DisTorch memory management."
-            })
+            inputs["optional"]["expert_mode_allocations"] = ("STRING", {"multiline": False, "default": "", "tooltip": "Manual VRAM allocation string."})
+            inputs["optional"]["tensor_cache"] = ("BOOLEAN", {"default": False})
             return inputs
 
         CATEGORY = "multigpu"
         FUNCTION = "override"
-
-        def override(self, *args, device=None, expert_mode_allocations=None, use_other_vram=None, virtual_vram_gb=0.0, **kwargs):
+        def override(self, *args, device=None, expert_mode_allocations=None, use_other_vram=None, virtual_vram_gb=0.0, tensor_cache=False, **kwargs):
             global current_device
             if device is not None:
                 current_device = device
-            
-            # Patch both the model patcher and the get_weight function
+            # Update the global flag dynamically
+            cache_config["use_tensor_cache"] = tensor_cache
             register_patched_ggufmodelpatcher()
-            register_patched_gguf_get_weight()  # Add our get_weight patching
-            
+            register_patched_gguf_get_weight()  # This patch now always reads cache_config at runtime
             fn = getattr(super(), cls.FUNCTION)
             out = fn(*args, **kwargs)
-
             vram_string = ""
             if virtual_vram_gb > 0:
                 if use_other_vram:
-                    available_devices = [d for d in get_device_list() if d.startswith('cuda')]
+                    available_devices = [d for d in get_device_list() if d.startswith("cuda")]
                     other_devices = [d for d in available_devices if d != device]
-                    other_devices.sort(key=lambda x: int(x.split(':')[1] if ':' in x else x[-1]), reverse=False)
-                    device_string = ','.join(other_devices + ['cpu'])
+                    other_devices.sort(key=lambda x: int(x.split(":")[1] if ":" in x else x[-1]))
+                    device_string = ",".join(other_devices + ["cpu"])
                     vram_string = f"{device};{virtual_vram_gb};{device_string}"
                 else:
                     vram_string = f"{device};{virtual_vram_gb};cpu"
-
             full_allocation = f"{expert_mode_allocations}#{vram_string}" if expert_mode_allocations or vram_string else ""
-            
             logging.info(f"[DisTorch] Full allocation string: {full_allocation}")
-            
-            if hasattr(out[0], 'model'):
+            if hasattr(out[0], "model"):
                 model_hash = create_model_hash(out[0], "override")
                 model_allocation_store[model_hash] = full_allocation
-            elif hasattr(out[0], 'patcher') and hasattr(out[0].patcher, 'model'):
+            elif hasattr(out[0], "patcher") and hasattr(out[0].patcher, "model"):
                 model_hash = create_model_hash(out[0].patcher, "override")
                 model_allocation_store[model_hash] = full_allocation
-
             return out
-
     return NodeOverrideDisTorch
+
+
+
+
 
 def override_class_with_distorch_clip(cls):
     class NodeOverrideDisTorch(cls):
