@@ -3,12 +3,22 @@ import time
 import weakref
 import numpy as np
 from collections import deque
-from .dequant import dequantize_tensor
+import importlib
+import sys
 
+# Import from ComfyUI-GGUF
+gguf_module = importlib.import_module('custom_nodes.ComfyUI-GGUF.dequant')
+dequantize_tensor = gguf_module.dequantize_tensor
+is_quantized = gguf_module.is_quantized
+
+# Import GGMLTensor from ComfyUI-GGUF ops
 try:
-    from .ggml_tensor import GGMLTensor
-except ImportError:
+    ops_module = importlib.import_module('custom_nodes.ComfyUI-GGUF.ops')
+    GGMLTensor = ops_module.GGMLTensor
+    move_patch_to_device_original = ops_module.move_patch_to_device
+except (ImportError, AttributeError):
     GGMLTensor = None
+    move_patch_to_device_original = None
 
 patch_cache = {}
 
