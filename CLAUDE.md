@@ -83,15 +83,41 @@ cache_config = {'use_tensor_cache': False}
 cache_config["use_tensor_cache"] = tensor_cache
 ```
 
+## Implementation Plan
+
+### Phase 1: Basic Linear Pipeline
+Our first step is to implement a simple, linear pipeline that:
+1. Loads initial GGML tensors on cuda:0 (no change from current behavior)
+2. Transfers tensors to cuda:1
+3. Performs dequantization on cuda:1
+4. Applies patches (LoRA) on cuda:1
+5. Transfers processed tensors back to cuda:0 for inference
+6. Returns the fully processed weight
+
+This simple approach establishes the foundation without complex buffering or synchronization. It may not be optimally efficient yet, but it verifies the core concept of offloading work to cuda:1.
+
+### Phase 2: Advanced Pipeline (Future)
+Once the basic pipeline is proven, we'll enhance it with:
+- Ping-pong buffer system for async operation
+- 30-layer chunking for efficient memory use
+- Minimized synchronization points
+- Optimized memory transfers
+
 ## Implementation Checklist
 
+### Phase 1 (Current Focus)
 - [x] Add tensor caching configuration
 - [x] Add NVTX profiling markers
 - [x] Implement basic ping-pong buffer system
-- [ ] Optimize `get_weight` to offload processing to cuda:1
+- [ ] Create basic linear pipeline:
+  - [ ] Move GGML tensor to cuda:1
+  - [ ] Dequantize on cuda:1
+  - [ ] Apply patches on cuda:1
+  - [ ] Transfer result back to cuda:0
+
+### Phase 2 (Future)
+- [ ] Optimize `get_weight` with buffering
 - [ ] Implement 30-layer chunking mechanism
-- [ ] Ensure LoRA patches are applied on cuda:1
-- [ ] Add buffer management for fully processed tensors
 - [ ] Minimize synchronization points
 - [ ] Add telemetry for performance monitoring
 
