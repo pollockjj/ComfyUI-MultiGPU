@@ -625,6 +625,14 @@ def register_patched_gguf_get_weight():
     return False
 
 if check_module_exists("ComfyUI-GGUF") or check_module_exists("comfyui-gguf"):
+    # Monkey patch get_weight
+    import importlib
+    from .ggml_weight_utils import get_weight as enhanced_get_weight
+    
+    # Get the ops module and patch it
+    ops_module = importlib.import_module("custom_nodes.ComfyUI-GGUF.ops")
+    ops_module.get_weight_util = enhanced_get_weight
+    
     NODE_CLASS_MAPPINGS["UnetLoaderGGUFMultiGPU"] = override_class(UnetLoaderGGUF)
     NODE_CLASS_MAPPINGS["UnetLoaderGGUFDisTorchMultiGPU"] = override_class_with_distorch(UnetLoaderGGUF)
     NODE_CLASS_MAPPINGS["UnetLoaderGGUFAdvancedMultiGPU"] = override_class(UnetLoaderGGUFAdvanced)
