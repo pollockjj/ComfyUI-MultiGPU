@@ -440,16 +440,18 @@ def override_class_with_distorch(cls):
             inputs["optional"]["use_other_vram"] = ("BOOLEAN", {"default": False})
             inputs["optional"]["expert_mode_allocations"] = ("STRING", {"multiline": False, "default": "", "tooltip": "Manual VRAM allocation string."})
             inputs["optional"]["tensor_cache"] = ("BOOLEAN", {"default": False})
+            inputs["optional"]["use_cuda1_processing"] = ("BOOLEAN", {"default": True, "tooltip": "Process tensors on CUDA:1 before returning to CUDA:0"})
             return inputs
 
         CATEGORY = "multigpu"
         FUNCTION = "override"
-        def override(self, *args, device=None, expert_mode_allocations=None, use_other_vram=None, virtual_vram_gb=0.0, tensor_cache=False, **kwargs):
+        def override(self, *args, device=None, expert_mode_allocations=None, use_other_vram=None, virtual_vram_gb=0.0, tensor_cache=False, use_cuda1_processing=True, **kwargs):
             global current_device
             if device is not None:
                 current_device = device
-            # Update the global flag dynamically
+            # Update the global flags dynamically
             cache_config["use_tensor_cache"] = tensor_cache
+            cache_config["use_cuda1_processing"] = use_cuda1_processing
             register_patched_ggufmodelpatcher()
             register_patched_gguf_get_weight()  # This patch now always reads cache_config at runtime
             fn = getattr(super(), cls.FUNCTION)

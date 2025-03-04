@@ -109,11 +109,12 @@ Once the basic pipeline is proven, we'll enhance it with:
 - [x] Add tensor caching configuration
 - [x] Add NVTX profiling markers
 - [x] Implement basic ping-pong buffer system
-- [ ] Create basic linear pipeline:
-  - [ ] Move GGML tensor to cuda:1
-  - [ ] Dequantize on cuda:1
-  - [ ] Apply patches on cuda:1
-  - [ ] Transfer result back to cuda:0
+- [x] Create basic linear pipeline:
+  - [x] Move GGML tensor to cuda:1
+  - [x] Dequantize on cuda:1
+  - [x] Apply patches on cuda:1
+  - [x] Transfer result back to cuda:0
+- [x] Add UI option to toggle cuda:1 processing
 
 ### Phase 2 (Future)
 - [ ] Optimize `get_weight` with buffering
