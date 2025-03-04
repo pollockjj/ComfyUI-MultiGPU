@@ -451,7 +451,10 @@ def override_class_with_distorch(cls):
             if device is not None:
                 current_device = device
             
+            # Patch both the model patcher and the get_weight function
             register_patched_ggufmodelpatcher()
+            register_patched_gguf_get_weight()  # Add our get_weight patching
+            
             fn = getattr(super(), cls.FUNCTION)
             out = fn(*args, **kwargs)
 
@@ -507,7 +510,10 @@ def override_class_with_distorch_clip(cls):
             if device is not None:
                 current_text_encoder_device = device
             
+            # Patch both the model patcher and the get_weight function
             register_patched_ggufmodelpatcher()
+            register_patched_gguf_get_weight()  # Add our get_weight patching
+            
             fn = getattr(super(), cls.FUNCTION)
             out = fn(*args, **kwargs)
 
@@ -578,21 +584,47 @@ if check_module_exists("ComfyUI-MMAudio") or check_module_exists("comfyui-mmaudi
     NODE_CLASS_MAPPINGS["MMAudioFeatureUtilsLoaderMultiGPU"] = override_class(MMAudioFeatureUtilsLoader)
     NODE_CLASS_MAPPINGS["MMAudioSamplerMultiGPU"] = override_class(MMAudioSampler)
 
-if check_module_exists("ComfyUI-GGUF") or check_module_exists("comfyui-gguf"):
-    # Monkey patch get_weight
-    import importlib
+# Follow the established pattern for patching GGUF functionality
+def register_patched_gguf_get_weight():
+    """
+    Register our enhanced get_weight function to replace the original in GGUF.
+    This is called when a user loads a GGUF model through our nodes.
+    """
+    # Import needed modules
+    from nodes import NODE_CLASS_MAPPINGS
+    original_loader = NODE_CLASS_MAPPINGS["UnetLoaderGGUF"]
+    module = sys.modules[original_loader.__module__]
+    
+    # Import our enhanced get_weight
     from .ggml_weight_utils import get_weight as enhanced_get_weight
     
-    # Get the ops module and patch it
-    ops_module = importlib.import_module("custom_nodes.ComfyUI-GGUF.ops")
-    ops_module.get_weight_util = enhanced_get_weight
+    # Find the ops module
+    gguf_module_name = module.__name__.rsplit('.', 1)[0]
+    ops_module_name = f"{gguf_module_name}.ops"
+    ops_module = sys.modules[ops_module_name]
     
-    # Log that we've patched the function
-    logging.info("="*50)
-    logging.info("MultiGPU: GGUF get_weight monkey patching active")
-    logging.info("MultiGPU: Using ping-pong buffer implementation for tensor caching")
-    logging.info("="*50)
+    # Access the GGMLLayer class and patch its get_weight method
+    if hasattr(ops_module, 'GGMLLayer') and not hasattr(ops_module.GGMLLayer, '_original_get_weight'):
+        # Save the original method and patch with our enhanced version
+        ops_module.GGMLLayer._original_get_weight = ops_module.GGMLLayer.get_weight
+        
+        # Define a new method that will replace the original
+        def new_get_weight(self, tensor, dtype):
+            return enhanced_get_weight(tensor, dtype, self.dequant_dtype, self.patch_dtype)
+        
+        # Replace the method
+        ops_module.GGMLLayer.get_weight = new_get_weight
+        
+        print("\n" + "="*60)
+        print("MultiGPU: Successfully patched GGUF GGMLLayer.get_weight at runtime")
+        print("MultiGPU: Ping-pong buffer optimization is now active")
+        print("="*60 + "\n")
+        
+        return True
     
+    return False
+
+if check_module_exists("ComfyUI-GGUF") or check_module_exists("comfyui-gguf"):
     NODE_CLASS_MAPPINGS["UnetLoaderGGUFMultiGPU"] = override_class(UnetLoaderGGUF)
     NODE_CLASS_MAPPINGS["UnetLoaderGGUFDisTorchMultiGPU"] = override_class_with_distorch(UnetLoaderGGUF)
     NODE_CLASS_MAPPINGS["UnetLoaderGGUFAdvancedMultiGPU"] = override_class(UnetLoaderGGUFAdvanced)
