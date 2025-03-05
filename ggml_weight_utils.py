@@ -6,25 +6,11 @@ from collections import deque
 import importlib
 import sys
 import torch.cuda.nvtx as nvtx 
+import gguf
 
-# Configuration options
-cache_config = {
-    'use_tensor_cache': False,
-}
+GGMLTensor = importlib.import_module('custom_nodes.ComfyUI-GGUF.ops').GGMLTensor
+dequantize_tensor = importlib.import_module('custom_nodes.ComfyUI-GGUF.dequant').dequantize_tensor
 
-# Import from ComfyUI-GGUF
-gguf_module = importlib.import_module('custom_nodes.ComfyUI-GGUF.dequant')
-dequantize_tensor = gguf_module.dequantize_tensor
-is_quantized = gguf_module.is_quantized
-
-# Import GGMLTensor from ComfyUI-GGUF ops
-try:
-    ops_module = importlib.import_module('custom_nodes.ComfyUI-GGUF.ops')
-    GGMLTensor = ops_module.GGMLTensor
-    move_patch_to_device_original = ops_module.move_patch_to_device
-except (ImportError, AttributeError):
-    GGMLTensor = None
-    move_patch_to_device_original = None
 
 patch_cache = {}
 
@@ -33,58 +19,42 @@ cached_tensors = []
 level_zero_tensors = []
 prev_ggml_tensor_ptr = None
 
-# Ping-pong buffer for prefetching
-active_buffer_index = 0  # 0 = buffer A, 1 = buffer B
-prefetch_buffers = [{}, {}]  # Two dictionaries for ping-pong buffers
-prefetch_batch_size = 15  # Size of each buffer
-current_tensor_in_batch = 0  # Position in current batch
-next_batch_to_prefetch = [[], []]  # Arrays to track which tensors to fetch next
-
-use_level_zero_cache = False
-
-# For tracking LoRA deltas
-total_tensors_processed = 0
-tensor_printed = False
-
-# Create dedicated streams for each device
+# hard-coded streams and variables for compute and tensorator during development
 compute_stream = torch.cuda.Stream(device="cuda:0") 
 tensorator_stream = torch.cuda.Stream(device="cuda:1")
+compute_device = torch.device("cuda:0")
+tensorator_device = torch.device("cuda:1")
 
 # Setup events for cross-device synchronization
 compute_event = torch.cuda.Event(enable_timing=False)
 tensorator_event = torch.cuda.Event(enable_timing=False)
 
-def move_patch_to_device(item, device):
-    if "cuda:0" in str(device):
-        stream = compute_stream
-    elif "cuda:1" in str(device):
-        stream = tensorator_stream
-    else:
-        stream = None
+def move_patch_to_tensorator(item):
+    stream = tensorator_stream
     if isinstance(item, torch.Tensor):
         if stream is not None:
             with torch.cuda.stream(stream):
-                return item.to(device, non_blocking=True)
+                return item.to(tensorator_device, non_blocking=True)
         else:
-            return item.to(device, non_blocking=True)
+            return item.to(tensorator_device, non_blocking=True)
     elif isinstance(item, tuple):
-        return tuple(move_patch_to_device(x, device) for x in item)
+        return tuple(move_patch_to_tensorator(x) for x in item)
     elif isinstance(item, list):
-        return [move_patch_to_device(x, device) for x in item]
+        return [move_patch_to_tensorator(x) for x in item]
     else:
         return item
 
-def retrieve_cached_patch(patches_item, device, key):
+def retrieve_cached_patch(patches_item, key):
     cache_key = tuple(key) if isinstance(key, (list, tuple)) else key
     if cache_key in patch_cache:
         return patch_cache[cache_key]
-    patch = move_patch_to_device(patches_item, device)
+    patch = move_patch_to_tensorator(patches_item)
     patch_cache[cache_key] = patch
     return patch
 
 @profile
 def get_weight(tensor, dtype, dequant_dtype=None, patch_dtype=None):
-    global total_tensors_processed, active_buffer_index, current_tensor_in_batch, next_batch_to_prefetch
+    global prev_ggml_tensor_ptr
        
     nvtx.range_push("get_weight entry")
     
@@ -93,48 +63,50 @@ def get_weight(tensor, dtype, dequant_dtype=None, patch_dtype=None):
         nvtx.range_pop()
         return None
     
-    # Phase 1: Basic Linear Pipeline Implementation. In an ideal world, the entirety of `compute`'s VRAM is available for compute over latent space. Current HunyuanVideo and Wan Video allow for the entirety of a card's space to be used. Assume that is the case. That there is a buffer of VRAM in `compute` that will be used for the active tensor and a buffer of N+1, N+2 tensors ready to go. Current ping-pong buffer implemnented below is 15 tensors per.
-    nvtx.range_push("tensorator_processing")
-    
-    # Keep GGML layer on loaded (compute or other if DisTorch) device. The gguf library code appears to funnel GGML layers through compute device, so until those are copied or cached it will be the fastest way. 
-    # #TODO: Build a GGML-Layer buffered cache. The best place to store GGML (dead) Layers is the slowest device you can tolerate = DRAM if you buffer it properly onto tensorator 
-    tensorator_device = torch.device("cuda:1")
+    ggml_tensor_ptr = tensor.data_ptr()
+
+#    if ggml_tensor_ptr in cached_tensor_map:
+
+
     with torch.cuda.stream(tensorator_stream):
+        nvtx.range_push("tensorator_ggml")
+        tensorator_ggml = tensor.to(device=tensorator_device, non_blocking=True)
+        nvtx.range_pop()
         
-        tensorator_tensor = tensor.to(device=tensorator_device, non_blocking=True)
-    
-        # Step 2: Prepare and cache patches on tensorator
+        nvtx.range_push("tensorator_retrieve_patches")
         patch_list = []
-        for func, item, key in getattr(tensorator_tensor, "patches", []):
-            patches = retrieve_cached_patch(item, tensorator_device, key)
+        for func, item, key in getattr(tensorator_ggml, "patches", []):
+            patches = retrieve_cached_patch(item, key)
             patch_list += patches
+        nvtx.range_pop()
         
-        # Step 3: Dequantize tensor on tensorator, using temporary tensor that currently gets garbage collected soon afterwards. Curent flow has this repeated every inference step, every tensor
-        w = dequantize_tensor(tensorator_tensor, dtype, dequant_dtype)
-        if GGMLTensor is not None and isinstance(w, GGMLTensor):
-            w.__class__ = torch.Tensor
-        
-        # Step 4: Apply patches on tensorator - from everything I have read, everything I have tried, everything I have seen implemented elsewhere like Forge, this is the only way to apply LoRAs to a tensor in an efficient memory-saving manner. It must happen every dequantization
-        #TODO: Implement a version of the caching routines that explicitly uses tensorator to its fullest extent. This means VRAM filled with cached, fully-patched tensors ready to be used without any additional compute while the GPU time is at 100% on keeping all of the tensorator pipeline buffers filled. Only time compute on `tensorator` should be idle is exact that: All buffers full.
+        nvtx.range_push("tensorator_tensor")
+        tensorator_tensor = dequantize_tensor(tensorator_ggml, dtype, dequant_dtype)
+        if GGMLTensor is not None and isinstance(tensorator_tensor, GGMLTensor):
+            tensorator_tensor.__class__ = torch.Tensor
+        nvtx.range_pop()
+               
+        nvtx.range_push("tensorator_tensor_apply_patches")
         if patch_list:
             if patch_dtype is None:
-                w = func(patch_list, w, key)
+                tensorator_tensor = func(patch_list, tensorator_tensor, key)
             else:
-                w = func(patch_list, w, key, dtype if patch_dtype=="target" else patch_dtype)
-            total_tensors_processed += 1
+                tensorator_tensor = func(patch_list, tensorator_tensor, key, dtype if patch_dtype=="target" else patch_dtype)
+        nvtx.range_pop()
         
-        # Step 5: Transfer result back to compute
-        #TODO: DMA might be the better way to go. It appears to be the fastest way for us to operate on the tensor sent to get_weight. We now have our own tensor (w) that is on tensorator. In this linear pipeline, is it actually faster to not do this step and just have `compute` pull it from tensorator via DMA? I suspect it is, especially with my NVLink. Could be wrong but the results from step one were suprising (thus its elimination) and need for further investigation.
-        w = w.to(device="cuda:0", non_blocking=True)
-        
-        # Record completion event
+        nvtx.range_push("tensorator_transfer_to_compute")
+        tensorator_tensor = tensorator_tensor.to(device=compute_device, non_blocking=True)
         tensorator_event.record(tensorator_stream)
+        nvtx.range_pop()
     
-    # Wait for tensorator to finish
+    nvtx.range_push("tensorator_wait_for_stream")
     torch.cuda.current_stream().wait_event(tensorator_event)
-    
-    nvtx.range_pop()  # end tensorator_processing
-    nvtx.range_pop()  # end get_weight entry
-    
-    # Return the fully processed weight
-    return w
+    nvtx.range_pop()
+
+    if ggml_tensor_ptr not in cached_tensor_map:
+        cached_tensor_map[ggml_tensor_ptr] = {}
+        cached_tensor_map[ggml_tensor_ptr]['index'] = len(cached_tensor_map) - 1
+        print(f"GGML Tensor {ggml_tensor_ptr}. GGML Map Index {cached_tensor_map[ggml_tensor_ptr]['index']}")
+
+
+    return tensorator_tensor

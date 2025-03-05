@@ -15,8 +15,6 @@ import gc
 from safetensors.torch import save_file, load_file
 import comfy.utils
 from typing import Dict, List 
-from .ggml_weight_utils import cache_config
-
 
 
 from nodes import NODE_CLASS_MAPPINGS as GLOBAL_NODE_CLASS_MAPPINGS
@@ -449,11 +447,9 @@ def override_class_with_distorch(cls):
             global current_device
             if device is not None:
                 current_device = device
-            # Update the global flags dynamically
-            cache_config["use_tensor_cache"] = tensor_cache
-            cache_config["use_cuda1_processing"] = use_cuda1_processing
+
             register_patched_ggufmodelpatcher()
-            register_patched_gguf_get_weight()  # This patch now always reads cache_config at runtime
+            register_patched_gguf_get_weight()
             fn = getattr(super(), cls.FUNCTION)
             out = fn(*args, **kwargs)
             vram_string = ""
