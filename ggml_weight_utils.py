@@ -10,7 +10,7 @@ import torch.cuda.nvtx as nvtx
 # Configuration options
 cache_config = {
     'use_tensor_cache': False,
-    'use_cuda1_processing': True  # Enable processing on cuda:1 by default
+    'use_tensorator_processing': True  # Enable processing on tensorator by default
 }
 
 # Import from ComfyUI-GGUF
@@ -48,18 +48,18 @@ total_tensors_processed = 0
 tensor_printed = False
 
 # Create dedicated streams for each device
-cuda0_stream = torch.cuda.Stream(device="cuda:0")
-cuda1_stream = torch.cuda.Stream(device="cuda:1")
+compute_stream = torch.cuda.Stream(device="cuda:0") 
+tensorator_stream = torch.cuda.Stream(device="cuda:1")
 
 # Setup events for cross-device synchronization
-cuda0_event = torch.cuda.Event(enable_timing=False)
-cuda1_event = torch.cuda.Event(enable_timing=False)
+compute_event = torch.cuda.Event(enable_timing=False)
+tensorator_event = torch.cuda.Event(enable_timing=False)
 
 def move_patch_to_device(item, device):
     if "cuda:0" in str(device):
-        stream = cuda0_stream
+        stream = compute_stream
     elif "cuda:1" in str(device):
-        stream = cuda1_stream
+        stream = tensorator_stream
     else:
         stream = None
     if isinstance(item, torch.Tensor):
@@ -89,7 +89,7 @@ def prefetch_next_batch():
     if not next_batch_to_prefetch[inactive_buffer]:
         return
     prefetch_buffers[inactive_buffer].clear()
-    with torch.cuda.stream(cuda0_stream):
+    with torch.cuda.stream(compute_stream):
         for tensor_ptr in next_batch_to_prefetch[inactive_buffer]:
             if tensor_ptr in cached_tensor_map and 'level_two_cache_location' in cached_tensor_map[tensor_ptr]:
                 tensor = cached_tensor_map[tensor_ptr]['level_two_cache_location']()
@@ -100,16 +100,16 @@ def prefetch_next_batch():
 def get_weight(tensor, dtype, dequant_dtype=None, patch_dtype=None):
     global total_tensors_processed, active_buffer_index, current_tensor_in_batch, next_batch_to_prefetch
     
-    # Use configuration option for cuda:1 processing
-    use_cuda1_for_processing = cache_config['use_cuda1_processing']
+    # Use configuration option for tensorator processing
+    use_tensorator_processing = cache_config['use_tensorator_processing']
     
-    # Print message when cuda:1 processing is first used
-    if use_cuda1_for_processing and not hasattr(get_weight, "_cuda1_logged"):
+    # Print message when tensorator processing is first used
+    if use_tensorator_processing and not hasattr(get_weight, "_tensorator_logged"):
         print("\n" + "="*80)
-        print("MultiGPU: CUDA:1 Processing ENABLED")
-        print("Dequantizing and patching on CUDA:1 before transferring to CUDA:0")
+        print("MultiGPU: Tensorator Processing ENABLED")
+        print("Dequantizing and patching on tensorator before transferring to compute")
         print("="*80 + "\n")
-        get_weight._cuda1_logged = True
+        get_weight._tensorator_logged = True
     
     nvtx.range_push("get_weight entry")
     
@@ -119,27 +119,27 @@ def get_weight(tensor, dtype, dequant_dtype=None, patch_dtype=None):
         return None
     
     # Phase 1: Basic Linear Pipeline Implementation
-    if use_cuda1_for_processing:
-        nvtx.range_push("cuda1_processing")
+    if use_tensorator_processing:
+        nvtx.range_push("tensorator_processing")
         
-        # Step 1: Move GGML tensor to cuda:1 (using stream)
-        cuda1_device = torch.device("cuda:1")
-        with torch.cuda.stream(cuda1_stream):
-            tensor_cuda1 = tensor.to(device=cuda1_device, non_blocking=True)
+        # Step 1: Move GGML tensor to tensorator (using stream)
+        tensorator_device = torch.device("cuda:1")
+        with torch.cuda.stream(tensorator_stream):
+            tensor_tensorator = tensor.to(device=tensorator_device, non_blocking=True)
         
-            # Step 2: Prepare patches on cuda:1
+            # Step 2: Prepare patches on tensorator
             patch_list = []
             for func, item, key in getattr(tensor, "patches", []):
-                # Use cuda:1 as target device for patches
-                patches = retrieve_cached_patch(item, cuda1_device, key)
+                # Use tensorator as target device for patches
+                patches = retrieve_cached_patch(item, tensorator_device, key)
                 patch_list += patches
             
-            # Step 3: Dequantize on cuda:1
-            w = dequantize_tensor(tensor_cuda1, dtype, dequant_dtype)
+            # Step 3: Dequantize on tensorator
+            w = dequantize_tensor(tensor_tensorator, dtype, dequant_dtype)
             if GGMLTensor is not None and isinstance(w, GGMLTensor):
                 w.__class__ = torch.Tensor
             
-            # Step 4: Apply patches on cuda:1
+            # Step 4: Apply patches on tensorator
             if patch_list:
                 if patch_dtype is None:
                     w = func(patch_list, w, key)
@@ -147,22 +147,22 @@ def get_weight(tensor, dtype, dequant_dtype=None, patch_dtype=None):
                     w = func(patch_list, w, key, dtype if patch_dtype=="target" else patch_dtype)
                 total_tensors_processed += 1
             
-            # Step 5: Transfer result back to cuda:0
+            # Step 5: Transfer result back to compute
             w = w.to(device="cuda:0", non_blocking=True)
             
             # Record completion event
-            cuda1_event.record(cuda1_stream)
+            tensorator_event.record(tensorator_stream)
         
-        # Wait for cuda:1 to finish
-        torch.cuda.current_stream().wait_event(cuda1_event)
+        # Wait for tensorator to finish
+        torch.cuda.current_stream().wait_event(tensorator_event)
         
-        nvtx.range_pop()  # end cuda1_processing
+        nvtx.range_pop()  # end tensorator_processing
         nvtx.range_pop()  # end get_weight entry
         
         # Return the fully processed weight
         return w
         
-    # Original implementation for when not using cuda:1 processing
+    # Original implementation for when not using tensorator processing
     if not cache_config["use_tensor_cache"]:
         nvtx.range_push("patch-transfer branch")
         patch_list = []
@@ -205,7 +205,7 @@ def get_weight(tensor, dtype, dequant_dtype=None, patch_dtype=None):
         return buf[ptr]
     
     if ptr in cached_tensor_map and "level_two_cache_location" in cached_tensor_map[ptr]:
-        with torch.cuda.stream(cuda1_stream):
+        with torch.cuda.stream(tensorator_stream):
             w = cached_tensor_map[ptr]["level_two_cache_location"]().clone()
         ib = 1 - active_buffer_index
         if len(next_batch_to_prefetch[ib]) < prefetch_batch_size:
@@ -225,14 +225,14 @@ def get_weight(tensor, dtype, dequant_dtype=None, patch_dtype=None):
         total_tensors_processed += 1
     
     if ptr % 5 == 0 and use_level_zero_cache:
-        with torch.cuda.stream(cuda0_stream):
+        with torch.cuda.stream(compute_stream):
             l0 = w.clone().to("cuda:0", non_blocking=True)
         level_zero_tensors.append(l0)
         if ptr not in cached_tensor_map:
             cached_tensor_map[ptr] = {}
         cached_tensor_map[ptr]["level_zero_cache_location"] = l0
     else:
-        with torch.cuda.stream(cuda1_stream):
+        with torch.cuda.stream(tensorator_stream):
             l2 = w.clone().to("cuda:1", non_blocking=True)
         cached_tensors.append(l2)
         if ptr not in cached_tensor_map:
