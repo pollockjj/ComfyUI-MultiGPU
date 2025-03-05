@@ -118,28 +118,29 @@ def get_weight(tensor, dtype, dequant_dtype=None, patch_dtype=None):
         nvtx.range_pop()  # end get_weight entry
         return None
     
-    # Phase 1: Basic Linear Pipeline Implementation
+    # Phase 1: Basic Linear Pipeline Implementation. In an ideal world, the entirety of `compute`'s VRAM is available for compute over latent space. Current HunyuanVideo and Wan Video allow for the entirety of a card's space to be used. Assume that is the case. That there is a buffer of VRAM in `compute` that will be used for the active tensor and a buffer of N+1, N+2 tensors ready to go. Current ping-pong buffer implemnented below is 15 tensors per.
     if use_tensorator_processing:
         nvtx.range_push("tensorator_processing")
         
-        # Step 1: Move GGML tensor to tensorator (using stream)
+        # Keep GGML layer on loaded (compute or other if DisTorch) device. The gguf library code appears to funnel GGML layers through compute device, so until those are copied or cached it will be the fastest way. 
+        # #TODO: Build a GGML-Layer buffered cache. The best place to store GGML (dead) Layers is the slowest device you can tolerate = DRAM if you buffer it properly onto tensorator 
         tensorator_device = torch.device("cuda:1")
         with torch.cuda.stream(tensorator_stream):
-            tensor_tensorator = tensor.to(device=tensorator_device, non_blocking=True)
         
             # Step 2: Prepare patches on tensorator
             patch_list = []
             for func, item, key in getattr(tensor, "patches", []):
-                # Use tensorator as target device for patches
+                # Use tensorator as target device for patches - patches will remain on here (witnessed them loaded onto tensorator and then staying there during inference via nvtop) this keeps the compute device free for full latent space
                 patches = retrieve_cached_patch(item, tensorator_device, key)
                 patch_list += patches
             
-            # Step 3: Dequantize on tensorator
-            w = dequantize_tensor(tensor_tensorator, dtype, dequant_dtype)
+            # Step 3: Dequantize tensor on tensorator, using temporary tensor that currently gets garbage collected soon afterwards. Curent flow has this repeated every inference step, every tensor
+            w = dequantize_tensor(tensor, dtype, dequant_dtype)
             if GGMLTensor is not None and isinstance(w, GGMLTensor):
                 w.__class__ = torch.Tensor
             
-            # Step 4: Apply patches on tensorator
+            # Step 4: Apply patches on tensorator - from everything I have read, everything I have tried, everything I have seen implemented elsewhere like Forge, this is the only way to apply LoRAs to a tensor in an efficient memory-saving manner. It must happen every dequantization
+            #TODO: Implement a version of the caching routines that explicitly uses tensorator to its fullest extent. This means VRAM filled with cached, fully-patched tensors ready to be used without any additional compute while the GPU time is at 100% on keeping all of the tensorator pipeline buffers filled. Only time compute on `tensorator` should be idle is exact that: All buffers full.
             if patch_list:
                 if patch_dtype is None:
                     w = func(patch_list, w, key)
@@ -148,6 +149,7 @@ def get_weight(tensor, dtype, dequant_dtype=None, patch_dtype=None):
                 total_tensors_processed += 1
             
             # Step 5: Transfer result back to compute
+            #TODO: DMA might be the better way to go. It appears to be the fastest way for us to operate on the tensor sent to get_weight. We now have our own tensor (w) that is on tensorator. In this linear pipeline, is it actually faster to not do this step and just have `compute` pull it from tensorator via DMA? I suspect it is, especially with my NVLink. Could be wrong but the results from step one were suprising (thus its elimination) and need for further investigation.
             w = w.to(device="cuda:0", non_blocking=True)
             
             # Record completion event
