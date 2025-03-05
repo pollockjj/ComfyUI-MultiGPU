@@ -59,8 +59,8 @@ This approach maximizes available VRAM on the compute device for latent space op
 
 We implement a sophisticated caching system with multiple levels:
 
-- **Level Zero Cache**: High-priority tensors stored directly on compute device
-- **Level Two Cache**: Tensors stored on tensorator device with weakrefs
+- **Level 1 Cache**: High-priority tensors stored directly on compute device (cuda:0)
+- **Level 2 Cache**: Tensors stored on tensorator device (cuda:1)
 - **Ping-Pong Buffers**: Two rotating buffers to enable prefetching
 - **Patch Cache**: Efficiently reuse patch data across operations
 
@@ -144,6 +144,11 @@ Once the targeted optimizations are complete, we'll implement the full advanced 
 - [x] Gather initial performance metrics
 
 ### Phase 2 (CURRENT FOCUS)
+- [ ] Optimize multi-level caching system:
+  - [x] Implement Level 1 caching for small tensors on compute device
+  - [x] Implement Level 2 caching for tensors with patches on tensorator device
+  - [ ] Fix dictionary key issues (reverted from tensor objects to pointers)
+  - [ ] Implement reliable sequencing with order numbers
 - [ ] Optimize for multiple LoRAs:
   - [ ] Implement LoRA batch processing
   - [ ] Create combined LoRA patch application
@@ -196,21 +201,22 @@ with torch.cuda.stream(tensorator_stream):
 The implementation uses a sophisticated caching mechanism with multiple tiers:
 
 ```python
-if ptr in cached_tensor_map and "level_zero_cache_location" in cached_tensor_map[ptr]:
-    return cached_tensor_map[ptr]["level_zero_cache_location"]
+# Check if tensor is in Level 1 cache (on compute device)
+if ggml_tensor in cached_tensor_map and cached_tensor_map[ggml_tensor]['cache_level'] == "level1":
+    return cached_tensor_map[ggml_tensor]['dequantized_and_patched_tensor']
 
 # Check ping-pong buffers
 buf = prefetch_buffers[active_buffer_index]
-if ptr in buf:
+if ggml_tensor in buf:
     # ... buffer management logic ...
-    return buf[ptr]
+    return buf[ggml_tensor]
 
-# Check level two cache
-if ptr in cached_tensor_map and "level_two_cache_location" in cached_tensor_map[ptr]:
+# Check Level 2 cache (on tensorator device)
+if ggml_tensor in cached_tensor_map and cached_tensor_map[ggml_tensor]['cache_level'] == "level2":
     with torch.cuda.stream(tensorator_stream):
-        w = cached_tensor_map[ptr]["level_two_cache_location"]().clone()
+        tensor = cached_tensor_map[ggml_tensor]['dequantized_and_patched_tensor'].clone().to(compute_device, non_blocking=True)
     # ... prefetch scheduling logic ...
-    return w
+    return tensor
 ```
 
 ## Future Enhancement Ideas
@@ -241,7 +247,110 @@ def function_to_profile():
     # code here
 ```
 
+## Code Transformation Guide
+
+The recent transformation of `ggml_weight_utils.py` demonstrates the "only what is necessary" philosophy in action. We've encountered several critical lessons during implementation:
+
+### Implementation Challenges
+
+1. **Dictionary Key Stability**: Our attempt to use tensor objects as dictionary keys failed when tensors were wrapped in PyTorch Parameter objects. This caused the same tensor to have different identities in different parts of the code, breaking dictionary lookups. We reverted to using tensor pointers (data_ptr()) as keys.
+
+2. **Stream Synchronization Complexity**: Implementing proper CUDA stream synchronization required careful placement of record/wait events to ensure operations completed before tensors were used. This was particularly important for Level 2 cache transfers.
+
+3. **Cache Initialization Order**: We discovered that marking tensors for caching (setting cache_level to "level2") without simultaneously initializing the cached tensor caused errors when the cached tensor was later accessed before being populated.
+
+These challenges highlight the importance of careful incremental development and testing at each step, rather than implementing complex solutions all at once.
+
+### Before → After Transformation
+1. **Imports**: Simplified from complex dynamic imports with error handling to direct imports
+   ```python
+   # Before
+   gguf_module = importlib.import_module('custom_nodes.ComfyUI-GGUF.dequant')
+   dequantize_tensor = gguf_module.dequantize_tensor
+   is_quantized = gguf_module.is_quantized
+   
+   # After
+   import gguf
+   dequantize_tensor = importlib.import_module('custom_nodes.ComfyUI-GGUF.dequant').dequantize_tensor
+   ```
+
+2. **Variable Names**: Changed from generic to descriptive
+   ```python
+   # Before
+   w = dequantize_tensor(tensor, dtype, dequant_dtype)
+   w = w.to(device="cuda:0", non_blocking=True)
+   
+   # After
+   tensorator_tensor = dequantize_tensor(tensorator_ggml, dtype, dequant_dtype)
+   tensorator_tensor = tensorator_tensor.to(device=compute_device, non_blocking=True)
+   ```
+
+3. **Functions**: Simplified to their core purpose
+   ```python
+   # Before
+   def move_patch_to_device(item, device):
+       if "cuda:0" in str(device):
+           stream = compute_stream
+       elif "cuda:1" in str(device):
+           stream = tensorator_stream
+       # ...
+
+   # After
+   def move_patch_to_tensorator(item):
+       stream = tensorator_stream
+       # ...
+   ```
+
+4. **Profiling**: Added detailed NVTX ranges for precise performance analysis
+   ```python
+   # Added
+   nvtx.range_push("tensorator_ggml")
+   tensorator_ggml = tensor.to(device=tensorator_device, non_blocking=True)
+   nvtx.range_pop()
+   ```
+
+5. **Code Flow**: Eliminated conditional branches that weren't being used
+   - Removed unused tensorator processing conditional
+   - Removed ping-pong buffer implementation that wasn't active
+   - Created a single clear flow path through the function
+
+6. **Hardcoded Constants**: Made device selection explicit instead of dynamic
+   ```python
+   # Added
+   compute_device = torch.device("cuda:0")
+   tensorator_device = torch.device("cuda:1")
+   ```
+
+### Future Transformation Steps
+
+1. **Tensor Mapping Implementation**:
+   - Add tensor-to-next-tensor mapping in the main execution path
+   - Use order numbers to track sequences deterministically
+   - Continue using tensor pointers (data_ptr()) as dictionary keys
+   - Print debugging info at key points for tensor sequence analysis
+
+> **IMPORTANT IMPLEMENTATION NOTE:** Initial attempt to use tensor objects directly as dictionary keys failed due to PyTorch Parameter wrapping. The objects retrieved during different passes have different identity despite referencing the same underlying tensor. We must revert to using tensor pointers (data_ptr()) as dictionary keys for reliable tensor tracking.
+
+2. **Optimized LoRA Application**:
+   - Implement combined LoRA patches for multiple LoRAs
+   - Optimize memory transfers for patches
+   - Add stream management for overlapped operations
+
+3. **Performance Profiling Enhancements**:
+   - Refine NVTX markers for more detailed performance insights
+   - Analyze time spent in each pipeline stage
+   - Identify remaining bottlenecks
+
+4. **GGML Layer Buffering**:
+   - Implement DRAM-based buffering for GGML layers
+   - Create efficient prefetching mechanism based on deterministic access patterns
+   - Keep tensorator filled with ready-to-use tensors
+
+This transformation demonstrates how removing unnecessary complexity while improving descriptive naming and targeted profiling can dramatically improve code readability and maintainability while preserving full functionality.
+
 ## Links and Resources
 
 - [CUDA Documentation](https://docs.nvidia.com/cuda/cuda-runtime-api/index.html)
 - [PyTorch CUDA Semantics](https://pytorch.org/docs/stable/notes/cuda.html)
+- [NVIDIA Nsight Systems Profiling Guide](https://docs.nvidia.com/nsight-systems/UserGuide/index.html)
+- [PyTorch NVTX Ranges Documentation](https://pytorch.org/docs/stable/cuda.html#torch.cuda.nvtx.range_push)
