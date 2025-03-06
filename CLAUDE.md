@@ -159,7 +159,12 @@ Once the targeted optimizations are complete, we'll implement the full advanced 
   - [x] Implement rolling tensor window assignment with fixed indexing
   - [x] Set up tracking mechanism for prefetch candidates using prefetch_candidate_stack
   - [x] Assign prefetch positions 0-29 to uncached tensors
-  - [ ] Connect prefetch position assignment to actual buffer prefetching
+  - [ ] Implement three-stage pipeline with block transfer system:
+    - [ ] Stage 1: GGML Layer Buffer (transfer to tensorator)
+    - [ ] Stage 2: Dequantization Buffer (process on tensorator)
+    - [ ] Stage 3: Patch Application Buffer (apply LoRA patches and collect into blocks)
+  - [ ] Create block_cache0 and block_cache1 for efficient batch transfers
+  - [ ] Implement halfway triggering mechanism for proactive block filling
   - [ ] Handle memory/processing limits when tensorator can't keep up
   - [ ] Add telemetry to measure and optimize buffer depths
 - [ ] Optimize for multiple LoRAs:
@@ -170,10 +175,10 @@ Once the targeted optimizations are complete, we'll implement the full advanced 
   - [ ] Test DMA vs explicit transfers
   - [ ] Optimize for NVLink configurations
   - [ ] Minimize synchronization overhead
-- [ ] Implement continuous buffer system:
-  - [x] Set up cache level numbering system (0-29)
-  - [ ] Implement buffer fill operations based on prefetch positions
-  - [ ] Implement 30-layer chunking mechanism
+- [ ] Advanced optimizations:
+  - [ ] Fine-tune buffer sizes based on performance metrics
+  - [ ] Implement adaptive processing based on memory pressure
+  - [ ] Add recovery mechanisms for edge cases
   - [ ] Add detailed performance telemetry
 
 ## Key Code Patterns
@@ -241,10 +246,15 @@ We have implemented the first part of our buffer management system:
    - We assign positions 0-29 in the sliding window to each upcoming tensor
    - The system correctly handles wrapping around when it reaches the end of the stack
 
-2. **Next Steps**:
-   - Implement the actual prefetching mechanism for tensors based on their assigned positions
-   - Create the buffer management logic to transfer/process these tensors ahead of time
-   - Establish the cycle of filling and consuming ping-pong buffers
+2. **Next Steps - Three-Stage Pipeline with Efficient Block Transfers**:
+   - Implement three-stage processing pipeline with bulk transfer mechanism:
+     1. **GGML Layer Prefetch Buffer**: Fetches GGML layers marked for prefetch (0-29), transfers them to tensorator
+     2. **Dequantization Buffer**: Takes prefetched GGML layers, dequantizes them on tensorator
+     3. **Patch Application Buffer**: Applies patches (LoRA), collects results into ~15-tensor blocks
+   - Final processed tensors are accumulated into blocks (block_cache0 and block_cache1)
+   - Each entire block is transferred to compute as a single operation for maximum bandwidth efficiency
+   - When compute is halfway through processing one block, the other block is filled and transferred
+   - This creates a perfect pipeline where compute never waits and transfer bandwidth is optimally utilized
 
 ### Buffer Optimization Strategy
 
@@ -257,35 +267,39 @@ We have implemented the first part of our buffer management system:
 
 2. **Ping-Pong Buffer System**:
    - Number tensors 0-29 based on their position in the look-ahead window
-   - Use two alternating buffers (A/B) so we can fill one while consuming the other
-   - When a buffer is half consumed, begin filling the inactive buffer with the next batch of tensors
-   - This creates continuous non-blocking parallel processing ahead of compute needs
+   - Use two alternating buffer blocks (block_cache0 and block_cache1) that together form a contiguous 30-tensor window on compute
+   - Each block contains ~15 tensors that are transferred to compute as a single unit for maximum bandwidth efficiency
+   - When compute has processed roughly half of one block (~7-8 tensors), initiate the filling of the other block
+   - Transfer entire blocks at once rather than individual tensors to maximize PCIe/NVLink bandwidth utilization
+   - This approach both maximizes parallelism and optimizes data transfer efficiency
 
 ### Implementation Plan
 
-We'll develop the prefetch system in three phases of increasing complexity:
+We've refined our approach based on implementation experience, moving from a basic ping-pong system to a more sophisticated three-stage asynchronous buffer system:
 
-1. **Phase 3.1: Basic Ping-Pong System (CURRENT IMPLEMENTATION)**
-   - Enhance cached_tensor_map with two new states for tensors:
-     - **"pingpong" with existing weakref** - Tensors that have been prefetched and are ready for immediate use. Their processed versions exist in one of the ping-pong buffers with strong references in dequantized_and_patched_tensor_buffers to prevent garbage collection. The weakref points to this stored tensor.
-     - **"pingpong" with None weakref** - Tensors marked for prefetching but not yet processed. These are prioritized when filling the next ping-pong buffer batch. Once processed, they get strong references in dequantized_and_patched_tensor_buffers and their weakref pointers are updated.
-   - Implement basic buffer mechanics and state transitions
-   - Focus on correct identification of uncached tensors for prefetching
-   - Maintain proper reference management with both strong references (in buffer lists) and weak references (in dictionary)
+1. **Phase 3.1: Prefetch Position Assignment (COMPLETED)**
+   - Implemented global prefetch_candidate_stack to track all tensors eligible for prefetching
+   - Developed rolling window numbering system (0-29) for the next BUFFER_LOOK_AHEAD tensors
+   - Created tracking mechanism that assigns positions to tensors based on their sequence
+   - Added support for wrap-around when reaching the end of the stack
+   - This system gives each tensor a deterministic position in the prefetch queue
 
-2. **Phase 3.2: GGML Layer Prefetching**
-   - Implement prefetching for GGML layers (these are static and just need copying)
-   - Build the core prefetch mapping system using fixed tensor order
-   - Manage GGML tensor buffers efficiently with non-blocking operations
-   - Test and optimize the prefetch pipeline for GGML layers
+2. **Phase 3.2: Three-Stage Pipeline with Block Transfers (CURRENT FOCUS)**
+   - Implementing three-stage pipeline with efficient block transfer system:
+     - **Stage 1: GGML Layer Buffer** - Transfers raw GGML tensors to tensorator
+     - **Stage 2: Dequantization Buffer** - Dequantizes GGML tensors on tensorator
+     - **Stage 3: Patch Application Buffer** - Applies LoRA patches and collects into blocks
+   - Processed tensors are collected into two alternating blocks (block_cache0 and block_cache1)
+   - Each ~15-tensor block is transferred to compute as a single unit for maximum bandwidth efficiency
+   - The system proactively initiates filling and transfer of the next block when compute is halfway through the current block
+   - This ping-pong approach optimizes both processing throughput and data transfer efficiency
 
-3. **Phase 3.3: Nested Double-Buffer System**
-   - Implement nested double-pingpong buffer system:
-     - GGML layer buffers feed into dequantized/patched tensor buffers
-     - Size GGML buffers at 2x the dequantized tensor buffer size
-     - Ensure GGML layers are always ready before needed for dequantization
-   - Create a continuous pipeline where tensorator is always working ahead of compute
-   - Add telemetry to measure and optimize buffer performance
+3. **Phase 3.3: Advanced Optimization**
+   - Fine-tune buffer sizes based on memory constraints and processing speed
+   - Implement adaptive processing that adjusts to memory pressure
+   - Add telemetry to measure performance at each stage
+   - Optimize for maximum throughput by ensuring all three stages remain balanced
+   - Implement recovery mechanisms for edge cases (out of memory, processing delays)
 
 This incremental approach allows us to build and test each component separately, ensuring reliable performance at each stage before adding complexity.
 
