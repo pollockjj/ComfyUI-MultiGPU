@@ -22,6 +22,7 @@ level_one_tensors = []
 level_two_tensors = []
 ggml_tensor_buffers = []
 dequantized_and_patched_tensor_buffers = []
+prefetch_candidate_stack = []
 
 # hard-coded streams and variables for compute and tensorator during development
 compute_stream = torch.cuda.Stream(device="cuda:0") 
@@ -57,6 +58,7 @@ def retrieve_cached_patch(patches_item, key):
     return patch
 
 def initialize_cache_levels():
+    global prefetch_candidate_stack
     total_tensor_size = sum(info['tensor_size'] for info in cached_tensor_map.values())
     threshold = total_tensor_size * SMALL_TENSOR_THRESHOLD
 
@@ -76,6 +78,13 @@ def initialize_cache_levels():
             cached_tensor_map[tensor]['cache_level'] = "level2"
         else:
             cached_tensor_map[tensor]['cache_level'] = "none"
+            
+    none_tensors = []
+    for tensor, info in cached_tensor_map.items():
+        if info['cache_level'] == "none":
+            none_tensors.append((tensor, info['index']))
+    none_tensors.sort(key=lambda x: x[1])
+    prefetch_candidate_stack = [ptr for ptr, _ in none_tensors]
 
 @profile
 def get_weight(ggml_tensor, dtype, dequant_dtype=None, patch_dtype=None):
@@ -84,7 +93,6 @@ def get_weight(ggml_tensor, dtype, dequant_dtype=None, patch_dtype=None):
         return None
 
     ggml_tensor_ptr = ggml_tensor.data_ptr()
-
 
     if ggml_tensor_ptr in cached_tensor_map:
         if cached_tensor_map[ggml_tensor_ptr]['cache_level'] == "level1" and cached_tensor_map[ggml_tensor_ptr]['dequantized_and_patched_tensor'] is not None:                # Immediately return if dequantized and patched tensor is already cached on compute_device
@@ -100,15 +108,19 @@ def get_weight(ggml_tensor, dtype, dequant_dtype=None, patch_dtype=None):
             initialize_cache_levels()
         else:
             current_index = cached_tensor_map[ggml_tensor_ptr]['index']
-            
+            current_pos = -1
+            for i, ptr in enumerate(prefetch_candidate_stack):
+                if ptr == ggml_tensor_ptr:
+                    current_pos = i
+                    break
 
-
-
-
-
-
-
-
+            if current_pos >= 0:
+                for i in range(BUFFER_LOOK_AHEAD):
+                    next_pos = (current_pos + 1 + i) % len(prefetch_candidate_stack)
+                    next_ptr = prefetch_candidate_stack[next_pos]
+                    cached_tensor_map[next_ptr]['cache_level'] = str(i)
+                    if i == BUFFER_LOOK_AHEAD - 1:
+                        print(f"Popping 0x{ggml_tensor_ptr:x} off the stack, adding Layer 0x{next_ptr:x} to stack at position {i}")
 
     with torch.cuda.stream(tensorator_stream):                                                                         # Start of uncached tensorator pipeline
         # tensorator_ggml = ggml_tensor.to(device=tensorator_device, non_blocking=True)

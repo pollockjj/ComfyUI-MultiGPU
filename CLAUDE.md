@@ -156,10 +156,11 @@ Once the targeted optimizations are complete, we'll implement the full advanced 
 
 ### Phase 3 (CURRENT FOCUS)
 - [ ] Optimize GGML and dequantized tensor buffering:
-  - [ ] Ensure tensorator is always running ahead of compute
-  - [ ] Keep tensorator processing "x" tensors ahead of compute needs
+  - [x] Implement rolling tensor window assignment with fixed indexing
+  - [x] Set up tracking mechanism for prefetch candidates using prefetch_candidate_stack
+  - [x] Assign prefetch positions 0-29 to uncached tensors
+  - [ ] Connect prefetch position assignment to actual buffer prefetching
   - [ ] Handle memory/processing limits when tensorator can't keep up
-  - [ ] Implement prefetching based on access patterns
   - [ ] Add telemetry to measure and optimize buffer depths
 - [ ] Optimize for multiple LoRAs:
   - [ ] Implement LoRA batch processing
@@ -170,7 +171,8 @@ Once the targeted optimizations are complete, we'll implement the full advanced 
   - [ ] Optimize for NVLink configurations
   - [ ] Minimize synchronization overhead
 - [ ] Implement continuous buffer system:
-  - [ ] Complete continuous ping-pong buffer system 
+  - [x] Set up cache level numbering system (0-29)
+  - [ ] Implement buffer fill operations based on prefetch positions
   - [ ] Implement 30-layer chunking mechanism
   - [ ] Add detailed performance telemetry
 
@@ -228,37 +230,84 @@ if ggml_tensor in cached_tensor_map and cached_tensor_map[ggml_tensor]['cache_le
 
 Our current focus is optimizing the buffer management between GGML layers and dequantized tensors. The key goal is ensuring that the tensorator is always processing ahead of compute needs, creating a smooth pipeline where tensor data is always available when needed.
 
+### Progress Update (Current State)
+
+We have implemented the first part of our buffer management system:
+
+1. **Candidate Selection System**: 
+   - A global `prefetch_candidate_stack` now tracks all tensors marked as "none" (not in level1/level2 cache)
+   - This list is sorted by tensor index, giving us a deterministic processing order
+   - When each tensor is processed, we look ahead to the next 30 tensors in the stack
+   - We assign positions 0-29 in the sliding window to each upcoming tensor
+   - The system correctly handles wrapping around when it reaches the end of the stack
+
+2. **Next Steps**:
+   - Implement the actual prefetching mechanism for tensors based on their assigned positions
+   - Create the buffer management logic to transfer/process these tensors ahead of time
+   - Establish the cycle of filling and consuming ping-pong buffers
+
 ### Buffer Optimization Strategy
 
 1. **Prefetching Mechanism**: 
-   - Determine optimal buffer depth ("x" tensors ahead) based on performance profiling
-   - Implement predictive prefetching using layer access patterns
-   - Create an adaptive system that adjusts buffer depth based on current processing conditions
+   - The tensor order is DETERMINISTIC AND FIXED
+   - No analysis or computation is needed to know what goes into the buffers
+   - Simply use the tensor index to fill the buffers in order
+   - The ping-pong buffers should contain consecutive UNCACHED tensors (not in level1 or level2)
+   - There is ZERO value in prefetching tensors already in level1 or level2 cache
 
-2. **Resource Balancing**:
-   - Handle scenarios where tensorator reaches memory or processing limits
-   - Implement fallback mechanisms when tensorator can't keep up with compute needs
-   - Optimize memory allocation between Level 1 and Level 2 caches dynamically
+2. **Ping-Pong Buffer System**:
+   - Number tensors 0-29 based on their position in the look-ahead window
+   - Use two alternating buffers (A/B) so we can fill one while consuming the other
+   - When a buffer is half consumed, begin filling the inactive buffer with the next batch of tensors
+   - This creates continuous non-blocking parallel processing ahead of compute needs
 
-3. **Performance Monitoring**:
-   - Add detailed telemetry to measure:
-     - Buffer fill rates
-     - Cache hit/miss ratios
-     - Processing time for different tensor types
-     - Wait times for compute device
+### Implementation Plan
 
-4. **Implementation Approach**:
-   ```python
-   # Prefetching implementation
-   def prefetch_next_layers(current_layer_ptr, depth=5):
-       # Identify next layers likely to be accessed
-       next_layer_ptrs = predict_next_layers(current_layer_ptr, depth)
-       
-       # Start processing them in advance on tensorator
-       for ptr in next_layer_ptrs:
-           if ptr not in processed_layers:
-               enqueue_for_processing(ptr, priority=calculate_priority(ptr))
-   ```
+We'll develop the prefetch system in three phases of increasing complexity:
+
+1. **Phase 3.1: Basic Ping-Pong System (CURRENT IMPLEMENTATION)**
+   - Enhance cached_tensor_map with two new states for tensors:
+     - **"pingpong" with existing weakref** - Tensors that have been prefetched and are ready for immediate use. Their processed versions exist in one of the ping-pong buffers with strong references in dequantized_and_patched_tensor_buffers to prevent garbage collection. The weakref points to this stored tensor.
+     - **"pingpong" with None weakref** - Tensors marked for prefetching but not yet processed. These are prioritized when filling the next ping-pong buffer batch. Once processed, they get strong references in dequantized_and_patched_tensor_buffers and their weakref pointers are updated.
+   - Implement basic buffer mechanics and state transitions
+   - Focus on correct identification of uncached tensors for prefetching
+   - Maintain proper reference management with both strong references (in buffer lists) and weak references (in dictionary)
+
+2. **Phase 3.2: GGML Layer Prefetching**
+   - Implement prefetching for GGML layers (these are static and just need copying)
+   - Build the core prefetch mapping system using fixed tensor order
+   - Manage GGML tensor buffers efficiently with non-blocking operations
+   - Test and optimize the prefetch pipeline for GGML layers
+
+3. **Phase 3.3: Nested Double-Buffer System**
+   - Implement nested double-pingpong buffer system:
+     - GGML layer buffers feed into dequantized/patched tensor buffers
+     - Size GGML buffers at 2x the dequantized tensor buffer size
+     - Ensure GGML layers are always ready before needed for dequantization
+   - Create a continuous pipeline where tensorator is always working ahead of compute
+   - Add telemetry to measure and optimize buffer performance
+
+This incremental approach allows us to build and test each component separately, ensuring reliable performance at each stage before adding complexity.
+
+### Reference Management
+
+The ping-pong system carefully manages tensor references to prevent memory leaks and ensure garbage collection works correctly:
+
+1. **Strong References**: Maintained in dequantized_and_patched_tensor_buffers for all processed tensors
+2. **Weak References**: Used in cached_tensor_map to point to the processed tensors without preventing collection when no longer needed
+3. **Buffer Clearing**: When a buffer is no longer active, its references can be cleared to free memory
+
+This approach ensures that:
+- Tensors stay in memory while they're needed
+- Memory is properly reclaimed when tensors are no longer in use
+- The system maintains optimal memory usage across both GPUs
+
+### Resource Management
+
+- Handle scenarios where tensorator reaches memory or processing limits
+- Implement fallback mechanisms when tensorator can't keep up with compute needs
+- Optimize memory allocation between Level 1 and Level 2 caches dynamically
+- Balance buffer sizes based on available VRAM and processing requirements
 
 ### Future Enhancement Ideas
 
