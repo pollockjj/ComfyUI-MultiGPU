@@ -143,30 +143,35 @@ Once the targeted optimizations are complete, we'll implement the full advanced 
 - [x] Add UI option to toggle tensorator processing
 - [x] Gather initial performance metrics
 
-### Phase 2 (CURRENT FOCUS)
-- [ ] Optimize multi-level caching system:
+### Phase 2 (COMPLETED)
+- [x] Optimize multi-level caching system:
   - [x] Implement Level 1 caching for small tensors on compute device
   - [x] Implement Level 2 caching for tensors with patches on tensorator device
-  - [ ] Fix dictionary key issues (reverted from tensor objects to pointers)
-  - [ ] Implement reliable sequencing with order numbers
+  - [x] Fix dictionary key issues (reverted from tensor objects to pointers)
+  - [x] Implement reliable sequencing with cache level assignments
+- [x] Optimize memory management:
+  - [x] Implement proper tensor reference management
+  - [x] Set up strong references with dedicated lists
+  - [x] Create weakref system for level2 cache
+
+### Phase 3 (CURRENT FOCUS)
+- [ ] Optimize GGML and dequantized tensor buffering:
+  - [ ] Ensure tensorator is always running ahead of compute
+  - [ ] Keep tensorator processing "x" tensors ahead of compute needs
+  - [ ] Handle memory/processing limits when tensorator can't keep up
+  - [ ] Implement prefetching based on access patterns
+  - [ ] Add telemetry to measure and optimize buffer depths
 - [ ] Optimize for multiple LoRAs:
   - [ ] Implement LoRA batch processing
   - [ ] Create combined LoRA patch application
   - [ ] Add stream management for overlapped operations
-- [ ] Optimize memory management:
-  - [ ] Build GGML-Layer buffered cache
-  - [ ] Implement adaptive chunking based on available memory
-  - [ ] Add OOM prevention mechanisms
 - [ ] Optimize transfer mechanisms:
   - [ ] Test DMA vs explicit transfers
   - [ ] Optimize for NVLink configurations
   - [ ] Minimize synchronization overhead
-
-### Phase 3 (FUTURE)
-- [ ] Implement the full advanced pipeline:
+- [ ] Implement continuous buffer system:
   - [ ] Complete continuous ping-pong buffer system 
   - [ ] Implement 30-layer chunking mechanism
-  - [ ] Minimize synchronization points
   - [ ] Add detailed performance telemetry
 
 ## Key Code Patterns
@@ -219,19 +224,53 @@ if ggml_tensor in cached_tensor_map and cached_tensor_map[ggml_tensor]['cache_le
     return tensor
 ```
 
-## Future Enhancement Ideas
+## Phase 3: Advanced Buffer Management
 
-1. **GGML-Layer Buffered Cache**: Store GGML layers in DRAM and buffer them to tensorator, optimizing for both memory and performance
+Our current focus is optimizing the buffer management between GGML layers and dequantized tensors. The key goal is ensuring that the tensorator is always processing ahead of compute needs, creating a smooth pipeline where tensor data is always available when needed.
 
-2. **Full Tensorator Utilization**: Keep the tensorator VRAM filled with cached, fully-patched tensors ready for use, with continuous refilling to ensure the pipeline is never empty
+### Buffer Optimization Strategy
 
-3. **DMA Transfer Optimization**: Investigate whether letting compute pull tensors from tensorator via DMA is more efficient than explicit transfers, especially with NVLink hardware
+1. **Prefetching Mechanism**: 
+   - Determine optimal buffer depth ("x" tensors ahead) based on performance profiling
+   - Implement predictive prefetching using layer access patterns
+   - Create an adaptive system that adjusts buffer depth based on current processing conditions
 
-4. **Combined LoRA Application**: For multiple LoRAs, combine patches before applying to reduce computational overhead:
+2. **Resource Balancing**:
+   - Handle scenarios where tensorator reaches memory or processing limits
+   - Implement fallback mechanisms when tensorator can't keep up with compute needs
+   - Optimize memory allocation between Level 1 and Level 2 caches dynamically
+
+3. **Performance Monitoring**:
+   - Add detailed telemetry to measure:
+     - Buffer fill rates
+     - Cache hit/miss ratios
+     - Processing time for different tensor types
+     - Wait times for compute device
+
+4. **Implementation Approach**:
+   ```python
+   # Prefetching implementation
+   def prefetch_next_layers(current_layer_ptr, depth=5):
+       # Identify next layers likely to be accessed
+       next_layer_ptrs = predict_next_layers(current_layer_ptr, depth)
+       
+       # Start processing them in advance on tensorator
+       for ptr in next_layer_ptrs:
+           if ptr not in processed_layers:
+               enqueue_for_processing(ptr, priority=calculate_priority(ptr))
+   ```
+
+### Future Enhancement Ideas
+
+1. **Combined LoRA Application**: For multiple LoRAs, combine patches before applying to reduce computational overhead:
    ```python
    super_patch = (alpha1 * LoRA1) + (alpha2 * LoRA2) + ... + (alpha8 * LoRA8)
    weight += super_patch
    ```
+
+2. **DMA Transfer Optimization**: Investigate whether letting compute pull tensors from tensorator via DMA is more efficient than explicit transfers, especially with NVLink hardware
+
+3. **Dynamic Cache Sizing**: Adjust cache allocations based on real-time performance measurements
 
 ## Profiling Commands
 

@@ -12,13 +12,16 @@ GGMLTensor = importlib.import_module('custom_nodes.ComfyUI-GGUF.ops').GGMLTensor
 dequantize_tensor = importlib.import_module('custom_nodes.ComfyUI-GGUF.dequant').dequantize_tensor
 
 SMALL_TENSOR_THRESHOLD = 0.0001  # 0.01% of total size
-TENSORATOR_CACHE_SIZE_MB  = 7168
+TENSORATOR_CACHE_SIZE_MB  = 12168
+BUFFER_LOOK_AHEAD = 30
 
 patch_cache = {}
 
 cached_tensor_map = {}
 level_one_tensors = [] 
 level_two_tensors = []
+ggml_tensor_buffers = []
+dequantized_and_patched_tensor_buffers = []
 
 # hard-coded streams and variables for compute and tensorator during development
 compute_stream = torch.cuda.Stream(device="cuda:0") 
@@ -61,6 +64,10 @@ def get_weight(ggml_tensor, dtype, dequant_dtype=None, patch_dtype=None):
     
 
     ggml_tensor_ptr = ggml_tensor.data_ptr()
+    
+
+    
+    
 
     if ggml_tensor_ptr in cached_tensor_map and cached_tensor_map[ggml_tensor_ptr]['cache_level'] == "level1" and cached_tensor_map[ggml_tensor_ptr]['dequantized_and_patched_tensor'] is not None:                # Immediately return if dequantized and patched tensor is already cached on compute_device
         return cached_tensor_map[ggml_tensor_ptr]['dequantized_and_patched_tensor']
@@ -103,15 +110,18 @@ def get_weight(ggml_tensor, dtype, dequant_dtype=None, patch_dtype=None):
                     (ptr, info['index'], info['patch_qty'], info['tensor_size'], info['cache_level']))
 
 
+    #TODO: Kick off a background thread prefetch tensors to the tensorator_device = if ggml_tensor index + BUFFER_LOOK_AHEAD not in ggml_tensor_buffers and not in level_one_tensors or level_two_tensors kick off background prefetch of all tensors in that range
+    # This way we have a copy local that is ready to go when we need it and we just look for it in that buffer and wait for it if it isn't there./
+
     with torch.cuda.stream(tensorator_stream):                                                                         # Start of uncached tensorator pipeline
-        tensorator_ggml = ggml_tensor.to(device=tensorator_device, non_blocking=True)
+        # tensorator_ggml = ggml_tensor.to(device=tensorator_device, non_blocking=True)
         
         patch_list = []
-        for func, item, key in getattr(tensorator_ggml, "patches", []):
+        for func, item, key in getattr(ggml_tensor, "patches", []):
             patches = retrieve_cached_patch(item, key)
             patch_list += patches
 
-        tensorator_tensor = dequantize_tensor(tensorator_ggml, dtype, dequant_dtype)
+        tensorator_tensor = dequantize_tensor(ggml_tensor, dtype, dequant_dtype)
         if GGMLTensor is not None and isinstance(tensorator_tensor, GGMLTensor):
             tensorator_tensor.__class__ = torch.Tensor
 
@@ -125,7 +135,7 @@ def get_weight(ggml_tensor, dtype, dequant_dtype=None, patch_dtype=None):
             level_one_tensor = tensorator_tensor.clone().to(compute_device, non_blocking=True)
             level_one_tensors.append(level_one_tensor)
             cached_tensor_map[ggml_tensor_ptr]['dequantized_and_patched_tensor'] = level_one_tensor
-            print(f"Moving GGML Tensor: 0x{ggml_tensor_ptr:x} | Index: {cached_tensor_map[ggml_tensor_ptr]['index']:3d} | Size: {cached_tensor_map[ggml_tensor_ptr]['tensor_size']:.2f} | to compute_device")
+            # print(f"Moving GGML Tensor: 0x{ggml_tensor_ptr:x} | Index: {cached_tensor_map[ggml_tensor_ptr]['index']:3d} | Size: {cached_tensor_map[ggml_tensor_ptr]['tensor_size']:.2f} | to compute_device")
             tensorator_event.record(tensorator_stream)
             torch.cuda.current_stream().wait_event(tensorator_event)
             return level_one_tensor
@@ -133,7 +143,7 @@ def get_weight(ggml_tensor, dtype, dequant_dtype=None, patch_dtype=None):
             level_two_tensor = tensorator_tensor.clone().to(tensorator_device, non_blocking=True)
             level_two_tensors.append(level_two_tensor)
             cached_tensor_map[ggml_tensor_ptr]['dequantized_and_patched_tensor'] = level_two_tensor
-            print(f"Moving GGML Tensor: 0x{ggml_tensor_ptr:x} | Index: {cached_tensor_map[ggml_tensor_ptr]['index']:3d} | Size: {cached_tensor_map[ggml_tensor_ptr]['tensor_size']:.2f} | to tensorator_device")
+            # print(f"Moving GGML Tensor: 0x{ggml_tensor_ptr:x} | Index: {cached_tensor_map[ggml_tensor_ptr]['index']:3d} | Size: {cached_tensor_map[ggml_tensor_ptr]['tensor_size']:.2f} | to tensorator_device")
             tensorator_event.record(tensorator_stream)
             torch.cuda.current_stream().wait_event(tensorator_event)
             return level_two_tensor
@@ -148,7 +158,7 @@ def get_weight(ggml_tensor, dtype, dequant_dtype=None, patch_dtype=None):
             cached_tensor_map[ggml_tensor_ptr]['tensor_size'] = (tensorator_tensor.numel() * tensorator_tensor.element_size() / (1024 * 1024))
             cached_tensor_map[ggml_tensor_ptr]['cache_level'] = "uninitialized" # uninitialized, none, level1, level2
             cached_tensor_map[ggml_tensor_ptr]['dequantized_and_patched_tensor'] = None
-            print(f"GGML Tensor: 0x{ggml_tensor_ptr:x} | Index: {cached_tensor_map[ggml_tensor_ptr]['index']:3d} | Patches: {cached_tensor_map[ggml_tensor_ptr]['patch_qty']:2d} | Size: {cached_tensor_map[ggml_tensor_ptr]['tensor_size']:.2f}")
+            # print(f"GGML Tensor: 0x{ggml_tensor_ptr:x} | Index: {cached_tensor_map[ggml_tensor_ptr]['index']:3d} | Patches: {cached_tensor_map[ggml_tensor_ptr]['patch_qty']:2d} | Size: {cached_tensor_map[ggml_tensor_ptr]['tensor_size']:.2f}")
     
     torch.cuda.current_stream().wait_event(tensorator_event)
     return tensorator_tensor
