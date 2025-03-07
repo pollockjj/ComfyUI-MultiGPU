@@ -106,6 +106,128 @@ def register_patched_ggufmodelpatcher():
 
     module.GGUFModelPatcher.load = new_load
     module.GGUFModelPatcher._patched = True
+    
+def register_patched_gguf_loader():
+    from nodes import NODE_CLASS_MAPPINGS
+    original_loader = NODE_CLASS_MAPPINGS["UnetLoaderGGUF"]
+    module = sys.modules[original_loader.__module__]
+    
+    # Get necessary loader components
+    gguf_loader_path = None
+    for possible_path in ['custom_nodes.ComfyUI_GGUF', 'custom_nodes.ComfyUI-GGUF', 'ComfyUI_GGUF', 'ComfyUI-GGUF']:
+        try:
+            __import__(f"{possible_path}.loader")
+            gguf_loader_path = possible_path
+            break
+        except ImportError:
+            continue
+    
+    if not gguf_loader_path:
+        print("Could not import GGUF loader module")
+        return
+        
+    loader_module = sys.modules.get(f"{gguf_loader_path}.loader")
+    
+    # Get necessary components from loader module
+    IMG_ARCH_LIST = getattr(loader_module, 'IMG_ARCH_LIST', set())
+    TXT_ARCH_LIST = getattr(loader_module, 'TXT_ARCH_LIST', set())
+    get_orig_shape = getattr(loader_module, 'get_orig_shape', None)
+    
+    # Get ops module
+    ops_module = __import__(f"{gguf_loader_path}.ops", fromlist=['*'])
+    GGMLTensor = getattr(ops_module, 'GGMLTensor', None)
+    
+    # Get dequant module
+    dequant_module = __import__(f"{gguf_loader_path}.dequant", fromlist=['*'])
+    is_quantized = getattr(dequant_module, 'is_quantized', None)
+    
+    # Get tools module for detect_arch
+    tools_module = __import__(f"{gguf_loader_path}.tools.convert", fromlist=['*'])
+    detect_arch = getattr(tools_module, 'detect_arch', None)
+    
+    # Import gguf module
+    import gguf
+
+    if not hasattr(loader_module, '_loader_patched'):
+        original_gguf_sd_loader = loader_module.gguf_sd_loader
+
+        def new_gguf_sd_loader(path, handle_prefix="model.diffusion_model.", return_arch=False):
+            """
+            Read state dict as fake tensors
+            """
+            reader = gguf.GGUFReader(path)
+
+            # filter and strip prefix
+            has_prefix = False
+            if handle_prefix is not None:
+                prefix_len = len(handle_prefix)
+                tensor_names = set(tensor.name for tensor in reader.tensors)
+                has_prefix = any(s.startswith(handle_prefix) for s in tensor_names)
+
+            tensors = []
+            for tensor in reader.tensors:
+                sd_key = tensor_name = tensor.name
+                if has_prefix:
+                    if not tensor_name.startswith(handle_prefix):
+                        continue
+                    sd_key = tensor_name[prefix_len:]
+                tensors.append((sd_key, tensor))
+
+            # detect and verify architecture
+            compat = None
+            arch_str = None
+            arch_field = reader.get_field("general.architecture")
+            if arch_field is not None:
+                if len(arch_field.types) != 1 or arch_field.types[0] != gguf.GGUFValueType.STRING:
+                    raise TypeError(f"Bad type for GGUF general.architecture key: expected string, got {arch_field.types!r}")
+                arch_str = str(arch_field.parts[arch_field.data[-1]], encoding="utf-8")
+                if arch_str not in IMG_ARCH_LIST and arch_str not in TXT_ARCH_LIST:
+                    raise ValueError(f"Unexpected architecture type in GGUF file, expected one of flux, sd1, sdxl, t5encoder but got {arch_str!r}")
+            else: # stable-diffusion.cpp
+                # Use pre-imported detect_arch function
+                arch_str = detect_arch(set(val[0] for val in tensors)).arch
+                compat = "sd.cpp"
+
+            # main loading loop
+            state_dict = {}
+            qtype_dict = {}
+            for sd_key, tensor in tensors:
+                tensor_name = tensor.name
+                tensor_type_str = str(tensor.tensor_type)
+                torch_tensor = torch.from_numpy(tensor.data) # mmap
+
+                shape = get_orig_shape(reader, tensor_name)
+                if shape is None:
+                    shape = torch.Size(tuple(int(v) for v in reversed(tensor.shape)))
+                    # Workaround for stable-diffusion.cpp SDXL detection.
+                    if compat == "sd.cpp" and arch_str == "sdxl":
+                        if any([tensor_name.endswith(x) for x in (".proj_in.weight", ".proj_out.weight")]):
+                            while len(shape) > 2 and shape[-1] == 1:
+                                shape = shape[:-1]
+
+                # add to state dict
+                if tensor.tensor_type in {gguf.GGMLQuantizationType.F32, gguf.GGMLQuantizationType.F16}:
+                    torch_tensor = torch_tensor.view(*shape)
+                state_dict[sd_key] = GGMLTensor(torch_tensor, tensor_type=tensor.tensor_type, tensor_shape=shape)
+                qtype_dict[tensor_type_str] = qtype_dict.get(tensor_type_str, 0) + 1
+
+            # mark largest tensor for vram estimation
+            qsd = {k:v for k,v in state_dict.items() if is_quantized(v)}
+            if len(qsd) > 0:
+                max_key = max(qsd.keys(), key=lambda k: qsd[k].numel())
+                state_dict[max_key].is_largest_weight = True
+
+            # sanity check debug print
+            print("\nggml_sd_loader:")
+            for k,v in qtype_dict.items():
+                print(f" {k:30}{v:3}")
+
+            if return_arch:
+                return (state_dict, arch_str)
+            return state_dict
+
+        module.gguf_sd_loader = new_gguf_sd_loader
+        module._loader_patched = True
 
 def analyze_ggml_loading(model, allocations_str):
     DEVICE_RATIOS_DISTORCH = {}
@@ -586,6 +708,7 @@ def override_class_with_distorch(cls):
                 current_device = device
             
             register_patched_ggufmodelpatcher()
+            register_patched_gguf_loader()
             fn = getattr(super(), cls.FUNCTION)
             out = fn(*args, **kwargs)
 
@@ -642,6 +765,7 @@ def override_class_with_distorch_clip(cls):
                 current_text_encoder_device = device
             
             register_patched_ggufmodelpatcher()
+            register_patched_gguf_loader()
             fn = getattr(super(), cls.FUNCTION)
             out = fn(*args, **kwargs)
 
