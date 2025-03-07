@@ -586,6 +586,7 @@ def override_class_with_distorch(cls):
                 current_device = device
             
             register_patched_ggufmodelpatcher()
+            register_patched_gguf_get_weight()
             fn = getattr(super(), cls.FUNCTION)
             out = fn(*args, **kwargs)
 
@@ -642,6 +643,7 @@ def override_class_with_distorch_clip(cls):
                 current_text_encoder_device = device
             
             register_patched_ggufmodelpatcher()
+            register_patched_gguf_get_weight()
             fn = getattr(super(), cls.FUNCTION)
             out = fn(*args, **kwargs)
 
@@ -713,7 +715,41 @@ if check_module_exists("ComfyUI-MMAudio") or check_module_exists("comfyui-mmaudi
     NODE_CLASS_MAPPINGS["MMAudioFeatureUtilsLoaderMultiGPU"] = override_class(MMAudioFeatureUtilsLoader)
     NODE_CLASS_MAPPINGS["MMAudioSamplerMultiGPU"] = override_class(MMAudioSampler)
 
+def register_patched_gguf_get_weight():
+    from nodes import NODE_CLASS_MAPPINGS
+    original_loader = NODE_CLASS_MAPPINGS["UnetLoaderGGUF"]
+    module = sys.modules[original_loader.__module__]
+    
+    from .ggml_weight_utils import get_weight as enhanced_get_weight
+    
+    gguf_module_name = module.__name__.rsplit('.', 1)[0]
+    ops_module_name = f"{gguf_module_name}.ops"
+    ops_module = sys.modules[ops_module_name]
+    
+    if hasattr(ops_module, 'GGMLLayer') and not hasattr(ops_module.GGMLLayer, '_original_get_weight'):
+        ops_module.GGMLLayer._original_get_weight = ops_module.GGMLLayer.get_weight
+        
+        def new_get_weight(self, tensor, dtype):
+            return enhanced_get_weight(tensor, dtype, self.dequant_dtype, self.patch_dtype)
+        
+        ops_module.GGMLLayer.get_weight = new_get_weight
+        
+        print("\n" + "="*60)
+        print("MultiGPU: Successfully patched GGUF GGMLLayer.get_weight at runtime")
+        print("MultiGPU: Basic version activated")
+        print("="*60 + "\n")
+        
+        return True
+    
+    return False
+
 if check_module_exists("ComfyUI-GGUF") or check_module_exists("comfyui-gguf"):
+    import importlib
+    from .ggml_weight_utils import get_weight as enhanced_get_weight
+    
+    ops_module = importlib.import_module("custom_nodes.ComfyUI-GGUF.ops")
+    ops_module.get_weight_util = enhanced_get_weight
+    
     NODE_CLASS_MAPPINGS["UnetLoaderGGUFMultiGPU"] = override_class(UnetLoaderGGUF)
     NODE_CLASS_MAPPINGS["UnetLoaderGGUFDisTorchMultiGPU"] = override_class_with_distorch(UnetLoaderGGUF)
     NODE_CLASS_MAPPINGS["UnetLoaderGGUFAdvancedMultiGPU"] = override_class(UnetLoaderGGUFAdvanced)
