@@ -13,14 +13,14 @@ dequantize_tensor = importlib.import_module('custom_nodes.ComfyUI-GGUF.dequant')
 
 SMALL_TENSOR_THRESHOLD = 0.0001  # 0.01% of total size
 TENSORATOR_CACHE_SIZE_MB  = 12168
-BUFFER_LOOK_AHEAD = 30
+TENSORATOR_GGML_CACHE_SIZE_MB  = 4096
 
 patch_cache = {}
 
 cached_tensor_map = {}
 level_one_tensors = [] 
 level_two_tensors = []
-ggml_tensor_buffers = []
+level_three_tensors = []
 dequantized_and_patched_tensor_buffers = []
 prefetch_candidate_stack = []
 
@@ -78,13 +78,6 @@ def initialize_cache_levels():
             cached_tensor_map[tensor]['cache_level'] = "level2"
         else:
             cached_tensor_map[tensor]['cache_level'] = "none"
-            
-    none_tensors = []
-    for tensor, info in cached_tensor_map.items():
-        if info['cache_level'] == "none":
-            none_tensors.append((tensor, info['index']))
-    none_tensors.sort(key=lambda x: x[1])
-    prefetch_candidate_stack = [ptr for ptr, _ in none_tensors]
 
 @profile
 def get_weight(ggml_tensor, dtype, dequant_dtype=None, patch_dtype=None):

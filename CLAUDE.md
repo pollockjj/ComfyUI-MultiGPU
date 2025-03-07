@@ -19,13 +19,20 @@ A critical architectural challenge has emerged when using LLMs for high-performa
 
 These domains are significantly underrepresented in public codebases and thus in LLM training data. Most public repositories emphasize individual element operations, abundant error checking, and safety over raw performance - patterns that are actively harmful for this type of optimization work.
 
-**When working on core optimization code:**
+## ABSOLUTE CODE INTEGRITY REQUIREMENTS
 
-1. The architectural direction must be respected exactly as specified
-2. No additional error checking, parameter validation, or "safety features" should be added
-3. Performance patterns that seem counter-intuitive from a software development perspective may be intentional
-4. Block operations should never be replaced with individual element operations
-5. Explicit memory management strategies take precedence over typical software patterns
+1. NEVER add, remove, or modify ANY code without explicit instructions
+2. PRESERVE EXACTLY the original code structure, including:
+   - No additional comments
+   - No variable renames
+   - No whitespace changes
+   - No added error handling
+3. DO NOT EXTEND, ENHANCE OR COMPLETE functions beyond what is explicitly requested
+4. ONLY MODIFY THE EXACT LINES specified in the instruction
+5. NEVER CREATE NEW FUNCTIONS unless explicitly instructed
+6. KEEP MODIFICATIONS MINIMAL - change only what is absolutely necessary
+
+The above rules are NON-NEGOTIABLE. Violating these rules will result in IMMEDIATE PROJECT TERMINATION.
 
 This codebase represents specialized hardware optimization techniques that may appear unusual but are carefully designed for maximum performance in GPU memory-limited environments. The architectural decisions must be honored precisely rather than "improved" with standard software patterns.
 
@@ -81,8 +88,9 @@ This approach maximizes available VRAM on the compute device for latent space op
 We implement a sophisticated caching system with multiple levels:
 
 - **Level 1 Cache**: High-priority tensors stored directly on compute device (cuda:0)
-- **Level 2 Cache**: Tensors stored on tensorator device (cuda:1)
-- **Ping-Pong Buffers**: Two rotating buffers to enable prefetching
+- **Level 2 Cache**: Dequantized and patched tensors stored on tensorator device (cuda:1)
+- **Level 3 Cache**: Quantized GGML tensors stored on tensorator device (cuda:1)
+- **Ping-Pong Buffers**: Two rotating buffers to enable prefetching (future implementation)
 - **Patch Cache**: Efficiently reuse patch data across operations
 
 ```python
@@ -176,6 +184,14 @@ Once the targeted optimizations are complete, we'll implement the full advanced 
   - [x] Create weakref system for level2 cache
 
 ### Phase 3 (CURRENT FOCUS)
+- [ ] Implement level 3 caching for quantized GGML tensors:
+  - [ ] Add TENSORATOR_GGML_CACHE_SIZE_MB constant for level 3 cache size limit
+  - [ ] Update initialize_cache_levels() to include level 3 cache assignment
+  - [ ] Modify get_weight() to properly handle level 3 cached tensors
+  - [ ] Implement reference management for level 3 cached tensors
+  - [ ] Add telemetry for level 3 cache performance
+
+### Phase 4 (FUTURE)
 - [ ] Optimize GGML and dequantized tensor buffering:
   - [x] Implement rolling tensor window assignment with fixed indexing
   - [x] Set up tracking mechanism for prefetch candidates using prefetch_candidate_stack
