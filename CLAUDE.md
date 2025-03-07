@@ -191,6 +191,72 @@ Once the targeted optimizations are complete, we'll implement the full advanced 
   - [ ] Implement reference management for level 3 cached tensors
   - [ ] Add telemetry for level 3 cache performance
 
+## PRIORITY OVERRIDE: Direct GGML Tensor Device Assignment
+
+A critical architectural opportunity has been identified that could dramatically improve our memory and device management. Instead of our current approach of redirecting tensors after loading, we can directly control where tensors load initially.
+
+### Current Loading Process
+
+1. GGML tensors are loaded from disk via memory mapping in `gguf_sd_loader`:
+   ```python
+   # In loader.py:
+   torch_tensor = torch.from_numpy(tensor.data)  # mmap
+   ```
+
+2. These tensors are created on CPU by default (torch.from_numpy() doesn't accept a device parameter)
+
+3. Our current solution uses a double-move technique in `GGUFModelPatcher.load`:
+   ```python
+   # Our solution in __init__.py:
+   def new_load(self, *args, force_patch_weights=False, **kwargs):
+       # ... existing code ...
+       for device, layers in device_assignments.items():
+           target_device = torch.device(device)
+           for n, m, _ in layers:
+               m.to(self.load_device).to(target_device)
+   ```
+
+### Proposed Enhancement
+
+We can implement a direct device assignment approach by monkey-patching the GGML loader itself:
+
+1. Create a modified version of `gguf_sd_loader` that accepts device specifications:
+   ```python
+   def enhanced_gguf_sd_loader(path, handle_prefix="model.diffusion_model.", return_arch=False, device_assignments=None):
+       # Most of original function...
+       
+       # In the tensor loading loop:
+       for sd_key, tensor in tensors:
+           # ...
+           torch_tensor = torch.from_numpy(tensor.data)  # mmap
+           
+           # Check if we have a device assignment for this tensor
+           if device_assignments and sd_key in device_assignments:
+               target_device = torch.device(device_assignments[sd_key])
+               torch_tensor = torch_tensor.to(target_device)
+           
+           # Continue with original code...
+   ```
+
+2. Monkey-patch this function in place of the original
+
+### Critical Benefits
+
+1. **Elimination of OOMs**: Avoid out-of-memory errors that can occur when trying to load large tensors to compute device first
+
+2. **Device Awareness**: Tensors will correctly know what device they're on, eliminating the need for compute device spoofing
+
+3. **Pipeline Optimization**: Tensors meant for dequantization on tensorator can go there directly, reducing unnecessary transfers
+
+### Implementation Approach
+
+1. Create a direct monkey patch of the loader function
+2. Add device targeting logic that integrates with our device assignment system
+3. Update get_weight() to work with tensors that already report their correct device
+4. Test with increasingly complex device assignment patterns
+
+This approach provides a more direct solution to our device management challenges, addressing the two key issues with our current implementation while maintaining compatibility with the rest of our system.
+
 ### Phase 4 (FUTURE)
 - [ ] Optimize GGML and dequantized tensor buffering:
   - [x] Implement rolling tensor window assignment with fixed indexing
