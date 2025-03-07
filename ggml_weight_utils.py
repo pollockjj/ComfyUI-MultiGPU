@@ -21,7 +21,7 @@ cached_tensor_map = {}
 level_one_tensors = [] 
 level_two_tensors = []
 level_three_tensors = []
-dequantized_and_patched_tensor_buffers = []
+cached_tensor_buffers = []
 prefetch_candidate_stack = []
 
 # hard-coded streams and variables for compute and tensorator during development
@@ -72,10 +72,18 @@ def initialize_cache_levels():
     all_tensors.sort(key=lambda x: (-x[1]['patch_qty'], x[1]['tensor_size']))
 
     cumulative_size = 0
+    level2_size = 0
+    level3_size = 0
     for tensor, info in all_tensors:
         cumulative_size += info['tensor_size']
-        if cumulative_size <= TENSORATOR_CACHE_SIZE_MB:
+        if level2_size <= TENSORATOR_CACHE_SIZE_MB:
             cached_tensor_map[tensor]['cache_level'] = "level2"
+            level2_size += info['tensor_size']
+        elif level3_size <= TENSORATOR_GGML_CACHE_SIZE_MB:
+            cached_tensor_map[tensor]['cache_level'] = "level3"
+            # TODO BLOCK COPY ALL LEVEL 3 TENSORS TO level_three_tensors
+            # TODO PUT REFERENCES IN cached_tensor_map[ggml_tensor_ptr]['cached_tensor']
+            level3_size += info['tensor_size']
         else:
             cached_tensor_map[tensor]['cache_level'] = "none"
 
@@ -88,11 +96,11 @@ def get_weight(ggml_tensor, dtype, dequant_dtype=None, patch_dtype=None):
     ggml_tensor_ptr = ggml_tensor.data_ptr()
 
     if ggml_tensor_ptr in cached_tensor_map:
-        if cached_tensor_map[ggml_tensor_ptr]['cache_level'] == "level1" and cached_tensor_map[ggml_tensor_ptr]['dequantized_and_patched_tensor'] is not None:                # Immediately return if dequantized and patched tensor is already cached on compute_device
-            return cached_tensor_map[ggml_tensor_ptr]['dequantized_and_patched_tensor']
-        elif cached_tensor_map[ggml_tensor_ptr]['cache_level'] == "level2" and cached_tensor_map[ggml_tensor_ptr]['dequantized_and_patched_tensor'] is not None:              # Immediately copy.to() and return if dequantized and patched tensor is already cached on tensorator_device
+        if cached_tensor_map[ggml_tensor_ptr]['cache_level'] == "level1" and cached_tensor_map[ggml_tensor_ptr]['cached_tensor'] is not None:                # Immediately return if dequantized and patched tensor is already cached on compute_device
+            return cached_tensor_map[ggml_tensor_ptr]['cached_tensor']
+        elif cached_tensor_map[ggml_tensor_ptr]['cache_level'] == "level2" and cached_tensor_map[ggml_tensor_ptr]['cached_tensor'] is not None:              # Immediately copy.to() and return if dequantized and patched tensor is already cached on tensorator_device
             with torch.cuda.stream(tensorator_stream):
-                level_two_tensor = cached_tensor_map[ggml_tensor_ptr]['dequantized_and_patched_tensor']
+                level_two_tensor = cached_tensor_map[ggml_tensor_ptr]['cached_tensor']
                 level_two_tensor.to(compute_device, non_blocking=True)
                 tensorator_event.record(tensorator_stream)
                 torch.cuda.current_stream().wait_event(tensorator_event)
@@ -136,7 +144,7 @@ def get_weight(ggml_tensor, dtype, dequant_dtype=None, patch_dtype=None):
         if ggml_tensor_ptr in cached_tensor_map and cached_tensor_map[ggml_tensor_ptr]['cache_level'] == "level1":                #second time through for a level1-assigned tensor as level 1 branches after the first time
             level_one_tensor = tensorator_tensor.clone().to(compute_device, non_blocking=True)
             level_one_tensors.append(level_one_tensor)
-            cached_tensor_map[ggml_tensor_ptr]['dequantized_and_patched_tensor'] = level_one_tensor
+            cached_tensor_map[ggml_tensor_ptr]['cached_tensor'] = level_one_tensor
             # print(f"Moving GGML Tensor: 0x{ggml_tensor_ptr:x} | Index: {cached_tensor_map[ggml_tensor_ptr]['index']:3d} | Size: {cached_tensor_map[ggml_tensor_ptr]['tensor_size']:.2f} | to compute_device")
             tensorator_event.record(tensorator_stream)
             torch.cuda.current_stream().wait_event(tensorator_event)
@@ -144,7 +152,7 @@ def get_weight(ggml_tensor, dtype, dequant_dtype=None, patch_dtype=None):
         elif ggml_tensor_ptr in cached_tensor_map and cached_tensor_map[ggml_tensor_ptr]['cache_level'] == "level2":
             level_two_tensor = tensorator_tensor.clone().to(tensorator_device, non_blocking=True)
             level_two_tensors.append(level_two_tensor)
-            cached_tensor_map[ggml_tensor_ptr]['dequantized_and_patched_tensor'] = level_two_tensor
+            cached_tensor_map[ggml_tensor_ptr]['cached_tensor'] = level_two_tensor
             # print(f"Moving GGML Tensor: 0x{ggml_tensor_ptr:x} | Index: {cached_tensor_map[ggml_tensor_ptr]['index']:3d} | Size: {cached_tensor_map[ggml_tensor_ptr]['tensor_size']:.2f} | to tensorator_device")
             tensorator_event.record(tensorator_stream)
             torch.cuda.current_stream().wait_event(tensorator_event)
@@ -159,7 +167,7 @@ def get_weight(ggml_tensor, dtype, dequant_dtype=None, patch_dtype=None):
             cached_tensor_map[ggml_tensor_ptr]['patch_qty'] = len(patch_list)
             cached_tensor_map[ggml_tensor_ptr]['tensor_size'] = (tensorator_tensor.numel() * tensorator_tensor.element_size() / (1024 * 1024))
             cached_tensor_map[ggml_tensor_ptr]['cache_level'] = "uninitialized" # uninitialized, none, level1, level2, number 0...BUFFER_LOOK_AHEAD - 1
-            cached_tensor_map[ggml_tensor_ptr]['dequantized_and_patched_tensor'] = None
+            cached_tensor_map[ggml_tensor_ptr]['cached_tensor'] = None
             # print(f"GGML Tensor: 0x{ggml_tensor_ptr:x} | Index: {cached_tensor_map[ggml_tensor_ptr]['index']:3d} | Patches: {cached_tensor_map[ggml_tensor_ptr]['patch_qty']:2d} | Size: {cached_tensor_map[ggml_tensor_ptr]['tensor_size']:.2f}")
     
     torch.cuda.current_stream().wait_event(tensorator_event)
