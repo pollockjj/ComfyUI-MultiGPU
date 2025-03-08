@@ -371,8 +371,96 @@ The DisTorch system exposes these options to users:
 3. **Memory prefetching**: Pipeline device transfers to hide latency
 4. **Profile-guided optimization**: Use execution traces to optimize distribution
 
-## Conclusion
+## Implementation Details
+
+## Recent Improvements
+
+The DisTorch system has been significantly improved by moving the device distribution logic to a more optimal point in the loading process. Previously, model modules were first loaded to the compute device and then moved to their target devices in a separate pass. The new implementation:
+
+1. Directly integrates with ComfyUI's core `ModelPatcher.load` method
+2. Applies device assignments during the module loading loop
+3. Moves modules directly to their target devices in one step
+4. Preserves all original functionality while eliminating memory spikes
+
+### Completed Optimizations
+
+A series of important optimizations have been completed:
+
+1. **Architecture-Agnostic Model Support**: Removed the parent/child model restriction that previously prevented certain model architectures from utilizing multi-GPU distribution. The system now supports all model architectures in GGUF format (FLUX, SDXL, etc.) regardless of how they're loaded in the hierarchy.
+
+2. **Streamlined Error Handling**: Eliminated unnecessary error checking and defensive programming patterns, resulting in cleaner code and more predictable execution paths.
+
+3. **Optimized Memory Usage**: Improved memory efficiency by removing redundant operations and ensuring direct device assignment.
+
+4. **Code Cleanup**: Removed extraneous debug statements and simplified logging to essential information only.
+
+These improvements ensure consistent behavior across all model architectures and loading scenarios, making the system more robust and predictable.
+
+### Next Phase: GGML Look-Ahead Buffer
+
+With these core optimizations complete, the next phase of development will focus on implementing the GGML look-ahead buffer system. This enhancement aims to further improve performance by pre-fetching and buffering GGML model weights, reducing latency during model execution.
+
+The look-ahead buffer will:
+1. Predict which layers will be needed next based on execution patterns
+2. Pre-load those layers into a dedicated buffer
+3. Minimize device-to-device transfer delays
+
+This optimization is expected to significantly improve throughput for large models distributed across multiple devices.
+
+## Patch Functions
+
+### Core ModelPatcher Patch
+
+```python
+def patch_model_patcher_load():
+    """
+    Patch the core ModelPatcher.load method to integrate DisTorch at the optimal point
+    in the module loading loop.
+    """
+    import comfy.model_patcher
+    
+    if hasattr(comfy.model_patcher.ModelPatcher, '_distorch_patched'):
+        return  # Already patched
+    
+    original_load = comfy.model_patcher.ModelPatcher.load
+    
+    def patched_load(self, device_to=None, lowvram_model_memory=0, force_patch_weights=False, full_load=False):
+        # [Implementation that integrates DisTorch device assignments during module loading]
+    
+    # Apply the patch
+    comfy.model_patcher.ModelPatcher.load = patched_load
+    comfy.model_patcher.ModelPatcher._distorch_patched = True
+```
+
+### GGUF ModelPatcher Patch
+
+```python
+def register_patched_ggufmodelpatcher():
+    """
+    Patch the GGUF ModelPatcher to ensure proper memory mapping release.
+    """
+    from nodes import NODE_CLASS_MAPPINGS
+    original_loader = NODE_CLASS_MAPPINGS["UnetLoaderGGUF"]
+    module = sys.modules[original_loader.__module__]
+
+    if not hasattr(module.GGUFModelPatcher, '_patched'):
+        original_load = module.GGUFModelPatcher.load
+
+        def new_load(self, *args, force_patch_weights=False, **kwargs):
+            # Call super to use the patched core ModelPatcher.load
+            super(module.GGUFModelPatcher, self).load(*args, force_patch_weights=True, **kwargs)
+            
+            # Mark as released to prevent repeated processing
+            self.mmap_released = True
+
+        module.GGUFModelPatcher.load = new_load
+        module.GGUFModelPatcher._patched = True
+```
+
+# Conclusion
 
 The DisTorch system enables running large Stable Diffusion models across multiple GPUs with minimal code changes and maximum compatibility. By integrating at the optimal point in ComfyUI's model loading process, it maintains full consistency with internal state tracking while providing significant memory capacity benefits.
 
-The system is designed to be user-friendly while offering advanced options for power users, making it accessible to a wide range of users from beginners to experts. The proposed integration improvements will eliminate edge cases and enhance stability while maintaining the elegance of the original design.
+The system is designed to be user-friendly while offering advanced options for power users, making it accessible to a wide range of users from beginners to experts. The recent implementation improvements eliminate edge cases and enhance stability while maintaining the elegance of the original design.
+
+The most important benefit is the elimination of memory spikes during loading by moving modules directly to their target devices in one step, rather than first loading to the compute device and then redistributing in a second pass.

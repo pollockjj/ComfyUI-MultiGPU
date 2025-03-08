@@ -34,6 +34,16 @@ current_device = mm.get_torch_device()
 current_text_encoder_device = mm.text_encoder_device()
 model_allocation_store = {}
 
+def debug_store_allocation(model_obj, allocation, caller):
+    global model_allocation_store
+    
+    if hasattr(model_obj, 'model'):
+        model_hash = create_model_hash(model_obj, f"{caller}-direct")
+        model_allocation_store[model_hash] = allocation
+    elif hasattr(model_obj, 'patcher') and hasattr(model_obj.patcher, 'model'):
+        model_hash = create_model_hash(model_obj.patcher, f"{caller}-patcher")
+        model_allocation_store[model_hash] = allocation
+
 def get_torch_device_patched():
     device = None
     if (not torch.cuda.is_available() or mm.cpu_state == mm.CPUState.CPU or "cpu" in str(current_device).lower()):
@@ -55,14 +65,148 @@ mm.text_encoder_device = text_encoder_device_patched
 
 
 def create_model_hash(model, caller):
-
    model_type = type(model.model).__name__
    model_size = model.model_size()
    first_layers = str(list(model.model_state_dict().keys())[:3])
    identifier = f"{model_type}_{model_size}_{first_layers}"
+   
    final_hash = hashlib.sha256(identifier.encode()).hexdigest()
- 
    return final_hash
+
+def patch_model_patcher_load():
+    import comfy.model_patcher
+    
+    if hasattr(comfy.model_patcher.ModelPatcher, '_distorch_patched'):
+        return
+    
+    original_load = comfy.model_patcher.ModelPatcher.load
+    
+    def patched_load(self, device_to=None, lowvram_model_memory=0, force_patch_weights=False, full_load=False):
+        with self.use_ejected():
+            self.unpatch_hooks()
+            mem_counter = 0
+            patch_counter = 0
+            lowvram_counter = 0
+            loading = self._load_list()
+
+            debug_hash = None
+            flat_assignments = {}
+            has_distorch_assignments = False
+    
+            should_process = 'model_allocation_store' in globals()
+            
+            if should_process:
+                debug_hash = create_model_hash(self, "load")
+                debug_allocations = model_allocation_store.get(debug_hash)
+                if debug_allocations:
+                    device_assignments = analyze_ggml_loading(self.model, debug_allocations)['device_assignments']
+                    has_distorch_assignments = True
+                    for device, layers in device_assignments.items():
+                        for layer_name, _, _ in layers:
+                            flat_assignments[layer_name] = device
+
+            load_completely = []
+            loading.sort(reverse=True)
+            for x in loading:
+                n = x[1]
+                m = x[2]
+                params = x[3]
+                module_mem = x[0]
+
+                lowvram_weight = False
+                weight_key = "{}.weight".format(n)
+                bias_key = "{}.bias".format(n)
+
+                if not full_load and hasattr(m, "comfy_cast_weights"):
+                    if mem_counter + module_mem >= lowvram_model_memory:
+                        lowvram_weight = True
+                        lowvram_counter += 1
+                        if hasattr(m, "prev_comfy_cast_weights"):
+                            continue
+
+                cast_weight = self.force_cast_weights
+                if lowvram_weight:
+                    if hasattr(m, "comfy_cast_weights"):
+                        m.weight_function = []
+                        m.bias_function = []
+                    if weight_key in self.patches:
+                        if force_patch_weights:
+                            self.patch_weight_to_device(weight_key)
+                        else:
+                            m.weight_function = [comfy.model_patcher.LowVramPatch(weight_key, self.patches)]
+                            patch_counter += 1
+                    if bias_key in self.patches:
+                        if force_patch_weights:
+                            self.patch_weight_to_device(bias_key)
+                        else:
+                            m.bias_function = [comfy.model_patcher.LowVramPatch(bias_key, self.patches)]
+                            patch_counter += 1
+                    cast_weight = True
+                else:
+                    if hasattr(m, "comfy_cast_weights"):
+                        comfy.model_patcher.wipe_lowvram_weight(m)
+                    if full_load or mem_counter + module_mem < lowvram_model_memory:
+                        mem_counter += module_mem
+                        load_completely.append((module_mem, n, m, params))
+
+                if cast_weight and hasattr(m, "comfy_cast_weights"):
+                    m.prev_comfy_cast_weights = m.comfy_cast_weights
+                    m.comfy_cast_weights = True
+
+                if weight_key in self.weight_wrapper_patches:
+                    m.weight_function.extend(self.weight_wrapper_patches[weight_key])
+                if bias_key in self.weight_wrapper_patches:
+                    m.bias_function.extend(self.weight_wrapper_patches[bias_key])
+                mem_counter += comfy.model_patcher.move_weight_functions(m, device_to)
+
+            load_completely.sort(reverse=True)
+            device_counts = {}
+            
+            for x in load_completely:
+                n = x[1]
+                m = x[2]
+                params = x[3]
+                
+                if hasattr(m, "comfy_patched_weights") and m.comfy_patched_weights == True:
+                    continue
+
+                for param in params:
+                    patch_target = "{}.{}".format(n, param)
+                    self.patch_weight_to_device(patch_target, device_to=device_to)
+                
+                m.comfy_patched_weights = True
+                
+                target_device = device_to
+                if has_distorch_assignments and n in flat_assignments:
+                    target_device = torch.device(flat_assignments[n])
+                
+                m.to(target_device)
+                
+                device_str = str(target_device)
+                device_counts[device_str] = device_counts.get(device_str, 0) + 1
+
+            if lowvram_counter > 0:
+                logging.info("loaded partially {} {} {}".format(lowvram_model_memory / (1024 * 1024), mem_counter / (1024 * 1024), patch_counter))
+                self.model.model_lowvram = True
+            else:
+                logging.info("loaded completely {} {} {}".format(lowvram_model_memory / (1024 * 1024), mem_counter / (1024 * 1024), full_load))
+                self.model.model_lowvram = False
+                if full_load and not has_distorch_assignments:
+                    self.model.to(device_to)
+                    mem_counter = self.model_size()
+
+            self.model.lowvram_patch_counter += patch_counter
+            self.model.device = device_to
+            self.model.model_loaded_weight_memory = mem_counter
+            self.model.current_weight_patches_uuid = self.patches_uuid
+
+            for callback in self.get_all_callbacks(comfy.patcher_extension.CallbacksMP.ON_LOAD):
+                callback(self, device_to, lowvram_model_memory, force_patch_weights, full_load)
+
+            self.apply_hooks(self.forced_hooks, force_apply=True)
+    
+    comfy.model_patcher.ModelPatcher.load = patched_load
+    comfy.model_patcher.ModelPatcher._distorch_patched = True
 
 def register_patched_ggufmodelpatcher():
     from nodes import NODE_CLASS_MAPPINGS
@@ -72,40 +216,12 @@ def register_patched_ggufmodelpatcher():
     if not hasattr(module.GGUFModelPatcher, '_patched'):
         original_load = module.GGUFModelPatcher.load
 
-    def new_load(self, *args, force_patch_weights=False, **kwargs):
-        global model_allocation_store
+        def new_load(self, *args, force_patch_weights=False, **kwargs):
+            super(module.GGUFModelPatcher, self).load(*args, force_patch_weights=True, **kwargs)
+            self.mmap_released = True
 
-        super(module.GGUFModelPatcher, self).load(*args, force_patch_weights=True, **kwargs)
-        debug_hash = create_model_hash(self, "patcher")
-        linked = []
-        module_count = 0
-        for n, m in self.model.named_modules():
-            module_count += 1
-            if hasattr(m, "weight"):
-                device = getattr(m.weight, "device", None)
-                if device is not None:
-                    linked.append((n, m))
-                    continue
-            if hasattr(m, "bias"):
-                device = getattr(m.bias, "device", None)
-                if device is not None:
-                    linked.append((n, m))
-                    continue
-        if linked:
-            if hasattr(self, 'model'):
-                debug_hash = create_model_hash(self, "patcher")
-                debug_allocations = model_allocation_store.get(debug_hash)
-                if debug_allocations:
-                    device_assignments = analyze_ggml_loading(self.model, debug_allocations)['device_assignments']
-                    for device, layers in device_assignments.items():
-                        target_device = torch.device(device)
-                        for n, m, _ in layers:
-                            m.to(self.load_device).to(target_device)
-
-                    self.mmap_released = True
-
-    module.GGUFModelPatcher.load = new_load
-    module.GGUFModelPatcher._patched = True
+        module.GGUFModelPatcher.load = new_load
+        module.GGUFModelPatcher._patched = True
 
 def analyze_ggml_loading(model, allocations_str):
     DEVICE_RATIOS_DISTORCH = {}
@@ -585,7 +701,6 @@ def override_class_with_distorch(cls):
             if device is not None:
                 current_device = device
             
-            register_patched_ggufmodelpatcher()
             register_patched_gguf_get_weight()
             fn = getattr(super(), cls.FUNCTION)
             out = fn(*args, **kwargs)
@@ -603,14 +718,10 @@ def override_class_with_distorch(cls):
 
             full_allocation = f"{expert_mode_allocations}#{vram_string}" if expert_mode_allocations or vram_string else ""
             
-            logging.info(f"[DisTorch] Full allocation string: {full_allocation}")
+            if full_allocation:
+                logging.info(f"[DisTorch] Full allocation string: {full_allocation}")
             
-            if hasattr(out[0], 'model'):
-                model_hash = create_model_hash(out[0], "override")
-                model_allocation_store[model_hash] = full_allocation
-            elif hasattr(out[0], 'patcher') and hasattr(out[0].patcher, 'model'):
-                model_hash = create_model_hash(out[0].patcher, "override")
-                model_allocation_store[model_hash] = full_allocation
+            debug_store_allocation(out[0], full_allocation, "override_with_distorch")
 
             return out
 
@@ -642,7 +753,6 @@ def override_class_with_distorch_clip(cls):
             if device is not None:
                 current_text_encoder_device = device
             
-            register_patched_ggufmodelpatcher()
             register_patched_gguf_get_weight()
             fn = getattr(super(), cls.FUNCTION)
             out = fn(*args, **kwargs)
@@ -660,7 +770,8 @@ def override_class_with_distorch_clip(cls):
 
             full_allocation = f"{expert_mode_allocations}#{vram_string}" if expert_mode_allocations or vram_string else ""
             
-            logging.info(f"[DisTorch] Full allocation string: {full_allocation}")
+            if full_allocation:
+                logging.info(f"[DisTorch] Full allocation string: {full_allocation}")
             
             if hasattr(out[0], 'model'):
                 model_hash = create_model_hash(out[0], "override")
@@ -743,12 +854,16 @@ def register_patched_gguf_get_weight():
     
     return False
 
+patch_model_patcher_load()
+
 if check_module_exists("ComfyUI-GGUF") or check_module_exists("comfyui-gguf"):
     import importlib
     from .ggml_weight_utils import get_weight as enhanced_get_weight
     
     ops_module = importlib.import_module("custom_nodes.ComfyUI-GGUF.ops")
     ops_module.get_weight_util = enhanced_get_weight
+
+    register_patched_ggufmodelpatcher()
     
     NODE_CLASS_MAPPINGS["UnetLoaderGGUFMultiGPU"] = override_class(UnetLoaderGGUF)
     NODE_CLASS_MAPPINGS["UnetLoaderGGUFDisTorchMultiGPU"] = override_class_with_distorch(UnetLoaderGGUF)
