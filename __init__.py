@@ -30,6 +30,7 @@ from .nodes import (
     HyVideoModelLoader, HyVideoVAELoader, DownloadAndLoadHyVideoTextEncoder
 )
 
+cached_tensor_map = {}
 current_device = mm.get_torch_device()
 current_text_encoder_device = mm.text_encoder_device()
 model_allocation_store = {}
@@ -152,17 +153,24 @@ def register_patched_gguf_loader():
         original_gguf_sd_loader = loader_module.gguf_sd_loader
 
         def new_gguf_sd_loader(path, handle_prefix="model.diffusion_model.", return_arch=False):
-            """
-            Read state dict as fake tensors
-            """
+
             reader = gguf.GGUFReader(path)
 
-            # filter and strip prefix
             has_prefix = False
             if handle_prefix is not None:
                 prefix_len = len(handle_prefix)
                 tensor_names = set(tensor.name for tensor in reader.tensors)
                 has_prefix = any(s.startswith(handle_prefix) for s in tensor_names)
+            for tensor in reader.tensors:
+                tensor_offset = tensor.data_offset
+                if tensor_offset not in cached_tensor_map:
+                    cached_tensor_map[tensor_offset] = {}
+                    cached_tensor_map[tensor_offset]['index'] = len(cached_tensor_map) - 1
+                    cached_tensor_map[tensor_offset]['name'] = tensor.name
+                    cached_tensor_map[tensor_offset]['data_offset'] = tensor.data_offset
+                    print(f"Tensor: 0x{tensor_offset:x} | Index: {cached_tensor_map[tensor_offset]['index']:3d} | Name: {cached_tensor_map[tensor_offset]['name']}")
+
+
 
             tensors = []
             for tensor in reader.tensors:
