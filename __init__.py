@@ -67,46 +67,57 @@ def create_model_hash(model, caller):
 
 def register_patched_ggufmodelpatcher():
     from nodes import NODE_CLASS_MAPPINGS
+    import sys
     original_loader = NODE_CLASS_MAPPINGS["UnetLoaderGGUF"]
     module = sys.modules[original_loader.__module__]
 
     if not hasattr(module.GGUFModelPatcher, '_patched'):
         original_load = module.GGUFModelPatcher.load
 
-    def new_load(self, *args, force_patch_weights=False, **kwargs):
+    # Capture the outer "module" variable via a default argument to avoid UnboundLocalError.
+    def new_load(self, *args, force_patch_weights=False, _module=module, **kwargs):
         global model_allocation_store
 
-        super(module.GGUFModelPatcher, self).load(*args, force_patch_weights=True, **kwargs)
-        debug_hash = create_model_hash(self, "patcher")
+        print(f"args: {args}")
+        print(f"kwargs: {kwargs}")
+        print("force_patch_weights: True")
+        super(_module.GGUFModelPatcher, self).load(*args, force_patch_weights=True, **kwargs)
+
+        
+        print(f"Attempting to load model with GGUFModelPatcher")
+        
+        
         linked = []
-        module_count = 0
-        for n, m in self.model.named_modules():
-            module_count += 1
-            if hasattr(m, "weight"):
-                device = getattr(m.weight, "device", None)
-                if device is not None:
-                    linked.append((n, m))
+        if kwargs.get("lowvram_model_memory", 0) > 0:
+            for module_name, module_instance in self.model.named_modules():
+                if hasattr(module_instance, "weight"):
+                    weight_device = "cpu"
+                    linked.append((module_name, module_instance))
                     continue
-            if hasattr(m, "bias"):
-                device = getattr(m.bias, "device", None)
-                if device is not None:
-                    linked.append((n, m))
+                if hasattr(module_instance, "bias"):
+                    bias_device = "cpu"
+                    linked.append((module_name, module_instance))
                     continue
         if linked:
-            if hasattr(self, 'model'):
-                debug_hash = create_model_hash(self, "patcher")
-                debug_allocations = model_allocation_store.get(debug_hash)
-                if debug_allocations:
-                    device_assignments = analyze_ggml_loading(self.model, debug_allocations)['device_assignments']
-                    for device, layers in device_assignments.items():
-                        target_device = torch.device(device)
-                        for n, m, _ in layers:
-                            m.to(self.load_device).to(target_device)
-
-                    self.mmap_released = True
+            print(f"Attempting to release mmap ({len(linked)})")
+            # Print all aspects of each tensor in linked (one line per tensor)
+            for module_name, module_instance in linked:
+                if hasattr(module_instance, "weight"):
+                    weight = module_instance.weight
+                    if weight is not None and weight.device is not None:
+                        print(f"{module_name} | weight.device: {weight.device})")
+                if hasattr(module_instance, "bias") and module_instance.bias is not None:
+                    bias = module_instance.bias
+                    if bias.device is not None:
+                        print(f"{module_name} | bias.device: {bias.device})")
+            # Perform the double transfer: first to self.load_device, then to self.offload_device.
+            for module_name, module_instance in linked:
+                module_instance.to(self.load_device).to(self.offload_device)
+        self.mmap_released = True
 
     module.GGUFModelPatcher.load = new_load
     module.GGUFModelPatcher._patched = True
+
     
 def register_patched_gguf_loader():
     from nodes import NODE_CLASS_MAPPINGS
