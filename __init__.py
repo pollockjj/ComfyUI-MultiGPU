@@ -75,138 +75,140 @@ def create_model_hash(model, caller):
 
 def patch_model_patcher_load():
     import comfy.model_patcher
-    
+
     if hasattr(comfy.model_patcher.ModelPatcher, '_distorch_patched'):
         return
-    
+
     original_load = comfy.model_patcher.ModelPatcher.load
-    
+
     def patched_load(self, device_to=None, lowvram_model_memory=0, force_patch_weights=False, full_load=False):
         with self.use_ejected():
             self.unpatch_hooks()
-            mem_counter = 0
+            memory_counter = 0
             patch_counter = 0
             lowvram_counter = 0
-            loading = self._load_list()
+            modules_to_load = self._load_list()
 
-            debug_hash = None
-            flat_assignments = {}
+            model_unique_hash = None
+            module_device_assignments = {}
             has_distorch_assignments = False
-    
-            should_process = 'model_allocation_store' in globals()
-            
-            if should_process:
-                debug_hash = create_model_hash(self, "load")
-                debug_allocations = model_allocation_store.get(debug_hash)
-                if debug_allocations:
-                    device_assignments = analyze_ggml_loading(self.model, debug_allocations)['device_assignments']
+
+            should_process_distorch = 'model_allocation_store' in globals()
+
+            if should_process_distorch:
+                model_unique_hash = create_model_hash(self, "load")
+                model_allocations_string = model_allocation_store.get(model_unique_hash)
+                if model_allocations_string:
+                    device_distribution_plan = analyze_ggml_loading(self.model, model_allocations_string)['device_assignments']
                     has_distorch_assignments = True
-                    for device, layers in device_assignments.items():
-                        for layer_name, _, _ in layers:
-                            flat_assignments[layer_name] = device
+                    for device_name, module_list in device_distribution_plan.items():
+                        for module_tuple in module_list:
+                            module_name = module_tuple[0]
+                            module_device_assignments[module_name] = device_name
 
-            load_completely = []
-            loading.sort(reverse=True)
-            for x in loading:
-                n = x[1]
-                m = x[2]
-                params = x[3]
-                module_mem = x[0]
+            modules_to_load_completely = []
+            modules_to_load.sort(reverse=True)
+            for module_entry in modules_to_load:
+                module_name = module_entry[1]
+                module_object = module_entry[2]
+                module_parameters = module_entry[3]
+                module_memory_size = module_entry[0]
 
-                lowvram_weight = False
-                weight_key = "{}.weight".format(n)
-                bias_key = "{}.bias".format(n)
+                is_lowvram_module = False
+                weight_parameter_key = "{}.weight".format(module_name)
+                bias_parameter_key = "{}.bias".format(module_name)
 
-                if not full_load and hasattr(m, "comfy_cast_weights"):
-                    if mem_counter + module_mem >= lowvram_model_memory:
-                        lowvram_weight = True
+                if not full_load and hasattr(module_object, "comfy_cast_weights"):
+                    if memory_counter + module_memory_size >= lowvram_model_memory:
+                        is_lowvram_module = True
                         lowvram_counter += 1
-                        if hasattr(m, "prev_comfy_cast_weights"):
+                        if hasattr(module_object, "prev_comfy_cast_weights"):
                             continue
 
-                cast_weight = self.force_cast_weights
-                if lowvram_weight:
-                    if hasattr(m, "comfy_cast_weights"):
-                        m.weight_function = []
-                        m.bias_function = []
-                    if weight_key in self.patches:
+                should_cast_weight = self.force_cast_weights
+                if is_lowvram_module:
+                    if hasattr(module_object, "comfy_cast_weights"):
+                        module_object.weight_function = []
+                        module_object.bias_function = []
+                    if weight_parameter_key in self.patches:
                         if force_patch_weights:
-                            self.patch_weight_to_device(weight_key)
+                            self.patch_weight_to_device(weight_parameter_key)
                         else:
-                            m.weight_function = [comfy.model_patcher.LowVramPatch(weight_key, self.patches)]
+                            module_object.weight_function = [comfy.model_patcher.LowVramPatch(weight_parameter_key, self.patches)]
                             patch_counter += 1
-                    if bias_key in self.patches:
+                    if bias_parameter_key in self.patches:
                         if force_patch_weights:
-                            self.patch_weight_to_device(bias_key)
+                            self.patch_weight_to_device(bias_parameter_key)
                         else:
-                            m.bias_function = [comfy.model_patcher.LowVramPatch(bias_key, self.patches)]
+                            module_object.bias_function = [comfy.model_patcher.LowVramPatch(bias_parameter_key, self.patches)]
                             patch_counter += 1
-                    cast_weight = True
+                    should_cast_weight = True
                 else:
-                    if hasattr(m, "comfy_cast_weights"):
-                        comfy.model_patcher.wipe_lowvram_weight(m)
-                    if full_load or mem_counter + module_mem < lowvram_model_memory:
-                        mem_counter += module_mem
-                        load_completely.append((module_mem, n, m, params))
+                    if hasattr(module_object, "comfy_cast_weights"):
+                        comfy.model_patcher.wipe_lowvram_weight(module_object)
+                    if full_load or memory_counter + module_memory_size < lowvram_model_memory:
+                        memory_counter += module_memory_size
+                        modules_to_load_completely.append((module_memory_size, module_name, module_object, module_parameters))
 
-                if cast_weight and hasattr(m, "comfy_cast_weights"):
-                    m.prev_comfy_cast_weights = m.comfy_cast_weights
-                    m.comfy_cast_weights = True
+                if should_cast_weight and hasattr(module_object, "comfy_cast_weights"):
+                    module_object.prev_comfy_cast_weights = module_object.comfy_cast_weights
+                    module_object.comfy_cast_weights = True
 
-                if weight_key in self.weight_wrapper_patches:
-                    m.weight_function.extend(self.weight_wrapper_patches[weight_key])
-                if bias_key in self.weight_wrapper_patches:
-                    m.bias_function.extend(self.weight_wrapper_patches[bias_key])
-                mem_counter += comfy.model_patcher.move_weight_functions(m, device_to)
+                if weight_parameter_key in self.weight_wrapper_patches:
+                    module_object.weight_function.extend(self.weight_wrapper_patches[weight_parameter_key])
+                if bias_parameter_key in self.weight_wrapper_patches:
+                    module_object.bias_function.extend(self.weight_wrapper_patches[bias_parameter_key])
+                memory_counter += comfy.model_patcher.move_weight_functions(module_object, device_to)
 
-            load_completely.sort(reverse=True)
-            device_counts = {}
-            
-            for x in load_completely:
-                n = x[1]
-                m = x[2]
-                params = x[3]
-                
-                if hasattr(m, "comfy_patched_weights") and m.comfy_patched_weights == True:
+            modules_to_load_completely.sort(reverse=True)
+            device_module_counts = {}
+
+            for module_entry in modules_to_load_completely:
+                module_name = module_entry[1]
+                module_object = module_entry[2]
+                module_parameters = module_entry[3]
+
+                if hasattr(module_object, "comfy_patched_weights") and module_object.comfy_patched_weights == True:
                     continue
 
-                for param in params:
-                    patch_target = "{}.{}".format(n, param)
-                    self.patch_weight_to_device(patch_target, device_to=device_to)
-                
-                m.comfy_patched_weights = True
-                
-                target_device = device_to
-                if has_distorch_assignments and n in flat_assignments:
-                    target_device = torch.device(flat_assignments[n])
-                
-                m.to(target_device)
-                
-                device_str = str(target_device)
-                device_counts[device_str] = device_counts.get(device_str, 0) + 1
+                for parameter_name in module_parameters:
+                    parameter_full_path = "{}.{}".format(module_name, parameter_name)
+                    self.patch_weight_to_device(parameter_full_path, device_to=device_to)
+
+                module_object.comfy_patched_weights = True
+
+                target_device_for_module = device_to
+                if has_distorch_assignments and module_name in module_device_assignments:
+                    target_device_for_module = torch.device(module_device_assignments[module_name])
+
+                module_object.to(target_device_for_module)
+
+                device_identifier = str(target_device_for_module)
+                device_module_counts[device_identifier] = device_module_counts.get(device_identifier, 0) + 1
 
             if lowvram_counter > 0:
-                logging.info("loaded partially {} {} {}".format(lowvram_model_memory / (1024 * 1024), mem_counter / (1024 * 1024), patch_counter))
+                logging.info("loaded partially {} {} {}".format(lowvram_model_memory / (1024 * 1024), memory_counter / (1024 * 1024), patch_counter))
                 self.model.model_lowvram = True
             else:
-                logging.info("loaded completely {} {} {}".format(lowvram_model_memory / (1024 * 1024), mem_counter / (1024 * 1024), full_load))
+                logging.info("loaded completely {} {} {}".format(lowvram_model_memory / (1024 * 1024), memory_counter / (1024 * 1024), full_load))
                 self.model.model_lowvram = False
                 if full_load and not has_distorch_assignments:
                     self.model.to(device_to)
-                    mem_counter = self.model_size()
+                    memory_counter = self.model_size()
 
             self.model.lowvram_patch_counter += patch_counter
             self.model.device = device_to
-            self.model.model_loaded_weight_memory = mem_counter
+            self.model.model_loaded_weight_memory = memory_counter
             self.model.current_weight_patches_uuid = self.patches_uuid
 
-            for callback in self.get_all_callbacks(comfy.patcher_extension.CallbacksMP.ON_LOAD):
-                callback(self, device_to, lowvram_model_memory, force_patch_weights, full_load)
+            for callback_function in self.get_all_callbacks(comfy.patcher_extension.CallbacksMP.ON_LOAD):
+                callback_function(self, device_to, lowvram_model_memory, force_patch_weights, full_load)
 
             self.apply_hooks(self.forced_hooks, force_apply=True)
-    
+
     comfy.model_patcher.ModelPatcher.load = patched_load
     comfy.model_patcher.ModelPatcher._distorch_patched = True
+
 
 def register_patched_ggufmodelpatcher():
     from nodes import NODE_CLASS_MAPPINGS
