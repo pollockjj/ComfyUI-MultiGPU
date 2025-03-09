@@ -34,6 +34,12 @@ current_device = mm.get_torch_device()
 current_text_encoder_device = mm.text_encoder_device()
 model_allocation_store = {}
 
+# Global cache for tensor mapping
+cached_tensor_map = {}
+level_one_tensors = []
+level_two_tensors = []
+level_three_tensors = []
+
 def debug_store_allocation(model_obj, allocation, caller):
     global model_allocation_store
     
@@ -113,6 +119,34 @@ def patch_model_patcher_load():
                 module_object = module_entry[2]
                 module_parameters = module_entry[3]
                 module_memory_size = module_entry[0]
+
+                # Collect tensor information for each parameter in this module
+                for parameter_name, parameter_value in module_object.named_parameters(recurse=False):
+                    if parameter_value is None or parameter_value.data.dtype == torch.bool:
+                        continue
+                        
+                    tensor_size_mb = parameter_value.numel() * parameter_value.element_size() / (1024 * 1024)
+                    tensor_ptr = parameter_value.data_ptr()
+                    
+                    # Store tensor information in cached_tensor_map
+                    global cached_tensor_map
+                    cached_tensor_map[tensor_ptr] = {}
+                    cached_tensor_map[tensor_ptr]['index'] = len(cached_tensor_map) - 1
+                    cached_tensor_map[tensor_ptr]['name'] = f"{module_name}.{parameter_name}"
+                    cached_tensor_map[tensor_ptr]['module'] = module_name
+                    cached_tensor_map[tensor_ptr]['param'] = parameter_name
+                    cached_tensor_map[tensor_ptr]['tensor_size'] = tensor_size_mb
+                    cached_tensor_map[tensor_ptr]['shape'] = list(parameter_value.shape)
+                    cached_tensor_map[tensor_ptr]['dtype'] = str(parameter_value.dtype)
+                    cached_tensor_map[tensor_ptr]['load_device'] = str(parameter_value.device)
+                    cached_tensor_map[tensor_ptr]['patch_qty'] = 0
+                    cached_tensor_map[tensor_ptr]['cache_level'] = "uninitialized"
+                    cached_tensor_map[tensor_ptr]['cached_tensor'] = None
+                    
+                    # One-line print for easy commenting in/out
+                    print(f"TENSOR: ptr=0x{tensor_ptr:x} | module={module_name} | param={parameter_name} | "
+                          f"size={tensor_size_mb:.2f}MB | shape={list(parameter_value.shape)} | "
+                          f"dtype={parameter_value.dtype} | device={parameter_value.device}")
 
                 is_lowvram_module = False
                 weight_parameter_key = "{}.weight".format(module_name)
