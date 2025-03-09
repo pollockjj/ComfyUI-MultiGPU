@@ -30,6 +30,8 @@ from .nodes import (
     HyVideoModelLoader, HyVideoVAELoader, DownloadAndLoadHyVideoTextEncoder
 )
 
+SMALL_TENSOR_THRESHOLD = 0.0001  # 0.01% of total size
+
 current_device = mm.get_torch_device()
 current_text_encoder_device = mm.text_encoder_device()
 model_allocation_store = {}
@@ -283,30 +285,6 @@ def analyze_ggml_loading(model, allocations_str):
     memory_by_type = defaultdict(int)
     total_memory = 0
 
-    for module_name, module_object in model.named_modules():
-        if hasattr(module_object, "weight"):
-            for parameter_name, parameter_value in module_object.named_parameters(recurse=False):
-                if parameter_value is None or parameter_value.data.dtype == torch.bool:
-                    continue
-                    
-                tensor_size_mb = parameter_value.numel() * parameter_value.element_size() / (1024 * 1024)
-                tensor_ptr = parameter_value.data_ptr()
-                
-                cached_tensor_map[tensor_ptr] = {}
-                cached_tensor_map[tensor_ptr]['index'] = len(cached_tensor_map) - 1
-                cached_tensor_map[tensor_ptr]['name'] = f"{module_name}.{parameter_name}"
-                cached_tensor_map[tensor_ptr]['module'] = module_name
-                cached_tensor_map[tensor_ptr]['param'] = parameter_name
-                cached_tensor_map[tensor_ptr]['tensor_size'] = tensor_size_mb
-                cached_tensor_map[tensor_ptr]['shape'] = list(parameter_value.shape)
-                cached_tensor_map[tensor_ptr]['dtype'] = str(parameter_value.dtype)
-                cached_tensor_map[tensor_ptr]['load_device'] = str(parameter_value.device)
-                cached_tensor_map[tensor_ptr]['patch_qty'] = 0
-                cached_tensor_map[tensor_ptr]['cache_level'] = "uninitialized"
-                cached_tensor_map[tensor_ptr]['cached_tensor'] = None
-                print(f"TENSOR: ptr=0x{tensor_ptr:x} | module={module_name} | param={parameter_name} | "f"size={tensor_size_mb:.2f}MB | shape={list(parameter_value.shape)} | "f"dtype={parameter_value.dtype} | device={parameter_value.device}")
-
-
     for name, module in model.named_modules():
         if hasattr(module, "weight"):
             layer_type = type(module).__name__
@@ -373,6 +351,45 @@ def analyze_ggml_loading(model, allocations_str):
         mem_percent = (device_memories[dev] / total_memory) * 100 if total_memory > 0 else 0
         logging.info(fmt_assign.format(dev,str(len(layers)),f"{mem_mb:.2f}",f"{mem_percent:.1f}%"))
     logging.info(dash_line)
+    
+    for module_name, module_object in model.named_modules():
+        if hasattr(module_object, "weight"):
+            for parameter_name, parameter_value in module_object.named_parameters(recurse=False):
+                if parameter_value is None or parameter_value.data.dtype == torch.bool:
+                    continue
+                    
+                tensor_size_mb = parameter_value.numel() * parameter_value.element_size() / (1024 * 1024)
+                tensor_ptr = parameter_value.data_ptr()
+                
+                cached_tensor_map[tensor_ptr] = {}
+                cached_tensor_map[tensor_ptr]['index'] = len(cached_tensor_map) - 1
+                cached_tensor_map[tensor_ptr]['name'] = f"{module_name}.{parameter_name}"
+                cached_tensor_map[tensor_ptr]['module'] = module_name
+                cached_tensor_map[tensor_ptr]['param'] = parameter_name
+                cached_tensor_map[tensor_ptr]['distorch_device'] = next((device for device, modules in device_assignments.items() if any(name == module_name for name, _, _ in modules)), str(parameter_value.device))
+                cached_tensor_map[tensor_ptr]['tensor_size'] = tensor_size_mb
+                cached_tensor_map[tensor_ptr]['shape'] = list(parameter_value.shape)
+                cached_tensor_map[tensor_ptr]['dtype'] = str(parameter_value.dtype)
+                cached_tensor_map[tensor_ptr]['patch_qty'] = 0
+                cached_tensor_map[tensor_ptr]['cache_level'] = "uninitialized"
+                cached_tensor_map[tensor_ptr]['cached_tensor'] = None
+                #print(f"TENSOR: ptr=0x{tensor_ptr:x} | index={cached_tensor_map[tensor_ptr]['index']:<4} | name={cached_tensor_map[tensor_ptr]['name']:<60} | module={cached_tensor_map[tensor_ptr]['module']:<50} | param={cached_tensor_map[tensor_ptr]['param']:<8} | device={cached_tensor_map[tensor_ptr]['distorch_device']:<8} | size={cached_tensor_map[tensor_ptr]['tensor_size']:>8.2f}MB | shape={str(cached_tensor_map[tensor_ptr]['shape']):<20} | dtype={cached_tensor_map[tensor_ptr]['dtype']:<15} | patches={cached_tensor_map[tensor_ptr]['patch_qty']:<3} | cache={cached_tensor_map[tensor_ptr]['cache_level']}")
+                print(f"TENSOR: name={cached_tensor_map[tensor_ptr]['name']:<60} | device={cached_tensor_map[tensor_ptr]['distorch_device']:<8} | size={cached_tensor_map[tensor_ptr]['tensor_size']:>8.2f}")
+    
+    # Apply small tensor threshold to ensure small GGML tensors get assigned to compute device
+    # The compute device is the first device in the allocation string
+    compute_device = distorch_alloc.split(';')[0].split(',')[0]
+    
+    # Calculate total tensor size
+    total_tensor_size = sum(info['tensor_size'] for info in cached_tensor_map.values())
+    
+    # Apply small tensor threshold (0.01% of total size)
+    size_threshold = total_tensor_size * SMALL_TENSOR_THRESHOLD
+    
+    # Reassign small tensors to compute device
+    for tensor_ptr, info in cached_tensor_map.items():
+        if info['tensor_size'] < size_threshold:
+            info['distorch_device'] = compute_device
 
     return {"device_assignments": device_assignments}
 
