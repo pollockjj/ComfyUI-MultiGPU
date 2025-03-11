@@ -285,14 +285,18 @@ def analyze_ggml_loading(model, allocations_str):
     memory_by_type = defaultdict(int)
     total_memory = 0
 
-    for module_name, module in model.named_modules():
-        layer_type = type(module).__name__
-        for param_name, param_value in module.named_parameters(recurse=False):
-            if param_value is not None and param_value.dtype != torch.bool:
-                tensor_memory = param_value.numel() * param_value.element_size()
-                layer_list.append((module_name, param_name, param_value, layer_type, tensor_memory))
-                memory_by_type[layer_type] += tensor_memory
-                total_memory += tensor_memory
+    for name, module in model.named_modules():
+        if hasattr(module, "weight"):
+            layer_type = type(module).__name__
+            layer_summary[layer_type] = layer_summary.get(layer_type, 0) + 1
+            layer_list.append((name, module, layer_type))
+            layer_memory = 0
+            if module.weight is not None:
+                layer_memory += module.weight.numel() * module.weight.element_size()
+            if hasattr(module, "bias") and module.bias is not None:
+                layer_memory += module.bias.numel() * module.bias.element_size()
+            memory_by_type[layer_type] += layer_memory
+            total_memory += layer_memory
 
     logging.info("     DisTorch GGML Layer Distribution")
     logging.info(dash_line)
@@ -305,53 +309,39 @@ def analyze_ggml_loading(model, allocations_str):
         logging.info(fmt_layer.format(layer_type,str(count),f"{mem_mb:.2f}",f"{mem_percent:.1f}%"))
     logging.info(dash_line)
 
-    small_tensor_threshold = total_memory * SMALL_TENSOR_THRESHOLD
     nonzero_devices = [d for d, r in DEVICE_RATIOS_DISTORCH.items() if r > 0]
-    compute_device = nonzero_devices[0]
     nonzero_total_ratio = sum(DEVICE_RATIOS_DISTORCH[d] for d in nonzero_devices)
     device_assignments = {device: [] for device in DEVICE_RATIOS_DISTORCH.keys()}
-    device_memory = {device: 0 for device in nonzero_devices}
-    target_memory = {device: (DEVICE_RATIOS_DISTORCH[device]/nonzero_total_ratio) * total_memory for device in nonzero_devices}
+    total_layers = len(layer_list)
+    current_layer = 0
 
-    for module_name, param_name, param_value, layer_type, tensor_memory in layer_list:
-        tensor_size_mb = tensor_memory / (1024 * 1024)
-        full_name = f"{module_name}.{param_name}"
-
-        if tensor_memory < small_tensor_threshold:
-            device_assignments[compute_device].append((full_name, param_value, layer_type, tensor_memory))
-            #logging.info(f"TENSOR: name={full_name:<60} | Size={tensor_size_mb:>8.4f}MB | → Below SMALL_TENSOR_THRESHOLD: assigned to compute device: {compute_device:<8}")
+    for idx, device in enumerate(nonzero_devices):
+        ratio = DEVICE_RATIOS_DISTORCH[device]
+        if idx == len(nonzero_devices) - 1:
+            device_layer_count = total_layers - current_layer
         else:
-            best_device = min(nonzero_devices, key=lambda d: device_memory[d] / target_memory[d] if target_memory[d] > 0 else float('inf'))
-            device_assignments[best_device].append((full_name, param_value, layer_type, tensor_memory))
-            device_memory[best_device] += tensor_memory
-            #logging.info(f"TENSOR: name={full_name:<60} | Size={tensor_size_mb:>8.4f}MB | → Assigned to distorch calculated, interleaved device: {best_device:<8} | Device total: {device_memory[best_device]/1000:>8.1f}GB ({device_memory[best_device] / target_memory[best_device] * 100:>6.1f}%)")
+            device_layer_count = int((ratio / nonzero_total_ratio) * total_layers)
+        start_idx = current_layer
+        end_idx = current_layer + device_layer_count
+        device_assignments[device] = layer_list[start_idx:end_idx]
+        current_layer += device_layer_count
 
     logging.info("    DisTorch Final Device/Layer Assignments")
     logging.info(dash_line)
     fmt_assign = "{:<12}{:>10}{:>14}{:>10}"
     logging.info(fmt_assign.format("Device", "Layers", "Memory (MB)", "% Total"))
     logging.info(dash_line)
+    total_assigned_memory = 0
     device_memories = {}
-    layer_counts = defaultdict(int)
-
     for device, layers in device_assignments.items():
-        current_device_memory = 0
-        for layer_info in layers:
-            current_device_memory += layer_info[3]
-            layer_counts[layer_info[2]] += 1
-        device_memories[device] = current_device_memory
-
-    logging.info("         DisTorch GGML Layer Distribution")
-    logging.info(dash_line)
-    fmt_layer = "{:<12}{:>10}{:>14}{:>10}"
-    logging.info(fmt_layer.format("Layer Type", "Layer", "Memory (MB)", "% Total"))
-    logging.info(dash_line)
-    for layer_type in sorted(layer_counts.keys()):
-        count = layer_counts[layer_type]
-        mem_mb = memory_by_type[layer_type] / (1024 * 1024)
-        mem_percent = (memory_by_type[layer_type] / total_memory) * 100 if total_memory > 0 else 0
-        logging.info(fmt_layer.format(layer_type,str(count),f"{mem_mb:.2f}",f"{mem_percent:.1f}%"))
-    logging.info(dash_line)
+        device_memory = 0
+        for layer_type in layer_summary:
+            type_layers = sum(1 for _, _, lt in layers if lt == layer_type)
+            if layer_summary[layer_type] > 0:
+                mem_per_layer = memory_by_type[layer_type] / layer_summary[layer_type]
+                device_memory += mem_per_layer * type_layers
+        device_memories[device] = device_memory
+        total_assigned_memory += device_memory
 
     sorted_assignments = sorted(device_assignments.keys(), key=lambda d: (d == "cpu", d))
 
@@ -360,27 +350,49 @@ def analyze_ggml_loading(model, allocations_str):
         mem_mb = device_memories[dev] / (1024 * 1024)
         mem_percent = (device_memories[dev] / total_memory) * 100 if total_memory > 0 else 0
         logging.info(fmt_assign.format(dev,str(len(layers)),f"{mem_mb:.2f}",f"{mem_percent:.1f}%"))
-
     logging.info(dash_line)
-
+    
     for module_name, module_object in model.named_modules():
         if hasattr(module_object, "weight"):
             for parameter_name, parameter_value in module_object.named_parameters(recurse=False):
                 if parameter_value is None or parameter_value.data.dtype == torch.bool:
                     continue
-
+                    
                 tensor_size_mb = parameter_value.numel() * parameter_value.element_size() / (1024 * 1024)
                 tensor_ptr = parameter_value.data_ptr()
-
-                cached_tensor_map[tensor_ptr] = {}
-                cached_tensor_map[tensor_ptr]['index'] = len(cached_tensor_map) - 1
-                cached_tensor_map[tensor_ptr]['name'] = f"{module_name}.{parameter_name}"
-                cached_tensor_map[tensor_ptr]['distorch_device'] = next((device for device, layers in device_assignments.items() if any(name == f"{module_name}.{param_name}" for name, _, _, _ in layers)), str(parameter_value.device)) # corrected lookup
-                cached_tensor_map[tensor_ptr]['tensor_size'] = tensor_size_mb
-                cached_tensor_map[tensor_ptr]['patch_qty'] = 0
-                cached_tensor_map[tensor_ptr]['cache_level'] = "uninitialized"
-                cached_tensor_map[tensor_ptr]['cached_tensor'] = None
-                logging.info(f"TENSOR: ptr=0x{tensor_ptr:x} | index={cached_tensor_map[tensor_ptr]['index']:<4} | name={cached_tensor_map[tensor_ptr]['name']:<60} | distorch_device={cached_tensor_map[tensor_ptr]['distorch_device']:<8} | size={cached_tensor_map[tensor_ptr]['tensor_size']:>8.2f}MB | patches={cached_tensor_map[tensor_ptr]['patch_qty']:<3} | cache={cached_tensor_map[tensor_ptr]['cache_level']}")
+                
+                # Use tensor pointer as the key for cached_tensor_map
+                stored_hash = tensor_ptr
+                
+                cached_tensor_map[stored_hash] = {}
+                cached_tensor_map[stored_hash]['index'] = len(cached_tensor_map) - 1
+                cached_tensor_map[stored_hash]['name'] = f"{module_name}.{parameter_name}"
+                cached_tensor_map[stored_hash]['module'] = module_name
+                cached_tensor_map[stored_hash]['param'] = parameter_name
+                cached_tensor_map[stored_hash]['distorch_device'] = next((device for device, modules in device_assignments.items() if any(name == module_name for name, _, _ in modules)), str(parameter_value.device))
+                cached_tensor_map[stored_hash]['tensor_size'] = tensor_size_mb
+                cached_tensor_map[stored_hash]['shape'] = list(parameter_value.shape)
+                cached_tensor_map[stored_hash]['dtype'] = str(parameter_value.dtype)
+                cached_tensor_map[stored_hash]['patch_qty'] = 0
+                cached_tensor_map[stored_hash]['cache_level'] = "uninitialized"
+                cached_tensor_map[stored_hash]['cached_tensor'] = None
+                
+                print(f"TENSOR: ptr=0x{stored_hash:x} | index={cached_tensor_map[stored_hash]['index']:<4} | name={cached_tensor_map[stored_hash]['name']:<60} | device={cached_tensor_map[stored_hash]['distorch_device']:<8} | size={cached_tensor_map[stored_hash]['tensor_size']:>8.2f}")
+    
+    # Apply small tensor threshold to ensure small GGML tensors get assigned to compute device
+    # The compute device is the first device in the allocation string
+    compute_device = distorch_alloc.split(';')[0].split(',')[0]
+    
+    # Calculate total tensor size
+    total_tensor_size = sum(info['tensor_size'] for info in cached_tensor_map.values())
+    
+    # Apply small tensor threshold (0.01% of total size)
+    size_threshold = total_tensor_size * SMALL_TENSOR_THRESHOLD
+    
+    # Reassign small tensors to compute device
+    for stored_hash, info in cached_tensor_map.items():
+        if info['tensor_size'] < size_threshold:
+            info['distorch_device'] = compute_device
 
     return {"device_assignments": device_assignments}
 
@@ -868,6 +880,7 @@ if check_module_exists("ComfyUI-MMAudio") or check_module_exists("comfyui-mmaudi
     NODE_CLASS_MAPPINGS["MMAudioModelLoaderMultiGPU"] = override_class(MMAudioModelLoader)
     NODE_CLASS_MAPPINGS["MMAudioFeatureUtilsLoaderMultiGPU"] = override_class(MMAudioFeatureUtilsLoader)
     NODE_CLASS_MAPPINGS["MMAudioSamplerMultiGPU"] = override_class(MMAudioSampler)
+
 
 def register_patched_gguf_get_weight():
     from nodes import NODE_CLASS_MAPPINGS
