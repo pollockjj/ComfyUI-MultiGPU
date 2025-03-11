@@ -1,6 +1,7 @@
 import torch
 import time
 import importlib
+import comfy.model_management
 
 dequantize_tensor = importlib.import_module('custom_nodes.ComfyUI-GGUF.dequant').dequantize_tensor
 
@@ -8,6 +9,9 @@ try:
     GGMLTensor = importlib.import_module('custom_nodes.ComfyUI-GGUF.ggml_tensor').GGMLTensor
 except ImportError:
     GGMLTensor = None
+
+# Global variable for tracking inference order
+cast_bias_weight_inf_ord = 0
 
 patch_cache = {}
 
@@ -36,6 +40,42 @@ def compute_size(item):
         return sum(compute_size(x) for x in item)
     else:
         return 0
+
+def cast_bias_weight_patched(s, input=None, dtype=None, device=None, bias_dtype=None):
+    global cast_bias_weight_inf_ord
+    from . import cached_tensor_map
+    
+    if input is not None:
+        if dtype is None:
+            dtype = getattr(input, "dtype", torch.float32)
+        if bias_dtype is None:
+            bias_dtype = dtype
+        if device is None:
+            device = input.device
+
+    # Get the original hash for lookup and tracking
+    stored_hash = s.weight.original_hash
+    
+    # Track inference order if this is the first time through
+    if stored_hash in cached_tensor_map and cached_tensor_map[stored_hash]['cache_level'] == "pre-inference":
+        cached_tensor_map[stored_hash]['inf_order'] = cast_bias_weight_inf_ord
+        cast_bias_weight_inf_ord += 1
+        cached_tensor_map[stored_hash]['cache_level'] = "uninitialized"
+        print(f"TENSOR: ptr=0x{stored_hash:x} | index={cached_tensor_map[stored_hash]['inf_order']:<4} | name={cached_tensor_map[stored_hash]['name']:<60} | device={cached_tensor_map[stored_hash]['distorch_device']:<8} | size={cached_tensor_map[stored_hash]['tensor_size']:>8.2f}")
+
+    # Standard processing
+    weight_to = s.weight.to(device)
+
+    bias = None
+    non_blocking = comfy.model_management.device_supports_non_blocking(device)
+    if s.bias is not None:
+        bias = s.get_weight(s.bias.to(device), dtype)
+        bias = comfy.ops.cast_to(bias, bias_dtype, device, non_blocking=non_blocking, copy=False)
+
+    weight = s.get_weight(weight_to, dtype)
+    weight = comfy.ops.cast_to(weight, dtype, device, non_blocking=non_blocking, copy=False)
+    
+    return weight, bias
 
 def get_weight(tensor, dtype, dequant_dtype=None, patch_dtype=None):
     if tensor is None:

@@ -35,6 +35,7 @@ SMALL_TENSOR_THRESHOLD = 0.0001  # 0.01% of total size
 current_device = mm.get_torch_device()
 current_text_encoder_device = mm.text_encoder_device()
 model_allocation_store = {}
+cast_bias_weight_inf_ord = 0
 
 # Global cache for tensor mapping
 cached_tensor_map = {}
@@ -378,17 +379,12 @@ def analyze_ggml_loading(model, allocations_str):
                 cached_tensor_map[stored_hash] = {}
                 cached_tensor_map[stored_hash]['index'] = len(cached_tensor_map) - 1
                 cached_tensor_map[stored_hash]['name'] = f"{module_name}.{parameter_name}"
-                cached_tensor_map[stored_hash]['module'] = module_name
-                cached_tensor_map[stored_hash]['param'] = parameter_name
                 cached_tensor_map[stored_hash]['distorch_device'] = next((device for device, modules in device_assignments.items() if any(name == full_param_name for name, _, _, _ in modules)),str(parameter_value.device))
                 cached_tensor_map[stored_hash]['tensor_size'] = tensor_size_mb
-                cached_tensor_map[stored_hash]['shape'] = list(parameter_value.shape)
-                cached_tensor_map[stored_hash]['dtype'] = str(parameter_value.dtype)
                 cached_tensor_map[stored_hash]['patch_qty'] = 0
-                cached_tensor_map[stored_hash]['cache_level'] = "uninitialized"
+                cached_tensor_map[stored_hash]['cache_level'] = "pre-inference"
                 cached_tensor_map[stored_hash]['cached_tensor'] = None
-                
-                print(f"TENSOR: ptr=0x{stored_hash:x} | index={cached_tensor_map[stored_hash]['index']:<4} | name={cached_tensor_map[stored_hash]['name']:<60} | device={cached_tensor_map[stored_hash]['distorch_device']:<8} | size={cached_tensor_map[stored_hash]['tensor_size']:>8.2f}")
+                #print(f"TENSOR: ptr=0x{stored_hash:x} | index={cached_tensor_map[stored_hash]['index']:<4} | name={cached_tensor_map[stored_hash]['name']:<60} | device={cached_tensor_map[stored_hash]['distorch_device']:<8} | size={cached_tensor_map[stored_hash]['tensor_size']:>8.2f}")
 
     return {"device_assignments": device_assignments}
 
@@ -890,7 +886,6 @@ def register_patched_gguf_get_weight():
     ops_module = sys.modules[ops_module_name]
     
     if hasattr(ops_module, 'GGMLLayer') and not hasattr(ops_module.GGMLLayer, '_original_get_weight'):
-        # Patch get_weight
         ops_module.GGMLLayer._original_get_weight = ops_module.GGMLLayer.get_weight
         
         def new_get_weight(self, tensor, dtype):
@@ -898,42 +893,10 @@ def register_patched_gguf_get_weight():
         
         ops_module.GGMLLayer.get_weight = new_get_weight
         
-        # Also patch cast_bias_weight to handle missing original_hash
-        ops_module.GGMLLayer._original_cast_bias_weight = ops_module.GGMLLayer.cast_bias_weight
+        from .ggml_weight_utils import cast_bias_weight_patched
         
-        def patched_cast_bias_weight(s, input=None, dtype=None, device=None, bias_dtype=None):
-            if input is not None:
-                if dtype is None:
-                    dtype = getattr(input, "dtype", torch.float32)
-                if bias_dtype is None:
-                    bias_dtype = dtype
-                if device is None:
-                    device = input.device
-                    
-            # Check if hash is in cached_tensor_map
-            original_hash = getattr(s.weight, "original_hash", None)
-            
-            # Look up in cached_tensor_map
-            if original_hash is not None and original_hash in cached_tensor_map:
-                print(f"{cached_tensor_map[original_hash]['name']}")
-            elif original_hash is not None:
-                print(f"MISS 0x{original_hash:x}")
-            
-            # Continue with normal processing
-            weight_to = s.weight.to(device)
-
-            bias = None
-            non_blocking = comfy.model_management.device_supports_non_blocking(device)
-            if s.bias is not None:
-                bias = s.get_weight(s.bias.to(device), dtype)
-                bias = comfy.ops.cast_to(bias, bias_dtype, device, non_blocking=non_blocking, copy=False)
-
-            weight = s.get_weight(weight_to, dtype)
-            weight = comfy.ops.cast_to(weight, dtype, device, non_blocking=non_blocking, copy=False)
-            
-            return weight, bias
-            
-        ops_module.GGMLLayer.cast_bias_weight = patched_cast_bias_weight
+        ops_module.GGMLLayer._original_cast_bias_weight = ops_module.GGMLLayer.cast_bias_weight
+        ops_module.GGMLLayer.cast_bias_weight = cast_bias_weight_patched
         
         print("\n" + "="*60)
         print("MultiGPU: Successfully patched GGUF GGMLLayer.get_weight and cast_bias_weight at runtime")
