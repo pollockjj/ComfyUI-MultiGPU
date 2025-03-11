@@ -377,15 +377,12 @@ def analyze_ggml_loading(model, allocations_str):
                 full_param_name = f"{module_name}.{parameter_name}"
                 
                 distorch_load_map[stored_hash] = {}
-                distorch_load_map[stored_hash]['index'] = len(distorch_load_map) - 1
                 distorch_load_map[stored_hash]['name'] = f"{module_name}.{parameter_name}"
                 distorch_load_map[stored_hash]['distorch_device'] = next((device for device, modules in device_assignments.items() if any(name == full_param_name for name, _, _, _ in modules)),str(parameter_value.device))
                 distorch_load_map[stored_hash]['tensor_size'] = tensor_size_mb
-                distorch_load_map[stored_hash]['patch_qty'] = 0
-                distorch_load_map[stored_hash]['cache_level'] = "pre-inference"
-                distorch_load_map[stored_hash]['cached_tensor'] = None
-                #print(f"TENSOR: ptr=0x{stored_hash:x} | index={distorch_load_map[stored_hash]['index']:<4} | name={distorch_load_map[stored_hash]['name']:<60} | device={distorch_load_map[stored_hash]['distorch_device']:<8} | size={distorch_load_map[stored_hash]['tensor_size']:>8.2f}")
-
+                distorch_load_map[stored_hash]['cast_bias_weight'] = False
+                #print(f"DisTorch tensor init - Hash: 0x{stored_hash:x} | Name: {distorch_load_map[stored_hash]['name']} | Device: {distorch_load_map[stored_hash]['distorch_device']} | Size: {tensor_size_mb:.2f}MB")
+ 
     return {"device_assignments": device_assignments}
 
 def calculate_vvram_allocation_string(model, virtual_vram_str):
@@ -888,8 +885,8 @@ def register_patched_gguf_get_weight():
     if hasattr(ops_module, 'GGMLLayer') and not hasattr(ops_module.GGMLLayer, '_original_get_weight'):
         ops_module.GGMLLayer._original_get_weight = ops_module.GGMLLayer.get_weight
         
-        def new_get_weight(self, tensor, dtype, index=None, name=None, stored_hash=None):
-            return enhanced_get_weight(tensor, dtype, self.dequant_dtype, self.patch_dtype, index, name, stored_hash)
+        def new_get_weight(self, tensor, dtype, index=None, name=None, stored_hash=None, distorch_device=None):
+            return enhanced_get_weight(tensor, dtype, self.dequant_dtype, self.patch_dtype, index, name, stored_hash, distorch_device)
         
         ops_module.GGMLLayer.get_weight = new_get_weight
         
