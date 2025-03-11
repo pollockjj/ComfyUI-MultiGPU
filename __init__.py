@@ -38,7 +38,7 @@ model_allocation_store = {}
 cast_bias_weight_inf_ord = 0
 
 # Global cache for tensor mapping
-cached_tensor_map = {}
+distorch_load_map = {}
 level_one_tensors = []
 level_two_tensors = []
 level_three_tensors = []
@@ -236,13 +236,13 @@ def register_patched_ggufmodelpatcher():
         module.GGUFModelPatcher._patched = True
 
 def analyze_ggml_loading(model, allocations_str):
-    global cached_tensor_map
+    global distorch_load_map
 
     DEVICE_RATIOS_DISTORCH = {}
     device_table = {}
     distorch_alloc = allocations_str
     virtual_vram_gb = 0.0
-    cached_tensor_map = {}
+    distorch_load_map = {}
     
     if '#' in allocations_str:
         distorch_alloc, virtual_vram_str = allocations_str.split('#')
@@ -376,15 +376,15 @@ def analyze_ggml_loading(model, allocations_str):
                 stored_hash = getattr(parameter_value, "original_hash", parameter_value.data_ptr())
                 full_param_name = f"{module_name}.{parameter_name}"
                 
-                cached_tensor_map[stored_hash] = {}
-                cached_tensor_map[stored_hash]['index'] = len(cached_tensor_map) - 1
-                cached_tensor_map[stored_hash]['name'] = f"{module_name}.{parameter_name}"
-                cached_tensor_map[stored_hash]['distorch_device'] = next((device for device, modules in device_assignments.items() if any(name == full_param_name for name, _, _, _ in modules)),str(parameter_value.device))
-                cached_tensor_map[stored_hash]['tensor_size'] = tensor_size_mb
-                cached_tensor_map[stored_hash]['patch_qty'] = 0
-                cached_tensor_map[stored_hash]['cache_level'] = "pre-inference"
-                cached_tensor_map[stored_hash]['cached_tensor'] = None
-                #print(f"TENSOR: ptr=0x{stored_hash:x} | index={cached_tensor_map[stored_hash]['index']:<4} | name={cached_tensor_map[stored_hash]['name']:<60} | device={cached_tensor_map[stored_hash]['distorch_device']:<8} | size={cached_tensor_map[stored_hash]['tensor_size']:>8.2f}")
+                distorch_load_map[stored_hash] = {}
+                distorch_load_map[stored_hash]['index'] = len(distorch_load_map) - 1
+                distorch_load_map[stored_hash]['name'] = f"{module_name}.{parameter_name}"
+                distorch_load_map[stored_hash]['distorch_device'] = next((device for device, modules in device_assignments.items() if any(name == full_param_name for name, _, _, _ in modules)),str(parameter_value.device))
+                distorch_load_map[stored_hash]['tensor_size'] = tensor_size_mb
+                distorch_load_map[stored_hash]['patch_qty'] = 0
+                distorch_load_map[stored_hash]['cache_level'] = "pre-inference"
+                distorch_load_map[stored_hash]['cached_tensor'] = None
+                #print(f"TENSOR: ptr=0x{stored_hash:x} | index={distorch_load_map[stored_hash]['index']:<4} | name={distorch_load_map[stored_hash]['name']:<60} | device={distorch_load_map[stored_hash]['distorch_device']:<8} | size={distorch_load_map[stored_hash]['tensor_size']:>8.2f}")
 
     return {"device_assignments": device_assignments}
 
@@ -888,8 +888,8 @@ def register_patched_gguf_get_weight():
     if hasattr(ops_module, 'GGMLLayer') and not hasattr(ops_module.GGMLLayer, '_original_get_weight'):
         ops_module.GGMLLayer._original_get_weight = ops_module.GGMLLayer.get_weight
         
-        def new_get_weight(self, tensor, dtype):
-            return enhanced_get_weight(tensor, dtype, self.dequant_dtype, self.patch_dtype)
+        def new_get_weight(self, tensor, dtype, index=None, name=None, stored_hash=None):
+            return enhanced_get_weight(tensor, dtype, self.dequant_dtype, self.patch_dtype, index, name, stored_hash)
         
         ops_module.GGMLLayer.get_weight = new_get_weight
         

@@ -43,7 +43,7 @@ def compute_size(item):
 
 def cast_bias_weight_patched(s, input=None, dtype=None, device=None, bias_dtype=None):
     global cast_bias_weight_inf_ord
-    from . import cached_tensor_map
+    from . import distorch_load_map
     
     if input is not None:
         if dtype is None:
@@ -53,17 +53,16 @@ def cast_bias_weight_patched(s, input=None, dtype=None, device=None, bias_dtype=
         if device is None:
             device = input.device
 
-    # Get the original hash for lookup and tracking
+
     stored_hash = s.weight.original_hash
     
-    # Track inference order if this is the first time through
-    if stored_hash in cached_tensor_map and cached_tensor_map[stored_hash]['cache_level'] == "pre-inference":
-        cached_tensor_map[stored_hash]['inf_order'] = cast_bias_weight_inf_ord
-        cast_bias_weight_inf_ord += 1
-        cached_tensor_map[stored_hash]['cache_level'] = "uninitialized"
-        print(f"TENSOR: ptr=0x{stored_hash:x} | index={cached_tensor_map[stored_hash]['inf_order']:<4} | name={cached_tensor_map[stored_hash]['name']:<60} | device={cached_tensor_map[stored_hash]['distorch_device']:<8} | size={cached_tensor_map[stored_hash]['tensor_size']:>8.2f}")
 
-    # Standard processing
+    if stored_hash in distorch_load_map and distorch_load_map[stored_hash]['cache_level'] == "pre-inference":
+        distorch_load_map[stored_hash]['inf_order'] = cast_bias_weight_inf_ord
+        cast_bias_weight_inf_ord += 1
+        distorch_load_map[stored_hash]['cache_level'] = "uninitialized"
+        print(f"TENSOR: ptr=0x{stored_hash:x} | index={distorch_load_map[stored_hash]['inf_order']:<4} | name={distorch_load_map[stored_hash]['name']:<60} | device={distorch_load_map[stored_hash]['distorch_device']:<8} | size={distorch_load_map[stored_hash]['tensor_size']:>8.2f}")
+
     weight_to = s.weight.to(device)
 
     bias = None
@@ -72,12 +71,24 @@ def cast_bias_weight_patched(s, input=None, dtype=None, device=None, bias_dtype=
         bias = s.get_weight(s.bias.to(device), dtype)
         bias = comfy.ops.cast_to(bias, bias_dtype, device, non_blocking=non_blocking, copy=False)
 
-    weight = s.get_weight(weight_to, dtype)
+    kwargs = {}
+    if stored_hash in distorch_load_map and 'inf_order' in distorch_load_map[stored_hash]:
+        kwargs['index'] = distorch_load_map[stored_hash]['inf_order']
+    if stored_hash in distorch_load_map:
+        kwargs['name'] = distorch_load_map[stored_hash]['name']
+    kwargs['stored_hash'] = stored_hash
+    
+    try:
+        # Try with kwargs first
+        weight = s.get_weight(weight_to, dtype, **kwargs)
+    except TypeError:
+        # Fall back to standard call if kwargs not supported
+        weight = s.get_weight(weight_to, dtype)
     weight = comfy.ops.cast_to(weight, dtype, device, non_blocking=non_blocking, copy=False)
     
     return weight, bias
 
-def get_weight(tensor, dtype, dequant_dtype=None, patch_dtype=None):
+def get_weight(tensor, dtype, dequant_dtype=None, patch_dtype=None, index=None, name=None, stored_hash=None):
     if tensor is None:
         return None
     patch_list = []
