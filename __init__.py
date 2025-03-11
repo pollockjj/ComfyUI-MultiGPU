@@ -890,6 +890,7 @@ def register_patched_gguf_get_weight():
     ops_module = sys.modules[ops_module_name]
     
     if hasattr(ops_module, 'GGMLLayer') and not hasattr(ops_module.GGMLLayer, '_original_get_weight'):
+        # Patch get_weight
         ops_module.GGMLLayer._original_get_weight = ops_module.GGMLLayer.get_weight
         
         def new_get_weight(self, tensor, dtype):
@@ -897,8 +898,45 @@ def register_patched_gguf_get_weight():
         
         ops_module.GGMLLayer.get_weight = new_get_weight
         
+        # Also patch cast_bias_weight to handle missing original_hash
+        ops_module.GGMLLayer._original_cast_bias_weight = ops_module.GGMLLayer.cast_bias_weight
+        
+        def patched_cast_bias_weight(s, input=None, dtype=None, device=None, bias_dtype=None):
+            if input is not None:
+                if dtype is None:
+                    dtype = getattr(input, "dtype", torch.float32)
+                if bias_dtype is None:
+                    bias_dtype = dtype
+                if device is None:
+                    device = input.device
+                    
+            # Check if hash is in cached_tensor_map
+            original_hash = getattr(s.weight, "original_hash", None)
+            
+            # Look up in cached_tensor_map
+            if original_hash is not None and original_hash in cached_tensor_map:
+                print(f"{cached_tensor_map[original_hash]['name']}")
+            elif original_hash is not None:
+                print(f"MISS 0x{original_hash:x}")
+            
+            # Continue with normal processing
+            weight_to = s.weight.to(device)
+
+            bias = None
+            non_blocking = comfy.model_management.device_supports_non_blocking(device)
+            if s.bias is not None:
+                bias = s.get_weight(s.bias.to(device), dtype)
+                bias = comfy.ops.cast_to(bias, bias_dtype, device, non_blocking=non_blocking, copy=False)
+
+            weight = s.get_weight(weight_to, dtype)
+            weight = comfy.ops.cast_to(weight, dtype, device, non_blocking=non_blocking, copy=False)
+            
+            return weight, bias
+            
+        ops_module.GGMLLayer.cast_bias_weight = patched_cast_bias_weight
+        
         print("\n" + "="*60)
-        print("MultiGPU: Successfully patched GGUF GGMLLayer.get_weight at runtime")
+        print("MultiGPU: Successfully patched GGUF GGMLLayer.get_weight and cast_bias_weight at runtime")
         print("MultiGPU: Basic version activated")
         print("="*60 + "\n")
         
