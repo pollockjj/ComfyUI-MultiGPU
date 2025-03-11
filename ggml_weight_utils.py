@@ -54,14 +54,15 @@ def cast_bias_weight_patched(s, input=None, dtype=None, device=None, bias_dtype=
         if device is None:
             device = input.device
 
-    stored_hash = s.weight.original_hash
+    ggml_tensor_hash = s.weight.original_hash
 
-    if stored_hash in distorch_load_map and distorch_load_map[stored_hash]['cast_bias_weight'] is False:
-        distorch_load_map[stored_hash]['inf_order'] = cast_bias_weight_inf_ord
+    if ggml_tensor_hash in distorch_load_map and distorch_load_map[ggml_tensor_hash]['cast_bias_weight'] is False:
+        distorch_load_map[ggml_tensor_hash]['inf_order'] = cast_bias_weight_inf_ord
         cast_bias_weight_inf_ord += 1
-        distorch_load_map[stored_hash]['cast_bias_weight'] = True
-        #print(f"FINAL LOAD MAP: ptr=0x{stored_hash:x} | index={cast_bias_weight_inf_ord-1:<4} | name={distorch_load_map[stored_hash]['name']:<60} | device={distorch_load_map[stored_hash]['distorch_device']:<8} | size={distorch_load_map[stored_hash]['tensor_size']:>8.2f}")
-
+        distorch_load_map[ggml_tensor_hash]['cast_bias_weight'] = True
+  
+  
+    # if cached_tensor_map[ggml_tensor_hash]['cache_level'] = "ggml_prefetch_buffer" we should skip.
     weight_to = s.weight.to(device)
 
     bias = None
@@ -71,42 +72,48 @@ def cast_bias_weight_patched(s, input=None, dtype=None, device=None, bias_dtype=
         bias = comfy.ops.cast_to(bias, bias_dtype, device, non_blocking=non_blocking, copy=False)
 
     kwargs = {}
-    if stored_hash in distorch_load_map and 'inf_order' in distorch_load_map[stored_hash]:
-        kwargs['index'] = distorch_load_map[stored_hash]['inf_order']
-    if stored_hash in distorch_load_map:
-        kwargs['name'] = distorch_load_map[stored_hash]['name']
-    if stored_hash in distorch_load_map and 'distorch_device' in distorch_load_map[stored_hash]:
-        kwargs['distorch_device'] = distorch_load_map[stored_hash]['distorch_device']
-    kwargs['stored_hash'] = stored_hash
+    if ggml_tensor_hash in distorch_load_map and 'inf_order' in distorch_load_map[ggml_tensor_hash]:
+        kwargs['index'] = distorch_load_map[ggml_tensor_hash]['inf_order']
+    if ggml_tensor_hash in distorch_load_map:
+        kwargs['name'] = distorch_load_map[ggml_tensor_hash]['name']
+    if ggml_tensor_hash in distorch_load_map and 'distorch_device' in distorch_load_map[ggml_tensor_hash]:
+        kwargs['distorch_device'] = distorch_load_map[ggml_tensor_hash]['distorch_device']
+    kwargs['ggml_tensor_hash'] = ggml_tensor_hash
     
     try:
-        # Try with kwargs first
         weight = s.get_weight(weight_to, dtype, **kwargs)
     except TypeError:
-        # Fall back to standard call if kwargs not supported
         weight = s.get_weight(weight_to, dtype)
     weight = comfy.ops.cast_to(weight, dtype, device, non_blocking=non_blocking, copy=False)
     
     return weight, bias
 
-def get_weight(tensor, dtype, dequant_dtype=None, patch_dtype=None, index=None, name=None, stored_hash=None, distorch_device=None):
+def get_weight(ggml_tensor, dtype, dequant_dtype=None, patch_dtype=None, index=None, name=None, ggml_tensor_hash=None, distorch_device=None):
     global cached_tensor_map
-    if tensor is None:
+    if ggml_tensor is None:
         return None
-    
+
     patch_list = []
-    device = tensor.device
-    patches_data = getattr(tensor, "patches", [])
+    device = ggml_tensor.device
+    patches_data = getattr(ggml_tensor, "patches", [])
     for function, patches_item, key in patches_data:
         patch_result = retrieve_cached_patch(patches_item, device, key)
         patch_list += patch_result
+
     
-    # Check if dequantize_tensor supports device parameter
-    try:
-        weight = dequantize_tensor(tensor, dtype, dequant_dtype, device=device)
-    except TypeError:
-        # Fall back if device parameter not supported
-        weight = dequantize_tensor(tensor, dtype, dequant_dtype)
+    # If cached_tensor_map[ggml_tensor_hash]['cache_level'] = "uninitialized" then I want to set up the GGML buffer. This deterministic. I need the tensor on the CPU that is N positions ahead of the current index and we need to
+    # prefetch it to a "ggml_prefetch_buffer" collection of hardrefs until we use it. So:
+    # 1. Filter out all tensor that are not on CPU
+    # 2. Sort the tensors by index
+    # 3. Find the tensor that is N positions ahead of the current index
+    # 4. Prefetch it to the "ggml_prefetch_buffer" collection of hardrefs, non-blocking
+    # 5. Set the cache_level to "ggml_prefetch"
+    # 6. Look to see if my own tensor is in the "ggml_prefetch_buffer" collection of hardrefs (which it will be after the first N tensors are prefetched)
+    # 7. If it is swap out this reference for the one on remote, slow DRAM
+    # 8. If it is not, do nothing. The normal flow will fetch the tensor (slowly, from DRAM) and process it as normal.
+
+    weight = dequantize_tensor(ggml_tensor, dtype, dequant_dtype)
+
     if GGMLTensor is not None and isinstance(weight, GGMLTensor):
         weight.__class__ = torch.Tensor
     if patch_list:
@@ -116,16 +123,15 @@ def get_weight(tensor, dtype, dequant_dtype=None, patch_dtype=None, index=None, 
             computed_patch_dtype = dtype if patch_dtype == "target" else patch_dtype
             weight = function(patch_list, weight, key, computed_patch_dtype)
             
-    if stored_hash is not None and stored_hash not in cached_tensor_map:
-        cached_tensor_map[stored_hash] = {}
-        cached_tensor_map[stored_hash]['index'] = index
-        cached_tensor_map[stored_hash]['name'] = name
-        cached_tensor_map[stored_hash]['patch_qty'] = len(patch_list)
-        cached_tensor_map[stored_hash]['tensor_size'] = (tensor.numel() * tensor.element_size() / (1024 * 1024))
-        cached_tensor_map[stored_hash]['distorch_device'] = distorch_device
-        cached_tensor_map[stored_hash]['cache_level'] = "uninitialized"
-        cached_tensor_map[stored_hash]['cached_tensor'] = None
-        print(f"cached_tensor_map: ptr=0x{stored_hash:x} | index={cached_tensor_map[stored_hash]['index']} | name={cached_tensor_map[stored_hash]['name']} | patch_qty={cached_tensor_map[stored_hash]['patch_qty']} | distorch_device={cached_tensor_map[stored_hash]['distorch_device']} | tensor_size={cached_tensor_map[stored_hash]['tensor_size']:.2f}")
-        # print(f"GGML Tensor: 0x{ggml_tensor_ptr:x} | Index: {cached_tensor_map[ggml_tensor_ptr]['index']:3d} | Patches: {cached_tensor_map[ggml_tensor_ptr]['patch_qty']:2d} | Size: {cached_tensor_map[ggml_tensor_ptr]['tensor_size']:.2f}")
-
+    if ggml_tensor_hash not in cached_tensor_map and ggml_tensor_hash is not None:
+        cached_tensor_map[ggml_tensor_hash] = {}
+        cached_tensor_map[ggml_tensor_hash]['index'] = index
+        cached_tensor_map[ggml_tensor_hash]['name'] = name
+        cached_tensor_map[ggml_tensor_hash]['patch_qty'] = len(patch_list)
+        cached_tensor_map[ggml_tensor_hash]['tensor_size'] = (ggml_tensor.numel() * ggml_tensor.element_size() / (1024 * 1024))
+        cached_tensor_map[ggml_tensor_hash]['distorch_device'] = distorch_device
+        cached_tensor_map[ggml_tensor_hash]['cache_level'] = "uninitialized"
+        cached_tensor_map[ggml_tensor_hash]['cached_tensor'] = None
+        print(f"TENSOR CACHE: ptr=0x{ggml_tensor_hash:x} | index={index} | name={name} | patches={len(patch_list)} | device={distorch_device} | size={cached_tensor_map[ggml_tensor_hash]['tensor_size']:.2f}MB")
+  
     return weight
