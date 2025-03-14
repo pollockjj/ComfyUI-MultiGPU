@@ -49,6 +49,33 @@ We can now track tensors throughout their entire lifecycle, from initialization 
 TENSOR CACHE: ptr=0x747e9e72f290 | index=185 | name=diffusion_model.double_blocks.18.img_mlp.0.weight | patches=6 | device=cpu | size=38.25MB
 ```
 
+## Code Structure and Expectations
+
+This is DETERMINISTIC, HIGH-PERFORMANCE inference code with the following characteristics:
+
+1. All operations MUST be fully deterministic - no exception handling for edge cases that should never occur
+2. Memory management is explicit and precise - objects that are None or incorrectly typed indicate bugs, not expected states
+3. The caching system expects consistent tensor tracking - any tensor hash change breaks the entire pipeline
+4. Error handling through assertions/crashes is EXPECTED AND DESIRED for data integrity issues
+5. Code uses hash-based identity tracking with these assumptions:
+   - A tensor's original_hash is NEVER None once initialized
+   - Tensor hash values are ALWAYS consistent across device transfers
+   - Every tensor in cached_tensor_map has a valid original_hash as its key
+   - No defensive coding for None checks - values should NEVER be None
+
+6. The transitions from tensor-keyed maps to hash-keyed maps must maintain these invariants:
+   - No None values as keys in maps
+   - No "default values" that hide bugs
+   - Hash values must be consistently tracked and preserved
+
+## Critical Implementation Invariants
+
+1. When using get_weight, source_tensor_hash MUST be provided and valid
+2. All tensor tracking maps must use the same consistent key type (either tensor object or hash)
+3. Debug prints track exact values to ensure consistency, not to handle errors
+4. Cache initialization assumes valid keys (no None values) throughout the maps
+5. When a None is encountered, it represents a BUG, not an expected state to handle
+
 ## Debug Findings
 1. Setting original_hash at initialization ensures every GGMLTensor has a consistent hash from creation
 2. The tensor's identity is preserved during device transfers via the .to() method
