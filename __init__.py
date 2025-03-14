@@ -750,6 +750,8 @@ def override_class_with_distorch(cls):
             fn = getattr(super(), cls.FUNCTION)
             out = fn(*args, **kwargs)
 
+            default_allocation = f"{device},1.0;cpu,0.0"
+
             vram_string = ""
             if virtual_vram_gb > 0:
                 if use_other_vram:
@@ -760,8 +762,9 @@ def override_class_with_distorch(cls):
                     vram_string = f"{device};{virtual_vram_gb};{device_string}"
                 else:
                     vram_string = f"{device};{virtual_vram_gb};cpu"
-
-            full_allocation = f"{expert_mode_allocations}#{vram_string}" if expert_mode_allocations or vram_string else ""
+                    
+            base_allocation = expert_mode_allocations if expert_mode_allocations else default_allocation
+            full_allocation = f"{base_allocation}#{vram_string}" if vram_string else base_allocation
             
             if full_allocation:
                 logging.info(f"[DisTorch] Full allocation string: {full_allocation}")
@@ -802,6 +805,10 @@ def override_class_with_distorch_clip(cls):
             fn = getattr(super(), cls.FUNCTION)
             out = fn(*args, **kwargs)
 
+            # Always generate a base allocation string
+            default_allocation = f"{device},1.0;cpu,0.0"
+            
+            # Generate vram_string for virtual VRAM if requested
             vram_string = ""
             if virtual_vram_gb > 0:
                 if use_other_vram:
@@ -812,8 +819,12 @@ def override_class_with_distorch_clip(cls):
                     vram_string = f"{device};{virtual_vram_gb};{device_string}"
                 else:
                     vram_string = f"{device};{virtual_vram_gb};cpu"
-
-            full_allocation = f"{expert_mode_allocations}#{vram_string}" if expert_mode_allocations or vram_string else ""
+            
+            # Use expert allocations if provided, otherwise use default allocation
+            base_allocation = expert_mode_allocations if expert_mode_allocations else default_allocation
+            
+            # Construct full allocation string
+            full_allocation = f"{base_allocation}#{vram_string}" if vram_string else base_allocation
             
             if full_allocation:
                 logging.info(f"[DisTorch] Full allocation string: {full_allocation}")
