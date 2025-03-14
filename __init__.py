@@ -380,8 +380,9 @@ def analyze_ggml_loading(model, allocations_str):
                 distorch_load_map[ggml_tensor_hash]['name'] = f"{module_name}.{parameter_name}"
                 distorch_load_map[ggml_tensor_hash]['distorch_device'] = next((device for device, modules in device_assignments.items() if any(name == full_param_name for name, _, _, _ in modules)),str(parameter_value.device))
                 distorch_load_map[ggml_tensor_hash]['tensor_size'] = tensor_size_mb
-                distorch_load_map[ggml_tensor_hash]['cast_bias_weight'] = False
-                #print(f"DisTorch tensor init - Hash: 0x{ggml_tensor_hash:x} | Name: {distorch_load_map[ggml_tensor_hash]['name']} | Device: {distorch_load_map[ggml_tensor_hash]['distorch_device']} | Size: {tensor_size_mb:.2f}MB")
+                distorch_load_map[ggml_tensor_hash]['initialized'] = False
+                distorch_load_map[ggml_tensor_hash]['source_tensor'] = parameter_value
+                #print(f"DisTorch tensor init - Hash: 0x{ggml_tensor_hash:x} | Name: {distorch_load_map[ggml_tensor_hash]['name']} | Device: {distorch_load_map[ggml_tensor_hash]['distorch_device']} | Size: {distorch_load_map[ggml_tensor_hash]['tensor_size']:.2f}MB")
  
     return {"device_assignments": device_assignments}
 
@@ -885,8 +886,8 @@ def register_patched_gguf_get_weight():
     if hasattr(ops_module, 'GGMLLayer') and not hasattr(ops_module.GGMLLayer, '_original_get_weight'):
         ops_module.GGMLLayer._original_get_weight = ops_module.GGMLLayer.get_weight
         
-        def new_get_weight(self, tensor, dtype, index=None, name=None, ggml_tensor_hash=None, distorch_device=None):
-            return enhanced_get_weight(tensor, dtype, self.dequant_dtype, self.patch_dtype, index, name, ggml_tensor_hash, distorch_device)
+        def new_get_weight(self, tensor, dtype, tensor_inference_order=None, name=None, source_tensor=None, distorch_device=None, source_tensor_hash=None):
+            return enhanced_get_weight(tensor, dtype, self.dequant_dtype, self.patch_dtype, tensor_inference_order, name, source_tensor, distorch_device, source_tensor_hash)
         
         ops_module.GGMLLayer.get_weight = new_get_weight
         
