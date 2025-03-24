@@ -122,9 +122,12 @@ Currently supported nodes (automatically detected if available):
   - CheckpointLoaderNF4MultiGPU
 - HunyuanVideoWrapper (requires [ComfyUI-HunyuanVideoWrapper](https://github.com/kijai/ComfyUI-HunyuanVideoWrapper)):
   - HyVideoModelLoaderMultiGPU
-  - HyVideoModelLoaderDiffSynthMultiGPU (**NEW** - MultiGPU-specific node for offloading to an `offload_device` using MultiGPU's device selectors)
   - HyVideoVAELoaderMultiGPU
   - DownloadAndLoadHyVideoTextEncoderMultiGPU
+- WanVideoWrapper (requires [ComfyUI-WanVideoWrapper](https://github.com/kijai/ComfyUI-WanVideoWrapper)):
+  - WanVideoModelLoader
+  - WanVideoVAELoader
+  - LoadWanVideoT5TextEncoder
 - **Native to ComfyUI-MultiGPU**
   - DeviceSelectorMultiGPU - Allows user to link loaders together to use the same selected device
   - HunyuanVideoEmbeddingsAdapter - Allows Kijai's excellent IP2V CLIP for HunyuanVideo to be used with Comfy Core sampler.
@@ -145,6 +148,11 @@ This workflow attaches a HunyuanVideo GGUF-quantized model on `cuda:0` for compu
 
 - [examples/flux1dev_gguf_distorch.json](https://github.com/pollockjj/ComfyUI-MultiGPU/blob/main/examples/flux1dev_gguf_distorch.json)
 This workflow loads a FLUX.1-dev model on `cuda:0` for compute and distrubutes its UNet across multiple CUDA devices using new DisTorch distributed-load methodology. While the text encoders and VAE are loaded on GPU 1 and use `cuda:1` for compute.
+
+### Split Wan Video generation across multiple resources
+
+- [examples/hunyuanvideowrapper_native_vae.json](https://github.com/pollockjj/ComfyUI-MultiGPU/blob/main/examples/wanvideo_T2V_example_MultiGPU.json)
+This workflow is a simple extension of [kijai's T2V example](https://github.com/kijai/ComfyUI-WanVideoWrapper/blob/main/example_workflows/wanvideo_T2V_example_02.json) from his custom_node.
 
 ### Split Hunyuan Video generation across multiple resources
 

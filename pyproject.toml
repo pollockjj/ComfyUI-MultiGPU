@@ -1,7 +1,7 @@
 [project]
 name = "comfyui-multigpu"
-description = "This custom_node for ComfyUI adds one-click 'Virtual VRAM' for any GGUF UNet and CLIP loader, managing the offload of layers to DRAM or VRAM to maximize the latent space of your card. Also includes nodes for directly loading entire components (UNet, CLIP, VAE) onto the device you choose. Includes 16 examples covering common use cases."
-version = "1.6.2"
+description = "This custom_node for ComfyUI adds one-click 'Virtual VRAM' for any GGUF UNet and CLIP loader, managing the offload of layers to DRAM or VRAM to maximize the latent space of your card. Also includes nodes for directly loading entire components (UNet, CLIP, VAE) onto the device you choose. Includes 16 examples covering common use cases. Includes support for kijai's ComfyUI-WanVideoWrapper and ComfyUI-HunyuanVideoWrapper, among other popular loaders."
+version = "1.7.0"
 license = {file = "LICENSE"}
 
 [project.urls]
