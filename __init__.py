@@ -753,22 +753,20 @@ def override_class_with_distorch(cls):
 
             default_allocation = f"{device},1.0;cpu,0.0"
 
-            vram_string = ""
+            full_allocation = ""
             if virtual_vram_gb > 0:
                 if use_other_vram:
                     available_devices = [d for d in get_device_list() if d.startswith('cuda')]
                     other_devices = [d for d in available_devices if d != device]
                     other_devices.sort(key=lambda x: int(x.split(':')[1] if ':' in x else x[-1]), reverse=False)
                     device_string = ','.join(other_devices + ['cpu'])
-                    vram_string = f"{device};{virtual_vram_gb};{device_string}"
+                    full_allocation = f"#{device};{virtual_vram_gb};{device_string}"
                 else:
-                    vram_string = f"{device};{virtual_vram_gb};cpu"
-                    
-            base_allocation = expert_mode_allocations if expert_mode_allocations else default_allocation
-            full_allocation = f"{base_allocation}#{vram_string}" if vram_string else base_allocation
-            
-            if full_allocation:
-                logging.info(f"[DisTorch] Full allocation string: {full_allocation}")
+                    full_allocation = f"#{device};{virtual_vram_gb};cpu"
+            else:
+                full_allocation = expert_mode_allocations if expert_mode_allocations else default_allocation
+
+            logging.info(f"[DisTorch] Full allocation string: {full_allocation}")
             
             debug_store_allocation(out[0], full_allocation, "override_with_distorch")
 
@@ -807,7 +805,7 @@ def override_class_with_distorch_clip(cls):
             out = fn(*args, **kwargs)
 
             # Always generate a base allocation string
-            default_allocation = f"{device},1.0;cpu,0.0"
+            #default_allocation = f"{device},1.0;cpu,0.0"
             
             # Generate vram_string for virtual VRAM if requested
             vram_string = ""

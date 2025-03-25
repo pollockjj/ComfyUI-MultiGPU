@@ -8,10 +8,11 @@ GGMLTensor = importlib.import_module('custom_nodes.ComfyUI-GGUF.ops').GGMLTensor
 dequantize_tensor = importlib.import_module('custom_nodes.ComfyUI-GGUF.dequant').dequantize_tensor
 
 from . import SMALL_TENSOR_THRESHOLD
-COMPUTE_CACHE_SIZE_MB  = 4096
-TENSORATOR_CACHE_SIZE_MB  = 8192
-TENSORATOR_BUFFER_SIZE_MB  = 4096
-DISABLE_RING_BUFFER = False
+COMPUTE_CACHE_LIMIT  = 0.90
+TENSORATOR_CACHE_LIMIT  = 0.90
+TENSORATOR_BUFFER_SIZE_MB  = 1024
+DISABLE_DEQUANTIZED_RING_BUFFER = True
+DISABLE_RING_BUFFER = True
 
 patch_cache = {}
 
@@ -21,17 +22,13 @@ level_two_tensors = []
 tensor_ring_buffer = []
 ggml_ring_buffer = []
  
-# hard-coded streams and variables for compute and tensorator during development
 compute_stream = torch.cuda.Stream(device="cuda:0") 
-tensorator_stream = torch.cuda.Stream(device="cuda:0")
+tensorator_stream = torch.cuda.Stream(device="cuda:1")
 compute_device = torch.device("cuda:0")
-tensorator_device = torch.device("cuda:0")
-
-# Setup events for cross-device synchronization
+tensorator_device = torch.device("cuda:1")
 compute_event = torch.cuda.Event(enable_timing=False)
 tensorator_event = torch.cuda.Event(enable_timing=False)
 
-# Global variable for tracking inference order
 tensor_inference_order = 0
 
 def move_patch_to_tensorator(item):
@@ -74,21 +71,27 @@ def initialize_cache_levels():
         solo_gpu = True
 
     cumulative_size = 0
-    level1_size = 0
-    level2_size = 0
     tensor_ring_size = 0
     tensor_ring_buffer_size = 0
     total_buffered_tensors = 0
+    compute_target_cache = (torch.cuda.get_device_properties(compute_device).total_memory * COMPUTE_CACHE_LIMIT) / (1024 * 1024)
+    tensorator_percent_cache = (torch.cuda.get_device_properties(tensorator_device).total_memory * TENSORATOR_CACHE_LIMIT) / (1024 * 1024)
+    compute_vram_used = torch.cuda.memory_allocated(compute_device) / (1024 * 1024)
+    tensorator_vram_used = torch.cuda.memory_allocated(tensorator_device) / (1024 * 1024)
+    
+    print(f"Initializing Cache Levels: compute_vram_used={compute_vram_used:.2f}MB | tensorator_vram_used={tensorator_vram_used:.2f}MB | compute_target_cache={compute_target_cache:.2f}MB | tensorator_percent_cache={tensorator_percent_cache:.2f}MB")
     
             
     for tensor, info in all_tensors:
         cumulative_size += info['final_tensor_size']
-        if level1_size <= COMPUTE_CACHE_SIZE_MB or info['final_tensor_size'] < threshold:
+        if compute_vram_used <= compute_target_cache or info['final_tensor_size'] < threshold:
             cached_tensor_map[tensor]['cache_level'] = "level1"
-            level1_size += info['final_tensor_size']
-        elif level2_size <= TENSORATOR_CACHE_SIZE_MB and solo_gpu == False:
+            compute_vram_used +=cached_tensor_map[tensor]['final_tensor_size']
+            print(f"Caching Assignment: name={cached_tensor_map[tensor]['name']} | buffer_index={cached_tensor_map[tensor]['buffer_index']} | tensor_inference_order: {cached_tensor_map[tensor]['tensor_inference_order']:3d} | patch_qty={cached_tensor_map[tensor]['patch_qty']} | distorch_device={cached_tensor_map[tensor]['distorch_device']} | size={cached_tensor_map[tensor]['tensor_size']:.2f}MB | final_size={cached_tensor_map[tensor]['final_tensor_size']:.2f}MB | cache_level={cached_tensor_map[tensor]['cache_level']} | device_cache_vram_used={compute_vram_used}")
+        elif tensorator_vram_used <= tensorator_percent_cache and solo_gpu == False:
             cached_tensor_map[tensor]['cache_level'] = "level2"
-            level2_size += info['final_tensor_size']
+            print(f"Caching Assignment: name={cached_tensor_map[tensor]['name']} | buffer_index={cached_tensor_map[tensor]['buffer_index']} | tensor_inference_order: {cached_tensor_map[tensor]['tensor_inference_order']:3d} | patch_qty={cached_tensor_map[tensor]['patch_qty']} | distorch_device={cached_tensor_map[tensor]['distorch_device']} | size={cached_tensor_map[tensor]['tensor_size']:.2f}MB | final_size={cached_tensor_map[tensor]['final_tensor_size']:.2f}MB | cache_level={cached_tensor_map[tensor]['cache_level']} | device_cache_vram_used={tensorator_vram_used}")
+            tensorator_vram_used += cached_tensor_map[tensor]['final_tensor_size']
         elif tensor_ring_size <= TENSORATOR_BUFFER_SIZE_MB:
             cached_tensor_map[tensor]['cache_level'] = "tensor_ring"
             if solo_gpu == False:
@@ -105,20 +108,29 @@ def initialize_cache_levels():
 
     for idx, (tensor, _) in enumerate(ring_tensors):
         cached_tensor_map[tensor]['buffer_index'] = idx
-        print(f"Caching Assignment: name={cached_tensor_map[tensor]['name']} | buffer_index={cached_tensor_map[tensor]['buffer_index']} | tensor_inference_order: {cached_tensor_map[tensor]['tensor_inference_order']:3d} | patch_qty={cached_tensor_map[tensor]['patch_qty']} | distorch_device={cached_tensor_map[tensor]['distorch_device']} | size={cached_tensor_map[tensor]['tensor_size']:.2f}MB | final_size={cached_tensor_map[tensor]['final_tensor_size']:.2f}MB | cache_level={cached_tensor_map[tensor]['cache_level']}")
+        #print(f"Caching Assignment: name={cached_tensor_map[tensor]['name']} | buffer_index={cached_tensor_map[tensor]['buffer_index']} | tensor_inference_order: {cached_tensor_map[tensor]['tensor_inference_order']:3d} | patch_qty={cached_tensor_map[tensor]['patch_qty']} | distorch_device={cached_tensor_map[tensor]['distorch_device']} | size={cached_tensor_map[tensor]['tensor_size']:.2f}MB | final_size={cached_tensor_map[tensor]['final_tensor_size']:.2f}MB | cache_level={cached_tensor_map[tensor]['cache_level']}")
        
     total_buffered_tensors = len(ring_tensors)
     
     summary = {}
     for tensor, info in cached_tensor_map.items():
-        device = info.get('distorch_device', 'unknown')
-        level = info.get('cache_level', 'uninitialized')
+        if info['cache_level'] == "level1":
+            device = compute_device
+        else:
+            device = tensorator_device
+        level = info.get('cache_level')
         if device not in summary:
             summary[device] = {}
         if level not in summary[device]:
             summary[device][level] = {'count': 0, 'total_size': 0.0}
         summary[device][level]['count'] += 1
-        summary[device][level]['total_size'] += info.get('tensor_size', 0.0)
+        if level == "level1" or level == "level2":
+            summary[device][level]['total_size'] += info.get('final_tensor_size', 0.0)
+        elif level == "tensor_ring":
+            if solo_gpu == True or DISABLE_DEQUANTIZED_RING_BUFFER == False:
+               summary[device][level]['total_size'] += info.get('tensor_size', 0.0)
+            else:
+               summary[device][level]['total_size'] += info.get('final_tensor_size', 0.0)
     
     eq_line = "=" * 47
     dash_line = "-" * 47
@@ -132,11 +144,11 @@ def initialize_cache_levels():
     logging.info(dash_line)
     
     order = {"level1": 0, "level2": 1, "tensor_ring": 2, "uninitialized": 3}
-    for dev in sorted(summary.keys()):
+    for dev in sorted(summary.keys(), key=str):
         for level in sorted(summary[dev].keys(), key=lambda lvl: order.get(lvl, 99)):
             count = summary[dev][level]['count']
             total_mb = summary[dev][level]['total_size']
-            logging.info(fmt_assign.format(dev, level, count, f"{total_mb:.2f}"))
+            logging.info(fmt_assign.format(str(dev), level, count, f"{total_mb:.2f}"))
     logging.info(dash_line)
        
     tensor_ring_buffer_index = sorted([t for t in all_tensors if cached_tensor_map[t[0]]['cache_level'] in ["tensor_ring"]], key=lambda x: x[1]['tensor_inference_order'])   
@@ -148,7 +160,7 @@ def initialize_cache_levels():
         for i in range(tensor_ring_buffer_size):
             source_tensor_hash = tensor_ring_buffer_index[i][0] 
             prefetch_tensor = cached_tensor_map[source_tensor_hash]['source_tensor'].to(tensorator_device, non_blocking=True)
-            print(f"Prefetching GGML Tensor: 0x{source_tensor_hash:x} | tensor_inference_order: {cached_tensor_map[source_tensor_hash]['tensor_inference_order']:3d} | Size: {cached_tensor_map[source_tensor_hash]['tensor_size']:.2f}MB | to tensorator_device")
+            print(f"Prefetching GGML Tensor: 0x{source_tensor_hash:x} | ring position: {i:3d} | tensor_inference_order: {cached_tensor_map[source_tensor_hash]['tensor_inference_order']:3d} to tensorator_device")
             ggml_ring_buffer.append(prefetch_tensor)
             
             if solo_gpu == False:
@@ -245,13 +257,12 @@ def get_weight(ggml_tensor, dtype, dequant_dtype=None, patch_dtype=None, tensor_
             elif cached_tensor_map[source_tensor_hash]['cache_level'] == "uninitialized":
                 initialize_cache_levels()
 
-
             if source_tensor_hash in cached_tensor_map and (cached_tensor_map[source_tensor_hash]['cache_level'] == "level1" or cached_tensor_map[source_tensor_hash]['cache_level'] == "level2"):
                 cache_pass = True
             else:
                 cache_pass = False
 
-            if DISABLE_RING_BUFFER or cache_pass:
+            if cache_pass or DISABLE_RING_BUFFER == True:
                 if ggml_tensor is None:
                     return
 
@@ -271,7 +282,7 @@ def get_weight(ggml_tensor, dtype, dequant_dtype=None, patch_dtype=None, tensor_
                     else:
                         patch_dtype = dtype if self.patch_dtype == "target" else self.patch_dtype
                         tensorator_tensor = func(patch_list, tensorator_tensor, key, patch_dtype)
-            elif solo_gpu == True:
+            elif solo_gpu == True or DISABLE_DEQUANTIZED_RING_BUFFER == True:
                 
                 current_ggml_index = cached_tensor_map[source_tensor_hash]['buffer_index']
                 ggml_prefetch_position = ((current_ggml_index + tensor_ring_buffer_size ) % total_buffered_tensors )
@@ -303,7 +314,8 @@ def get_weight(ggml_tensor, dtype, dequant_dtype=None, patch_dtype=None, tensor_
                 ggml_ring_buffer.append(ggml_prefetch_tensor)
                 
                 patch_list = []
-                for func, item, key in getattr(ggml_prefetch_tensor, cached_tensor_map[ggml_prefetch_tensor_hash]['patches'], []):
+                # Access patches directly from cached map instead of trying to get them as an attribute
+                for func, item, key in cached_tensor_map[ggml_prefetch_tensor_hash]['patches']:
                     patches = retrieve_cached_patch(item, key)
                     patch_list += patches
                 
@@ -318,7 +330,7 @@ def get_weight(ggml_tensor, dtype, dequant_dtype=None, patch_dtype=None, tensor_
                     else:
                         prefetch_tensor = func(patch_list, prefetch_tensor, key, cached_tensor_map[ggml_prefetch_tensor_hash]['dtype'] if cached_tensor_map[ggml_prefetch_tensor_hash]['patch_dtype']=="target" else cached_tensor_map[ggml_prefetch_tensor_hash]['patch_dtype'])
 
-                prefetch_tensor = cached_tensor_map[ggml_prefetch_tensor_hash]['tensor'].to(tensorator_device, non_blocking=True)
+                prefetch_tensor = cached_tensor_map[ggml_prefetch_tensor_hash]['source_tensor'].to(tensorator_device, non_blocking=True)
                 tensor_ring_buffer.append((ggml_prefetch_tensor_hash, prefetch_tensor))
                 
                 tensorator_tensor = tensor_ring_buffer.pop(0)
@@ -327,7 +339,7 @@ def get_weight(ggml_tensor, dtype, dequant_dtype=None, patch_dtype=None, tensor_
                 level_one_tensor = tensorator_tensor.clone().to(compute_device, non_blocking=True)
                 level_one_tensors.append(level_one_tensor)
                 cached_tensor_map[source_tensor_hash]['cached_final_tensor'] = level_one_tensor
-                #print(f"Moving Dequantized and Patched Tensor: 0x{source_tensor_hash:x} | tensor_inference_order: {cached_tensor_map[source_tensor_hash]['tensor_inference_order']:3d} | Size: {cached_tensor_map[source_tensor_hash]['tensor_size']:.2f} | to compute_device")
+                print(f"Caching Level 1 Tensor: 0x{source_tensor_hash:x} | tensor_inference_order: {cached_tensor_map[source_tensor_hash]['tensor_inference_order']:3d} | Size: {cached_tensor_map[source_tensor_hash]['tensor_size']:8.2f}MB | to    compute_device: {compute_device}")
                 tensorator_event.record(tensorator_stream)
                 torch.cuda.current_stream().wait_event(tensorator_event)
                 return level_one_tensor
@@ -335,12 +347,11 @@ def get_weight(ggml_tensor, dtype, dequant_dtype=None, patch_dtype=None, tensor_
                 level_two_tensor = tensorator_tensor.clone().to(tensorator_device, non_blocking=True)
                 level_two_tensors.append(level_two_tensor)
                 cached_tensor_map[source_tensor_hash]['cached_final_tensor'] = level_two_tensor
-                #print(f"Moving Dequantized and Patched Tensor: 0x{source_tensor_hash:x} | tensor_inference_order: {cached_tensor_map[source_tensor_hash]['tensor_inference_order']:3d} | Size: {cached_tensor_map[source_tensor_hash]['tensor_size']:.2f} | to tensorator_device")
+                print(f"Caching Level 2 Tensor: 0x{source_tensor_hash:x} | tensor_inference_order: {cached_tensor_map[source_tensor_hash]['tensor_inference_order']:3d} | Size: {cached_tensor_map[source_tensor_hash]['tensor_size']:8.2f}MB | to tensorator_device: {tensorator_device}")
                 tensorator_event.record(tensorator_stream)
                 torch.cuda.current_stream().wait_event(tensorator_event)
                 return level_two_tensor
-            elif source_tensor_hash in cached_tensor_map and cached_tensor_map[source_tensor_hash]['cache_level'] == "tensor_ring":          #Assumes second video card is tensorator_device, should create a full-tensor ring buffer for compute_device 
-                #print(f"Tensor in Tensor Ring Buffer: 0x{source_tensor_hash:x} | tensor_inference_order: {cached_tensor_map[source_tensor_hash]['tensor_inference_order']:3d} | Size: {cached_tensor_map[source_tensor_hash]['tensor_size']:.2f} | to tensorator_device")
+            elif source_tensor_hash in cached_tensor_map and cached_tensor_map[source_tensor_hash]['cache_level'] == "tensor_ring":
                 tensorator_event.record(tensorator_stream)
                 torch.cuda.current_stream().wait_event(tensorator_event)
                 return tensorator_tensor
@@ -384,7 +395,7 @@ def get_weight(ggml_tensor, dtype, dequant_dtype=None, patch_dtype=None, tensor_
                 cached_tensor_map[source_tensor_hash]['source_tensor'] = source_tensor
                 cached_tensor_map[source_tensor_hash]['final_tensor_size'] = tensorator_tensor.numel() * tensorator_tensor.element_size() / (1024 * 1024)
                 cached_tensor_map[source_tensor_hash]['buffer_index'] = -1
-                #print(f"Caching Initialization: tensor_inference_order={tensor_inference_order} | patches={len(patch_list)} | device={distorch_device} | size={cached_tensor_map[source_tensor_hash]['tensor_size']:.2f}MB | name={name}")
+                #print(f"Initializing Cache Entry: hash=0x{source_tensor_hash:x} | tensor_inference_order={tensor_inference_order:3d} | patches={len(patch_list)} | device={distorch_device} | size={cached_tensor_map[source_tensor_hash]['tensor_size']:.2f}MB | name={name}")
 
   
     torch.cuda.current_stream().wait_event(tensorator_event)
