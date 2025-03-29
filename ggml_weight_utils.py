@@ -10,7 +10,7 @@ dequantize_tensor = importlib.import_module('custom_nodes.ComfyUI-GGUF.dequant')
 
 from . import SMALL_TENSOR_THRESHOLD
 COMPUTE_CACHE_LIMIT  = 0.5
-TENSORATOR_CACHE_LIMIT  = 0.1
+TENSORATOR_CACHE_LIMIT  = 0.9
 TENSORATOR_BUFFER_SIZE_MB  = 1024
 
 patch_cache = {}
@@ -305,7 +305,7 @@ def get_weight(ggml_tensor, dtype, dequant_dtype=None, patch_dtype=None, tensor_
         if source_tensor_hash not in cached_tensor_map: 
             cached_tensor_map[source_tensor_hash] = {}
             cached_tensor_map[source_tensor_hash]['tensor_inference_order'] = tensor_inference_order
-            cached_tensor_map[source_tensor_hash]['patch_qty'] = len(patch_list)
+            cached_tensor_map[source_tensor_hash]['patch_qty'] = len(ggml_tensor.patches)
             cached_tensor_map[source_tensor_hash]['tensor_size'] = (ggml_tensor.numel() * ggml_tensor.element_size() / (1024 * 1024))
             cached_tensor_map[source_tensor_hash]['distorch_device'] = distorch_device
             cached_tensor_map[source_tensor_hash]['cache_level'] = "uninitialized_cache_level"
