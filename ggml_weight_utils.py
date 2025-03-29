@@ -241,33 +241,21 @@ def get_weight(ggml_tensor, dtype, dequant_dtype=None, patch_dtype=None, tensor_
                         max_level1_priority_value = cached_tensor_map[cached_tensor.original_hash]['cache_priority']
                         tensor_to_evict = cached_tensor
                 if max_level1_priority_value > cached_tensor_map[source_tensor_hash]['cache_priority']:
-                    print(f"L1 Eviction Triggered: source_tensor_hash=0x{source_tensor_hash:x} | source_priority={cached_tensor_map[source_tensor_hash]['cache_priority']} | max_l1_priority={max_level1_priority_value}")
-                    print(f"  Level 2 Cache Stream Removed")
                     eviction_candidate_index = next(index for index, d in enumerate(level_one_tensors) if d is tensor_to_evict)
-                    print(f"  Eviction Candidate Index: {eviction_candidate_index}")
                     evicted_tensor_ref = level_one_tensors.pop(eviction_candidate_index)
-                    print(f"  Evicted Tensor Hash: 0x{tensor_to_evict.original_hash:x} | Shape: {evicted_tensor_ref.shape} | Device: {evicted_tensor_ref.device}")
-                    print(f"  tensorator_vram_used: {tensorator_vram_used:.2f}MB | tensorator_target_cache: {tensorator_target_cache:.2f}MB")
                     if tensorator_vram_used < tensorator_target_cache:
-                        print(f"    Moving to Level 2 Cache")
-                        print(f"      Tensor Device Before L2 Transfer: {evicted_tensor_ref.device}")
                         xfered_to_level2 = evicted_tensor_ref.to(level_two_cache_device)
-                        print(f"      Tensor Device After L2 Transfer: {xfered_to_level2.device}")
                         level_two_tensors.append(xfered_to_level2)
                         cached_tensor_map[tensor_to_evict.original_hash]['cache_level'] = "level2"
                         cached_tensor_map[tensor_to_evict.original_hash]['cached_final_tensor'] = xfered_to_level2
-                        print(f"    Moved to Level 2 Cache - Success")
                     else:
-                        print(f"    Tensorator VRAM Limit Reached - Evicting to Ring Buffer (Uninitialized)")
                         cached_tensor_map[tensor_to_evict.original_hash]['cache_level'] = "uninitialized_ring_buffer"
                         cached_tensor_map[tensor_to_evict.original_hash]['cached_final_tensor'] = None
-                        print(f"    Evicted to Ring Buffer - Success")
                     level_one_tensor = dequantized_tensor.clone().to(compute_device, non_blocking=True)
                     level_one_tensor.original_hash = source_tensor_hash
                     level_one_tensors.append(level_one_tensor)
                     cached_tensor_map[source_tensor_hash]['cached_final_tensor'] = level_one_tensor
                     cached_tensor_map[source_tensor_hash]['cache_level'] = "level1"
-                    print(f"  Level 2 Cache Stream Events Removed")
                     return level_one_tensor
                 else:
                     if tensorator_vram_used < tensorator_target_cache:
