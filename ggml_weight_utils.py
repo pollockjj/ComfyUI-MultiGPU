@@ -9,8 +9,8 @@ GGMLTensor = importlib.import_module('custom_nodes.ComfyUI-GGUF.ops').GGMLTensor
 dequantize_tensor = importlib.import_module('custom_nodes.ComfyUI-GGUF.dequant').dequantize_tensor
 
 from . import SMALL_TENSOR_THRESHOLD
-COMPUTE_CACHE_LIMIT  = 0.66
-TENSORATOR_CACHE_LIMIT  = 0.95
+COMPUTE_CACHE_LIMIT  = 0.5
+TENSORATOR_CACHE_LIMIT  = 0.1
 TENSORATOR_BUFFER_SIZE_MB  = 1024
 
 patch_cache = {}
@@ -21,12 +21,23 @@ level_two_tensors = []
 tensor_ring_buffer = []
 ggml_ring_buffer = []
  
-compute_stream = torch.cuda.Stream(device="cuda:0") 
+compute_stream = torch.cuda.Stream(device="cuda:0")
+dequantizer_stream = torch.cuda.Stream(device="cuda:0")
+ggml_transfer_stream = torch.cuda.Stream(device="cuda:0")
 tensorator_stream = torch.cuda.Stream(device="cuda:1")
+level_two_cache_stream = torch.cuda.Stream(device="cuda:1")
+
 compute_device = torch.device("cuda:0")
+dequantizer_device = torch.device("cuda:0")
+ggml_transfer_device = torch.device("cuda:0")
 tensorator_device = torch.device("cuda:1")
+level_two_cache_device = torch.device("cuda:1")
+
 compute_event = torch.cuda.Event(enable_timing=False)
+dequantizer_event = torch.cuda.Event(enable_timing=False)
 tensorator_event = torch.cuda.Event(enable_timing=False)
+level_two_cache_event = torch.cuda.Event(enable_timing=False)
+
 compute_target_cache = mm.get_total_memory(compute_device) * COMPUTE_CACHE_LIMIT / (1024 * 1024)
 tensorator_target_cache = mm.get_total_memory(tensorator_device) * TENSORATOR_CACHE_LIMIT / (1024 * 1024)
 compute_vram_used = mm.get_total_memory(compute_device)/ (1024 * 1024) - mm.get_free_memory(compute_device) / (1024 * 1024)
@@ -40,18 +51,18 @@ else:
 
 tensor_inference_order = 0
 
-def move_patch_to_tensorator(item):
-    stream = tensorator_stream
+def move_patch_to_dequantizer(item):
+    stream = dequantizer_stream
     if isinstance(item, torch.Tensor):
         if stream is not None:
             with torch.cuda.stream(stream):
-                return item.to(tensorator_device, non_blocking=True)
+                return item.to(dequantizer_device, non_blocking=True)
         else:
-            return item.to(tensorator_device, non_blocking=True)
+            return item.to(dequantizer_device, non_blocking=True)
     elif isinstance(item, tuple):
-        return tuple(move_patch_to_tensorator(x) for x in item)
+        return tuple(move_patch_to_dequantizer(x) for x in item)
     elif isinstance(item, list):
-        return [move_patch_to_tensorator(x) for x in item]
+        return [move_patch_to_dequantizer(x) for x in item]
     else:
         return item
 
@@ -59,7 +70,7 @@ def retrieve_cached_patch(patches_item, key):
     cache_key = tuple(key) if isinstance(key, (list, tuple)) else key
     if cache_key in patch_cache:
         return patch_cache[cache_key]
-    patch = move_patch_to_tensorator(patches_item)
+    patch = move_patch_to_dequantizer(patches_item)
     patch_cache[cache_key] = patch
     return patch
 
@@ -84,7 +95,7 @@ def initialize_cache_levels():
         #print(f"Caching Assignment: cache_priority={cached_tensor_map[tensor_hash]['cache_priority']:4d} | name={cached_tensor_map[tensor_hash]['name']} | tensor_inference_order: {cached_tensor_map[tensor_hash]['tensor_inference_order']:3d} | patch_qty={cached_tensor_map[tensor_hash]['patch_qty']} | distorch_device={cached_tensor_map[tensor_hash]['distorch_device']} | size={cached_tensor_map[tensor_hash]['tensor_size']:.2f}MB | final_size={cached_tensor_map[tensor_hash]['final_tensor_size']:.2f}MB")
 
 def initialize_ring_buffer():
-    global cached_tensor_map, ggml_ring_buffer_size, ggml_ring_buffer_tensors, ggml_ring_buffer, tensor_ring_size
+    global cached_tensor_map, ggml_ring_buffer_size, ggml_ring_buffer_tensors, ggml_ring_buffer
 
     ring_tensors = [(tensor, info) for tensor, info in cached_tensor_map.items()
                 if info['cache_level'] == "uninitialized_ring_buffer"]
@@ -96,7 +107,9 @@ def initialize_ring_buffer():
     tensor_ring_size = 0
             
     for tensor, info in ring_tensors:
-        if tensor_ring_size <= TENSORATOR_BUFFER_SIZE_MB:
+        if info['distorch_device'] == str(dequantizer_device):
+             cached_tensor_map[tensor]['cache_level'] = "ggml_on_dequantizer"
+        elif tensor_ring_size <= TENSORATOR_BUFFER_SIZE_MB:
             cached_tensor_map[tensor]['cache_level'] = "ggml_ring_buffer"
             tensor_ring_size += info['tensor_size']
             ggml_ring_buffer_size += 1
@@ -109,14 +122,17 @@ def initialize_ring_buffer():
 
     ggml_ring_buffer = []
 
-    ggml_ring_buffer_index = sorted([t for t in ring_tensors if cached_tensor_map[t[0]]['cache_level'] in ["ggml_ring_buffer"]], key=lambda x: x[1]['tensor_inference_order'])   
-
     print(f"ggml_ring_buffer_tensors: {ggml_ring_buffer_tensors} | ggml_ring_buffer_size: {ggml_ring_buffer_size}")
 
-    for i in range(ggml_ring_buffer_size):
-        source_tensor_hash = ggml_ring_buffer_index[i][0] 
-        prefetch_tensor = cached_tensor_map[source_tensor_hash]['source_tensor'].to(compute_device, non_blocking=True)
-        ggml_ring_buffer.append(prefetch_tensor)
+    with torch.cuda.stream(ggml_transfer_stream):
+        for i in range(ggml_ring_buffer_size):
+            source_tensor_hash = ring_tensors[i][0] 
+            prefetch_tensor = cached_tensor_map[source_tensor_hash]['source_tensor'].to(compute_device, non_blocking=True)
+            prefetch_tensor_event = torch.cuda.Event(enable_timing=False)
+            prefetch_tensor_event.record(ggml_transfer_stream)
+            cached_tensor_map[source_tensor_hash]['cuda_stream_event'] = prefetch_tensor_event
+            ggml_ring_buffer.append(prefetch_tensor)
+            print(f"ggml_ring_buffer: {i} | hash=0x{source_tensor_hash:x} | tensor_inference_order={cached_tensor_map[source_tensor_hash]['tensor_inference_order']:3d} | patches={cached_tensor_map[source_tensor_hash]['patch_qty']} | device={cached_tensor_map[source_tensor_hash]['distorch_device']} | size={cached_tensor_map[source_tensor_hash]['tensor_size']:.2f}MB | name={cached_tensor_map[source_tensor_hash]['name']}")
 
 def cast_bias_weight_patched(s, input=None, dtype=None, device=None, bias_dtype=None):
     global tensor_inference_order
@@ -163,46 +179,50 @@ def cast_bias_weight_patched(s, input=None, dtype=None, device=None, bias_dtype=
     
     return weight, bias
 
+def old_get_weight(ggml_tensor, dtype, dequant_dtype, patch_dtype):
+    patch_list = []
+    for func, item, key in getattr(ggml_tensor, "patches", []):
+        patches = retrieve_cached_patch(item, key)
+        patch_list += patches
+            
+    dequantized_tensor = dequantize_tensor(ggml_tensor, dtype, dequant_dtype)
+
+    if isinstance(dequantized_tensor, GGMLTensor):
+        dequantized_tensor.__class__ = torch.Tensor
+
+    if patch_list:
+        if  patch_dtype is None:
+            dequantized_tensor = func(patch_list, dequantized_tensor, key)
+        else:
+            patch_dtype = dtype if self.patch_dtype == "target" else self.patch_dtype
+            dequantized_tensor = func(patch_list, dequantized_tensor, key, patch_dtype)
+
+    return dequantized_tensor
+
 def get_weight(ggml_tensor, dtype, dequant_dtype=None, patch_dtype=None, tensor_inference_order=None, name=None, source_tensor=None, distorch_device=None, source_tensor_hash=None):
-    global cached_tensor_map, solo_gpu, level_one_tensors, level_two_tensors, compute_target_cache, tensorator_target_cache, compute_vram_used, tensorator_vram_used
+    global cached_tensor_map, solo_gpu, level_one_tensors, level_two_tensors, compute_target_cache, tensorator_target_cache, compute_vram_used, tensorator_vram_used, ggml_ring_buffer_size, ggml_ring_buffer_tensors
 
     if source_tensor_hash in cached_tensor_map:
-        if cached_tensor_map[source_tensor_hash]['cache_level'] == "level1":
+        
+        if cached_tensor_map[source_tensor_hash]['cache_level'] == "uninitialized_cache_level":
+            initialize_cache_levels()
+        elif cached_tensor_map[source_tensor_hash]['cache_level'] == "level1":
             return cached_tensor_map[source_tensor_hash]['cached_final_tensor']
         elif cached_tensor_map[source_tensor_hash]['cache_level'] == "level2":
-            with torch.cuda.stream(tensorator_stream):
-                level_two_tensor = cached_tensor_map[source_tensor_hash]['cached_final_tensor']
-                level_two_tensor.to(compute_device, non_blocking=True)
-                tensorator_event.record(tensorator_stream)
-                torch.cuda.current_stream().wait_event(tensorator_event)
+            with torch.cuda.stream(level_two_cache_stream):
+                level_two_tensor = cached_tensor_map[source_tensor_hash]['cached_final_tensor'].to(compute_device, non_blocking=True)
+                level_two_cache_event.record(level_two_cache_stream)
+                torch.cuda.current_stream().wait_event(level_two_cache_event)
             return level_two_tensor
-        elif cached_tensor_map[source_tensor_hash]['cache_level'] == "uninitialized_cache_level":
-            initialize_cache_levels()
+
         elif cached_tensor_map[source_tensor_hash]['cache_level'] == "uninitialized_ring_buffer":
             initialize_ring_buffer()
 
-        patch_list = []
-        for func, item, key in getattr(ggml_tensor, "patches", []):
-            patches = retrieve_cached_patch(item, key)
-            patch_list += patches
-                
-        dequantized_tensor = dequantize_tensor(ggml_tensor, dtype, dequant_dtype)
-
-        if isinstance(dequantized_tensor, GGMLTensor):
-            dequantized_tensor.__class__ = torch.Tensor
-
-        if patch_list:
-            if  patch_dtype is None:
-                dequantized_tensor = func(patch_list, dequantized_tensor, key)
-            else:
-                patch_dtype = dtype if self.patch_dtype == "target" else self.patch_dtype
-                dequantized_tensor = func(patch_list, dequantized_tensor, key, patch_dtype)
-
+        dequantized_tensor = old_get_weight(ggml_tensor, dtype, dequant_dtype, patch_dtype)
 
         if source_tensor_hash in cached_tensor_map and cached_tensor_map[source_tensor_hash]['cache_level'] == "prioritized":  # SECOND PASS THROUGH - CACHE TENSORS VIA PRIORTIZATION SCHEME
             compute_vram_used = mm.get_total_memory(compute_device)/ (1024 * 1024) - mm.get_free_memory(compute_device) / (1024 * 1024)
             tensorator_vram_used = mm.get_total_memory(tensorator_device)/ (1024 * 1024) - mm.get_free_memory(tensorator_device) / (1024 * 1024)
-
             if compute_vram_used <= compute_target_cache or cached_tensor_map[source_tensor_hash]['cache_priority'] == -1:
                 level_one_tensor = dequantized_tensor.clone().to(compute_device, non_blocking=True)
                 level_one_tensor.original_hash = source_tensor_hash
@@ -218,11 +238,11 @@ def get_weight(ggml_tensor, dtype, dequant_dtype=None, patch_dtype=None, tensor_
                         max_level1_priority_value = cached_tensor_map[cached_tensor.original_hash]['cache_priority']
                         tensor_to_evict = cached_tensor
                 if max_level1_priority_value > cached_tensor_map[source_tensor_hash]['cache_priority']:
-                    with torch.cuda.stream(tensorator_stream): 
+                    with torch.cuda.stream(level_two_cache_stream): 
                         eviction_candidate_index = next(index for index, d in enumerate(level_one_tensors) if d is tensor_to_evict)
                         evicted_tensor_ref = level_one_tensors.pop(eviction_candidate_index)
                         if tensorator_vram_used < tensorator_target_cache:
-                            xfered_to_level2 = evicted_tensor_ref.to(tensorator_device, non_blocking=True)
+                            xfered_to_level2 = evicted_tensor_ref.to(level_two_cache_device, non_blocking=True)
                             level_two_tensors.append(xfered_to_level2)
                             cached_tensor_map[tensor_to_evict.original_hash]['cache_level'] = "level2"
                             cached_tensor_map[tensor_to_evict.original_hash]['cached_final_tensor'] = xfered_to_level2
@@ -234,55 +254,55 @@ def get_weight(ggml_tensor, dtype, dequant_dtype=None, patch_dtype=None, tensor_
                         level_one_tensors.append(level_one_tensor)
                         cached_tensor_map[source_tensor_hash]['cached_final_tensor'] = level_one_tensor
                         cached_tensor_map[source_tensor_hash]['cache_level'] = "level1"
-                        tensorator_event.record(tensorator_stream)
-                        torch.cuda.current_stream().wait_event(tensorator_event)
+                        level_two_cache_event.record(level_two_cache_stream)
+                        torch.cuda.current_stream().wait_event(level_two_cache_event)
                     return level_one_tensor
                 else:
                     if tensorator_vram_used < tensorator_target_cache:
-                        with torch.cuda.stream(tensorator_stream):
-                            level_two_tensor = dequantized_tensor.clone().to(tensorator_device, non_blocking=True)
+                        with torch.cuda.stream(level_two_cache_stream):
+                            level_two_tensor = dequantized_tensor.clone().to(level_two_cache_device, non_blocking=True)
                             level_two_tensor.original_hash = source_tensor_hash
                             level_two_tensors.append(level_two_tensor)
                             cached_tensor_map[source_tensor_hash]['cached_final_tensor'] = level_two_tensor
                             cached_tensor_map[source_tensor_hash]['cache_level'] = "level2"
-                            tensorator_event.record(tensorator_stream)
-                            tensor_on_compute = level_two_tensor.to(compute_device, non_blocking=True)
-                            tensorator_event.record(tensorator_stream)
-                            torch.cuda.current_stream().wait_event(tensorator_event)
-                        return tensor_on_compute
+                            level_two_cache_event.record(level_two_cache_stream)
+                            torch.cuda.current_stream().wait_event(level_two_cache_event)
                     else:
                         cached_tensor_map[source_tensor_hash]['cache_level'] = "uninitialized_ring_buffer"
-                        tensor_on_compute = dequantized_tensor.to(device=compute_device, non_blocking=True)
-                        return tensor_on_compute
-        elif source_tensor_hash in cached_tensor_map and cached_tensor_map[source_tensor_hash]['cache_level'] == "uninitialized_ring_buffer":
-            ggml_ring_buffer.pop(0)
-            ggml_current_index = cached_tensor_map[source_tensor_hash]['buffer_index'] 
-            ggml_prefetch_position = ((ggml_current_index + tensor_ring_buffer_size) % total_buffered_tensors ) # identify the position of the tensor in the tensor ring buffer
-            ggml_prefetch_tensor_hash = ggml_ring_buffer[ggml_prefetch_position]['original_hash']
-            ggml_prefetch_tensor = cached_tensor_map[ggml_prefetch_tensor_hash]['source_tensor'].to(tensorator_device, non_blocking=True)
-            ggml_ring_buffer.append(ggml_prefetch_tensor)
-            
+                    return dequantized_tensor
+        elif source_tensor_hash in cached_tensor_map and cached_tensor_map[source_tensor_hash]['cache_level'] == "ggml_ring_buffer":
+            with torch.cuda.stream(ggml_transfer_stream):
+                ggml_current_index = cached_tensor_map[source_tensor_hash]['buffer_index'] 
+                ggml_prefetch_position = ((ggml_current_index + ggml_ring_buffer_size) % ggml_ring_buffer_tensors )
+                ggml_prefetch_tensor_hash = next(hash for hash, info in cached_tensor_map.items() if info.get('buffer_index') == ggml_prefetch_position)
+                ggml_prefetch_tensor = cached_tensor_map[ggml_prefetch_tensor_hash]['source_tensor'].to(ggml_transfer_device, non_blocking=True)
+                prefetch_tensor_event = torch.cuda.Event(enable_timing=False)
+                prefetch_tensor_event.record(ggml_transfer_stream)
+                cached_tensor_map[ggml_prefetch_tensor_hash]['cuda_stream_event'] = prefetch_tensor_event
+                ggml_ring_buffer.append(ggml_prefetch_tensor)
+                ggml_tensor = ggml_ring_buffer.pop(0)
+                current_transfer_event = cached_tensor_map[source_tensor_hash]['cuda_stream_event']
+                with torch.cuda.stream(dequantizer_stream):
+                    current_transfer_event.wait(dequantizer_stream)
+                    dequantized_tensor = old_get_weight(ggml_tensor, dtype, dequant_dtype, patch_dtype)
+                    if compute_device != dequantizer_device:
+                        dequantized_tensor = dequantized_tensor.to(device=compute_device, non_blocking=True)
+                    dequantizer_event.record(dequantizer_stream)
+                    torch.cuda.current_stream().wait_event(dequantizer_event)
+                    return dequantized_tensor
+        elif source_tensor_hash in cached_tensor_map and cached_tensor_map[source_tensor_hash]['cache_level'] == "ggml_on_dequantizer":
+            with torch.cuda.stream(dequantizer_stream):
+                dequantized_tensor = old_get_weight(ggml_tensor, dtype, dequant_dtype, patch_dtype)
+                if compute_device != dequantizer_device:
+                    dequantized_tensor = dequantized_tensor.to(device=compute_device, non_blocking=True)
+                dequantizer_event.record(dequantizer_stream)
+                torch.cuda.current_stream().wait_event(dequantizer_event)
+                return dequantized_tensor           
 
-        dequantized_tensor = dequantized_tensor.to(device=compute_device, non_blocking=True)
-    else:                                                                                                                                #First time through for a tensor
-        patch_list = []
-        for func, item, key in getattr(ggml_tensor, "patches", []):
-            patches = retrieve_cached_patch(item, key)
-            patch_list += patches
-                
-        dequantized_tensor = dequantize_tensor(ggml_tensor, dtype, dequant_dtype)
 
-        if isinstance(dequantized_tensor, GGMLTensor):
-            dequantized_tensor.__class__ = torch.Tensor
-
-        if patch_list:
-            if  patch_dtype is None:
-                dequantized_tensor = func(patch_list, dequantized_tensor, key)
-            else:
-                patch_dtype = dtype if self.patch_dtype == "target" else self.patch_dtype
-                dequantized_tensor = func(patch_list, dequantized_tensor, key, patch_dtype)
-        
-        if source_tensor_hash not in cached_tensor_map:  #VERY FIRST PASS THROUGH - ENUMERATE ALL TENSORS IN INFERENCE ORDER
+    else: #VERY FIRST PASS THROUGH - ENUMERATE ALL TENSORS IN INFERENCE ORDER
+        dequantized_tensor = old_get_weight(ggml_tensor, dtype, dequant_dtype, patch_dtype)
+        if source_tensor_hash not in cached_tensor_map: 
             cached_tensor_map[source_tensor_hash] = {}
             cached_tensor_map[source_tensor_hash]['tensor_inference_order'] = tensor_inference_order
             cached_tensor_map[source_tensor_hash]['patch_qty'] = len(patch_list)
