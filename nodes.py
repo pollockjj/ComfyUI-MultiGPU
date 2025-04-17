@@ -115,6 +115,26 @@ class TripleCLIPLoaderGGUF(CLIPLoaderGGUF):
         original_loader = NODE_CLASS_MAPPINGS["TripleCLIPLoaderGGUF"]()
         return original_loader.load_clip(clip_name1, clip_name2, clip_name3, type)
 
+class QuadrupleCLIPLoaderGGUF(CLIPLoaderGGUF):
+    @classmethod
+    def INPUT_TYPES(s):
+        file_options = (s.get_filename_list(), )
+        return {
+            "required": {
+            "clip_name1": file_options,
+            "clip_name2": file_options,
+            "clip_name3": file_options,
+            "clip_name4": file_options,
+        }
+    }
+
+    TITLE = "QuadrupleCLIPLoader (GGUF)"
+
+    def load_clip(self, clip_name1, clip_name2, clip_name3, clip_name4, type="stable_diffusion"):
+        from nodes import NODE_CLASS_MAPPINGS
+        original_loader = NODE_CLASS_MAPPINGS["QuadrupleCLIPLoaderGGUF"]()
+        return original_loader.load_clip(clip_name1, clip_name2, clip_name3, clip_name4, type)
+
 
 class LTXVLoader:
     @classmethod
