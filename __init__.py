@@ -37,7 +37,7 @@ model_allocation_store = {}
 
 def get_torch_device_patched():
     device = None
-    if (not torch.cuda.is_available() or mm.cpu_state == mm.CPUState.CPU or "cpu" in str(current_device).lower()):
+    if (not (torch.cuda.is_available() or torch.xpu.is_available()) or mm.cpu_state == mm.CPUState.CPU or "cpu" in str(current_device).lower()):
         device = torch.device("cpu")
     else:
         device = torch.device(current_device)
@@ -45,7 +45,7 @@ def get_torch_device_patched():
 
 def text_encoder_device_patched():
     device = None
-    if (not torch.cuda.is_available() or mm.cpu_state == mm.CPUState.CPU or "cpu" in str(current_text_encoder_device).lower()):
+    if (not (torch.cuda.is_available() or torch.xpu.is_available()) or mm.cpu_state == mm.CPUState.CPU or "cpu" in str(current_text_encoder_device).lower()):
         device = torch.device("cpu")
     else:
         device = torch.device(current_text_encoder_device)
@@ -325,7 +325,7 @@ def calculate_vvram_allocation_string(model, virtual_vram_str):
 
 def get_device_list():
     import torch
-    return ["cpu"] + [f"cuda:{i}" for i in range(torch.cuda.device_count())]
+    return ["cpu"] + [f"cuda:{i}" for i in range(torch.cuda.device_count())] + [f"xpu:{i}" for i in range(torch.xpu.device_count())]
 
 class DeviceSelectorMultiGPU:
     @classmethod
@@ -593,7 +593,7 @@ def override_class_with_distorch(cls):
             vram_string = ""
             if virtual_vram_gb > 0:
                 if use_other_vram:
-                    available_devices = [d for d in get_device_list() if d.startswith('cuda')]
+                    available_devices = [d for d in get_device_list() if d.startswith('cuda') or d.startswith('xpu')]
                     other_devices = [d for d in available_devices if d != device]
                     other_devices.sort(key=lambda x: int(x.split(':')[1] if ':' in x else x[-1]), reverse=False)
                     device_string = ','.join(other_devices + ['cpu'])
@@ -649,7 +649,7 @@ def override_class_with_distorch_clip(cls):
             vram_string = ""
             if virtual_vram_gb > 0:
                 if use_other_vram:
-                    available_devices = [d for d in get_device_list() if d.startswith('cuda')]
+                    available_devices = [d for d in get_device_list() if d.startswith('cuda') or d.startswith('xpu')]
                     other_devices = [d for d in available_devices if d != device]
                     other_devices.sort(key=lambda x: int(x.split(':')[1] if ':' in x else x[-1]), reverse=False)
                     device_string = ','.join(other_devices + ['cpu'])
