@@ -495,18 +495,20 @@ class DownloadAndLoadHyVideoTextEncoder:
 class WanVideoModelLoader:
     @classmethod
     def INPUT_TYPES(s):
+        # Use the existing get_device_list function
+        from . import get_device_list
+        devices = get_device_list()
+        
         return {
             "required": {
-                "model": (folder_paths.get_filename_list("diffusion_models"),
+                "model": (folder_paths.get_filename_list("unet_gguf") + folder_paths.get_filename_list("diffusion_models"),
                           {"tooltip": "These models are loaded from the 'ComfyUI/models/diffusion_models' folder",}),
                 "base_precision": (["fp32", "bf16", "fp16", "fp16_fast"], {"default": "bf16"}),
                 "quantization": (
-                    ['disabled', 'fp8_e4m3fn', 'fp8_e4m3fn_fast', 'fp8_e5m2', 'fp8_scaled',
-                     'torchao_fp8dq', "torchao_fp8dqrow", "torchao_int8dq", "torchao_fp6",
-                     "torchao_int4", "torchao_int8"],
-                    {"default": 'disabled', "tooltip": "optional quantization method"}
+                    ["disabled", "fp8_e4m3fn", "fp8_e4m3fn_fast", "fp8_e5m2", "fp8_e4m3fn_fast_no_ffn", "fp8_e4m3fn_scaled", "fp8_e5m2_scaled"],
+                    {"default": "disabled", "tooltip": "optional quantization method"}
                 ),
-                "load_device": (["main_device"], {"default": "main_device"}),
+                "device": (devices, {"default": devices[1] if len(devices) > 1 else devices[0], "tooltip": "Device to load the model to"}),
             },
             "optional": {
                 "attention_mode": ([
@@ -514,12 +516,17 @@ class WanVideoModelLoader:
                     "flash_attn_2",
                     "flash_attn_3",
                     "sageattn",
+                    "sageattn_3",
+                    "flex_attention",
+                    "radial_sage_attention",
                 ], {"default": "sdpa"}),
                 "compile_args": ("WANCOMPILEARGS", ),
                 "block_swap_args": ("BLOCKSWAPARGS", ),
                 "lora": ("WANVIDLORA", {"default": None}),
-                "vram_management_args": ("VRAM_MANAGEMENTARGS",
-                                          {"default": None, "tooltip": "Alternative offloading method"}),
+                "vram_management_args": ("VRAM_MANAGEMENTARGS", {"default": None, "tooltip": "Alternative offloading method from DiffSynth-Studio, more aggressive in reducing memory use than block swapping, but can be slower"}),
+                "vace_model": ("VACEPATH", {"default": None, "tooltip": "VACE model to use when not using model that has it included"}),
+                "fantasytalking_model": ("FANTASYTALKINGMODEL", {"default": None, "tooltip": "FantasyTalking model https://github.com/Fantasy-AMAP"}),
+                "multitalk_model": ("MULTITALKMODEL", {"default": None, "tooltip": "Multitalk model"}),
             }
         }
 
@@ -528,24 +535,98 @@ class WanVideoModelLoader:
     FUNCTION = "loadmodel"
     CATEGORY = "WanVideoWrapper"
 
-    def loadmodel(self, model, base_precision, load_device, quantization,
-                  compile_args=None, attention_mode="sdpa", block_swap_args=None, lora=None, vram_management_args=None):
+    def loadmodel(self, model, base_precision, device, quantization,
+                  compile_args=None, attention_mode="sdpa", block_swap_args=None, lora=None, vram_management_args=None, vace_model=None, fantasytalking_model=None, multitalk_model=None):
+        import logging
+        import comfy.model_management as mm
+        import torch
+        
+        logging.info(f"[MultiGPU WanVideoModelLoader] ========== CUSTOM IMPLEMENTATION ==========")
+        logging.info(f"[MultiGPU WanVideoModelLoader] User selected device: {device}")
+        
+        # Convert device string to torch device
+        selected_device = torch.device(device)
+        logging.info(f"[MultiGPU WanVideoModelLoader] Torch device: {selected_device}")
+        
+        # Determine load_device parameter for original loader
+        # If user selected CPU, use "offload_device", otherwise use "main_device"
+        load_device = "offload_device" if device == "cpu" else "main_device"
+        logging.info(f"[MultiGPU WanVideoModelLoader] Mapped to load_device: {load_device}")
+        
         from nodes import NODE_CLASS_MAPPINGS
         original_loader = NODE_CLASS_MAPPINGS["WanVideoModelLoader"]()
-        return original_loader.loadmodel(model, base_precision, load_device, quantization,
-                                         compile_args, attention_mode, block_swap_args, lora, vram_management_args)
+        
+        # Patch BOTH WanVideo modules with the selected device
+        import sys
+        import inspect
+        loader_module = inspect.getmodule(original_loader)
+        
+        if loader_module:
+            logging.info(f"[MultiGPU WanVideoModelLoader] Patching WanVideo modules to use {selected_device}")
+            
+            # Save original devices
+            original_device = getattr(loader_module, 'device', None)
+            original_offload = getattr(loader_module, 'offload_device', None)
+            
+            # Check if there's a model offload device override (from block swap config)
+            model_offload_override = getattr(loader_module, '_model_offload_device_override', None)
+            
+            # Patch nodes_model_loading.py module
+            setattr(loader_module, 'device', selected_device)
+            if model_offload_override:
+                # Use the model offload override for offload_device
+                setattr(loader_module, 'offload_device', model_offload_override)
+                logging.info(f"[MultiGPU WanVideoModelLoader] Using model offload override: {model_offload_override}")
+            elif device == "cpu":
+                setattr(loader_module, 'offload_device', selected_device)
+            
+            # Patch nodes.py module as well
+            nodes_module_name = loader_module.__name__.replace('.nodes_model_loading', '.nodes')
+            if nodes_module_name in sys.modules:
+                nodes_module = sys.modules[nodes_module_name]
+                setattr(nodes_module, 'device', selected_device)
+                
+                # Check for model offload override in nodes module too
+                nodes_model_offload_override = getattr(nodes_module, '_model_offload_device_override', None)
+                if nodes_model_offload_override:
+                    setattr(nodes_module, 'offload_device', nodes_model_offload_override)
+                    logging.info(f"[MultiGPU WanVideoModelLoader] Using model offload override for nodes.py: {nodes_model_offload_override}")
+                elif device == "cpu":
+                    setattr(nodes_module, 'offload_device', selected_device)
+                logging.info(f"[MultiGPU WanVideoModelLoader] Both modules patched successfully")
+            
+            # Call original loader with our patches in place
+            logging.info(f"[MultiGPU WanVideoModelLoader] Calling original loader with patched device")
+            result = original_loader.loadmodel(model, base_precision, load_device, quantization,
+                                              compile_args, attention_mode, block_swap_args, lora, vram_management_args, vace_model, fantasytalking_model, multitalk_model)
+            
+            # Leave patches in place for subsequent operations
+            logging.info(f"[MultiGPU WanVideoModelLoader] Model loaded on {selected_device}")
+            logging.info(f"[MultiGPU WanVideoModelLoader] ========== COMPLETE ==========")
+            
+            return result
+        else:
+            logging.error(f"[MultiGPU WanVideoModelLoader] Could not patch modules, falling back")
+            return original_loader.loadmodel(model, base_precision, load_device, quantization,
+                                            compile_args, attention_mode, block_swap_args, lora, vram_management_args, vace_model, fantasytalking_model, multitalk_model)
 
 
 class WanVideoVAELoader:
     @classmethod
     def INPUT_TYPES(s):
+        from . import get_device_list
+        devices = get_device_list()
+        
         return {
             "required": {
                 "model_name": (folder_paths.get_filename_list("vae"),
                                {"tooltip": "These models are loaded from 'ComfyUI/models/vae'"}),
+                "device": (devices, {"default": devices[1] if len(devices) > 1 else devices[0],
+                                    "tooltip": "Device to load the VAE to"}),
             },
             "optional": {
                 "precision": (["fp16", "fp32", "bf16"], {"default": "bf16"}),
+                "compile_args": ("WANCOMPILEARGS", ),
             }
         }
 
@@ -553,25 +634,62 @@ class WanVideoVAELoader:
     RETURN_NAMES = ("vae", )
     FUNCTION = "loadmodel"
     CATEGORY = "WanVideoWrapper"
-    DESCRIPTION = "Loads Wan VAE model from 'ComfyUI/models/vae'"
+    DESCRIPTION = "Loads Wan VAE model with explicit device selection"
 
-    def loadmodel(self, model_name, precision):
+    def loadmodel(self, model_name, device, precision="bf16", compile_args=None):
+        import logging
+        import torch
+        
+        logging.info(f"[MultiGPU WanVideoVAELoader] User selected device: {device}")
+        
         from nodes import NODE_CLASS_MAPPINGS
         original_loader = NODE_CLASS_MAPPINGS["WanVideoVAELoader"]()
-        return original_loader.loadmodel(model_name, precision)
+        
+        # Patch BOTH modules with selected device
+        import sys
+        import inspect
+        loader_module = inspect.getmodule(original_loader)
+        
+        if loader_module:
+            selected_device = torch.device(device)
+            logging.info(f"[MultiGPU WanVideoVAELoader] Patching modules to use {selected_device}")
+            
+            # For VAE, we want to control where it loads initially
+            # Set offload_device to our selected device
+            setattr(loader_module, 'offload_device', selected_device)
+            setattr(loader_module, 'device', selected_device)
+            
+            # Also patch nodes.py
+            nodes_module_name = loader_module.__name__.replace('.nodes_model_loading', '.nodes')
+            if nodes_module_name in sys.modules:
+                nodes_module = sys.modules[nodes_module_name]
+                setattr(nodes_module, 'device', selected_device)
+                setattr(nodes_module, 'offload_device', selected_device)
+            
+            result = original_loader.loadmodel(model_name, precision, compile_args)
+            
+            logging.info(f"[MultiGPU WanVideoVAELoader] VAE loaded on {selected_device}")
+            return result
+        else:
+            logging.error(f"[MultiGPU WanVideoVAELoader] Could not patch modules")
+            return original_loader.loadmodel(model_name, precision, compile_args)
 
 
 class LoadWanVideoT5TextEncoder:
     @classmethod
     def INPUT_TYPES(s):
+        from . import get_device_list
+        devices = get_device_list()
+        
         return {
             "required": {
                 "model_name": (folder_paths.get_filename_list("text_encoders"),
                                {"tooltip": "These models are loaded from 'ComfyUI/models/text_encoders'"}),
-                "precision": (["fp16", "fp32", "bf16"], {"default": "bf16"}),
+                "precision": (["fp32", "bf16"], {"default": "bf16"}),
+                "device": (devices, {"default": devices[1] if len(devices) > 1 else devices[0], 
+                                    "tooltip": "Device to load the text encoder to"}),
             },
             "optional": {
-                "load_device": (["main_device"], {"default": "main_device"}),
                 "quantization": (['disabled', 'fp8_e4m3fn'],
                                  {"default": 'disabled', "tooltip": "optional quantization method"}),
             }
@@ -581,9 +699,400 @@ class LoadWanVideoT5TextEncoder:
     RETURN_NAMES = ("wan_t5_model", )
     FUNCTION = "loadmodel"
     CATEGORY = "WanVideoWrapper"
-    DESCRIPTION = "Loads Wan text_encoder model from 'ComfyUI/models/LLM'"
+    DESCRIPTION = "Loads Wan text_encoder model from 'ComfyUI/models/text_encoders'"
 
-    def loadmodel(self, model_name, precision, load_device="offload_device", quantization="disabled"):
+    def loadmodel(self, model_name, precision, device, quantization="disabled"):
+        import logging
+        import torch
+        
+        logging.info(f"[MultiGPU LoadWanVideoT5TextEncoder] ========== CUSTOM IMPLEMENTATION ==========")
+        logging.info(f"[MultiGPU LoadWanVideoT5TextEncoder] User selected device: {device}")
+        
+        selected_device = torch.device(device)
+        load_device = "offload_device" if device == "cpu" else "main_device"
+        logging.info(f"[MultiGPU LoadWanVideoT5TextEncoder] Mapped to load_device: {load_device}")
+        
         from nodes import NODE_CLASS_MAPPINGS
         original_loader = NODE_CLASS_MAPPINGS["LoadWanVideoT5TextEncoder"]()
-        return original_loader.loadmodel(model_name, precision, load_device, quantization)
+        
+        # Patch BOTH WanVideo modules
+        import sys
+        import inspect
+        loader_module = inspect.getmodule(original_loader)
+        
+        if loader_module:
+            logging.info(f"[MultiGPU LoadWanVideoT5TextEncoder] Patching WanVideo modules to use {selected_device}")
+            
+            # Patch nodes_model_loading.py
+            setattr(loader_module, 'device', selected_device)
+            if device == "cpu":
+                setattr(loader_module, 'offload_device', selected_device)
+            
+            # Patch nodes.py module as well
+            nodes_module_name = loader_module.__name__.replace('.nodes_model_loading', '.nodes')
+            if nodes_module_name in sys.modules:
+                nodes_module = sys.modules[nodes_module_name]
+                setattr(nodes_module, 'device', selected_device)
+                if device == "cpu":
+                    setattr(nodes_module, 'offload_device', selected_device)
+                logging.info(f"[MultiGPU LoadWanVideoT5TextEncoder] Both modules patched successfully")
+            
+            result = original_loader.loadmodel(model_name, precision, load_device, quantization)
+            
+            logging.info(f"[MultiGPU LoadWanVideoT5TextEncoder] Text encoder loaded on {selected_device}")
+            logging.info(f"[MultiGPU LoadWanVideoT5TextEncoder] ========== COMPLETE ==========")
+            
+            return result
+        else:
+            logging.error(f"[MultiGPU LoadWanVideoT5TextEncoder] Could not patch modules, falling back")
+            return original_loader.loadmodel(model_name, precision, load_device, quantization)
+
+class WanVideoTextEncode:
+    @classmethod
+    def INPUT_TYPES(s):
+        from . import get_device_list
+        devices = get_device_list()
+        
+        return {"required": {
+            "positive_prompt": ("STRING", {"default": "", "multiline": True} ),
+            "negative_prompt": ("STRING", {"default": "", "multiline": True} ),
+            "device": (devices, {"default": devices[1] if len(devices) > 1 else devices[0],
+                                "tooltip": "Device to run the text encoding on"}),
+            },
+            "optional": {
+                "t5": ("WANTEXTENCODER",),
+                "force_offload": ("BOOLEAN", {"default": True}),
+                "model_to_offload": ("WANVIDEOMODEL", {"tooltip": "Model to move to offload_device before encoding"}),
+                "use_disk_cache": ("BOOLEAN", {"default": False, "tooltip": "Cache the text embeddings to disk for faster re-use"}),
+            }
+        }
+
+    RETURN_TYPES = ("WANVIDEOTEXTEMBEDS", )
+    RETURN_NAMES = ("text_embeds",)
+    FUNCTION = "process"
+    CATEGORY = "WanVideoWrapper"
+    DESCRIPTION = "Encodes text prompts with explicit device selection"
+    
+    def process(self, positive_prompt, negative_prompt, device, t5=None, force_offload=True, 
+                model_to_offload=None, use_disk_cache=False):
+        import logging
+        import torch
+        
+        logging.info(f"[MultiGPU WanVideoTextEncode] User selected device: {device}")
+        
+        # Map to original device parameter
+        original_device = "gpu" if device != "cpu" else "cpu"
+        
+        from nodes import NODE_CLASS_MAPPINGS
+        original_encoder = NODE_CLASS_MAPPINGS["WanVideoTextEncode"]()
+        
+        # Patch the modules
+        import sys
+        import inspect
+        encoder_module = inspect.getmodule(original_encoder)
+        
+        if encoder_module:
+            selected_device = torch.device(device)
+            logging.info(f"[MultiGPU WanVideoTextEncode] Patching module to use {selected_device}")
+            setattr(encoder_module, 'device', selected_device)
+            
+            # Also patch nodes_model_loading if needed
+            model_loading_name = encoder_module.__name__.replace('.nodes', '.nodes_model_loading')
+            if model_loading_name in sys.modules:
+                model_loading_module = sys.modules[model_loading_name]
+                setattr(model_loading_module, 'device', selected_device)
+            
+            result = original_encoder.process(positive_prompt, negative_prompt, t5=t5,
+                                             force_offload=force_offload, model_to_offload=model_to_offload,
+                                             use_disk_cache=use_disk_cache, device=original_device)
+            
+            logging.info(f"[MultiGPU WanVideoTextEncode] Encoding completed on {selected_device}")
+            return result
+        else:
+            return original_encoder.process(positive_prompt, negative_prompt, t5=t5,
+                                           force_offload=force_offload, model_to_offload=model_to_offload,
+                                           use_disk_cache=use_disk_cache, device=original_device)
+
+class LoadWanVideoClipTextEncoder:
+    @classmethod
+    def INPUT_TYPES(s):
+        from . import get_device_list
+        devices = get_device_list()
+        
+        return {
+            "required": {
+                "model_name": (folder_paths.get_filename_list("clip_vision") + folder_paths.get_filename_list("text_encoders"),
+                               {"tooltip": "These models are loaded from 'ComfyUI/models/clip_vision'"}),
+                "precision": (["fp16", "fp32", "bf16"], {"default": "fp16"}),
+                "device": (devices, {"default": devices[1] if len(devices) > 1 else devices[0],
+                                    "tooltip": "Device to load the CLIP encoder to"}),
+            }
+        }
+
+    RETURN_TYPES = ("CLIP_VISION",)
+    RETURN_NAMES = ("clip_vision", )
+    FUNCTION = "loadmodel"
+    CATEGORY = "WanVideoWrapper"
+    DESCRIPTION = "Loads Wan CLIP text encoder model from 'ComfyUI/models/clip_vision'"
+
+    def loadmodel(self, model_name, precision, device):
+        import logging
+        import torch
+        
+        logging.info(f"[MultiGPU LoadWanVideoClipTextEncoder] ========== CUSTOM IMPLEMENTATION ==========")
+        logging.info(f"[MultiGPU LoadWanVideoClipTextEncoder] User selected device: {device}")
+        
+        selected_device = torch.device(device)
+        load_device = "offload_device" if device == "cpu" else "main_device"
+        logging.info(f"[MultiGPU LoadWanVideoClipTextEncoder] Mapped to load_device: {load_device}")
+        
+        from nodes import NODE_CLASS_MAPPINGS
+        original_loader = NODE_CLASS_MAPPINGS["LoadWanVideoClipTextEncoder"]()
+        
+        # Patch BOTH WanVideo modules
+        import sys
+        import inspect
+        loader_module = inspect.getmodule(original_loader)
+        
+        if loader_module:
+            logging.info(f"[MultiGPU LoadWanVideoClipTextEncoder] Patching WanVideo modules to use {selected_device}")
+            
+            # Patch nodes_model_loading.py
+            setattr(loader_module, 'device', selected_device)
+            if device == "cpu":
+                setattr(loader_module, 'offload_device', selected_device)
+            
+            # Patch nodes.py module as well
+            nodes_module_name = loader_module.__name__.replace('.nodes_model_loading', '.nodes')
+            if nodes_module_name in sys.modules:
+                nodes_module = sys.modules[nodes_module_name]
+                setattr(nodes_module, 'device', selected_device)
+                if device == "cpu":
+                    setattr(nodes_module, 'offload_device', selected_device)
+                logging.info(f"[MultiGPU LoadWanVideoClipTextEncoder] Both modules patched successfully")
+            
+            result = original_loader.loadmodel(model_name, precision, load_device)
+            
+            logging.info(f"[MultiGPU LoadWanVideoClipTextEncoder] CLIP encoder loaded on {selected_device}")
+            logging.info(f"[MultiGPU LoadWanVideoClipTextEncoder] ========== COMPLETE ==========")
+            
+            return result
+        else:
+            logging.error(f"[MultiGPU LoadWanVideoClipTextEncoder] Could not patch modules, falling back")
+            return original_loader.loadmodel(model_name, precision, load_device)
+
+
+class WanVideoModelLoader_TWO:
+    """Second instance of WanVideoModelLoader for multi-model workflows to avoid race conditions"""
+    @classmethod
+    def INPUT_TYPES(s):
+        # Exact same inputs as WanVideoModelLoader
+        from . import get_device_list
+        devices = get_device_list()
+        
+        return {
+            "required": {
+                "model": (folder_paths.get_filename_list("unet_gguf") + folder_paths.get_filename_list("diffusion_models"),
+                          {"tooltip": "These models are loaded from the 'ComfyUI/models/diffusion_models' folder",}),
+                "base_precision": (["fp32", "bf16", "fp16", "fp16_fast"], {"default": "bf16"}),
+                "quantization": (
+                    ["disabled", "fp8_e4m3fn", "fp8_e4m3fn_fast", "fp8_e5m2", "fp8_e4m3fn_fast_no_ffn", "fp8_e4m3fn_scaled", "fp8_e5m2_scaled"],
+                    {"default": "disabled", "tooltip": "optional quantization method"}
+                ),
+                "device": (devices, {"default": devices[1] if len(devices) > 1 else devices[0], "tooltip": "Device to load the model to"}),
+            },
+            "optional": {
+                "attention_mode": ([
+                    "sdpa",
+                    "flash_attn_2",
+                    "flash_attn_3",
+                    "sageattn",
+                    "sageattn_3",
+                    "flex_attention",
+                    "radial_sage_attention",
+                ], {"default": "sdpa"}),
+                "compile_args": ("WANCOMPILEARGS", ),
+                "block_swap_args": ("BLOCKSWAPARGS", ),
+                "lora": ("WANVIDLORA", {"default": None}),
+                "vram_management_args": ("VRAM_MANAGEMENTARGS", {"default": None, "tooltip": "Alternative offloading method from DiffSynth-Studio, more aggressive in reducing memory use than block swapping, but can be slower"}),
+                "vace_model": ("VACEPATH", {"default": None, "tooltip": "VACE model to use when not using model that has it included"}),
+                "fantasytalking_model": ("FANTASYTALKINGMODEL", {"default": None, "tooltip": "FantasyTalking model https://github.com/Fantasy-AMAP"}),
+                "multitalk_model": ("MULTITALKMODEL", {"default": None, "tooltip": "Multitalk model"}),
+            }
+        }
+    RETURN_TYPES = ("WANVIDEOMODEL",)
+    RETURN_NAMES = ("model", )
+    FUNCTION = "loadmodel"
+    CATEGORY = "WanVideoWrapper"
+    DESCRIPTION = "Second model loader for multi-model workflows - avoids race conditions when loading multiple models"
+
+    def loadmodel(self, model, base_precision, device, quantization,
+                  compile_args=None, attention_mode="sdpa", block_swap_args=None, lora=None, vram_management_args=None, vace_model=None, fantasytalking_model=None, multitalk_model=None):
+        # Just call the first loader's implementation directly
+        import logging
+        import comfy.model_management as mm
+        import torch
+        
+        logging.info(f"[MultiGPU WanVideoModelLoader_TWO] ========== CUSTOM IMPLEMENTATION ==========")
+        logging.info(f"[MultiGPU WanVideoModelLoader_TWO] User selected device: {device}")
+        
+        # Convert device string to torch device
+        selected_device = torch.device(device)
+        logging.info(f"[MultiGPU WanVideoModelLoader_TWO] Torch device: {selected_device}")
+        
+        # Determine load_device parameter for original loader
+        # If user selected CPU, use "offload_device", otherwise use "main_device"
+        load_device = "offload_device" if device == "cpu" else "main_device"
+        logging.info(f"[MultiGPU WanVideoModelLoader_TWO] Mapped to load_device: {load_device}")
+        
+        from nodes import NODE_CLASS_MAPPINGS
+        original_loader = NODE_CLASS_MAPPINGS["WanVideoModelLoader"]()
+        
+        # Patch BOTH WanVideo modules with the selected device
+        import sys
+        import inspect
+        loader_module = inspect.getmodule(original_loader)
+        
+        if loader_module:
+            logging.info(f"[MultiGPU WanVideoModelLoader_TWO] Patching WanVideo modules to use {selected_device}")
+            
+            # Save original devices
+            original_device = getattr(loader_module, 'device', None)
+            original_offload = getattr(loader_module, 'offload_device', None)
+            
+            # Check if there's a model offload device override (from block swap config)
+            model_offload_override = getattr(loader_module, '_model_offload_device_override', None)
+            
+            # Patch nodes_model_loading.py module
+            setattr(loader_module, 'device', selected_device)
+            if model_offload_override:
+                # Use the model offload override for offload_device
+                setattr(loader_module, 'offload_device', model_offload_override)
+                logging.info(f"[MultiGPU WanVideoModelLoader_TWO] Using model offload override: {model_offload_override}")
+            elif device == "cpu":
+                setattr(loader_module, 'offload_device', selected_device)
+            
+            # Patch nodes.py module as well
+            nodes_module_name = loader_module.__name__.replace('.nodes_model_loading', '.nodes')
+            if nodes_module_name in sys.modules:
+                nodes_module = sys.modules[nodes_module_name]
+                setattr(nodes_module, 'device', selected_device)
+                
+                # Check for model offload override in nodes module too
+                nodes_model_offload_override = getattr(nodes_module, '_model_offload_device_override', None)
+                if nodes_model_offload_override:
+                    setattr(nodes_module, 'offload_device', nodes_model_offload_override)
+                    logging.info(f"[MultiGPU WanVideoModelLoader_TWO] Using model offload override for nodes.py: {nodes_model_offload_override}")
+                elif device == "cpu":
+                    setattr(nodes_module, 'offload_device', selected_device)
+                logging.info(f"[MultiGPU WanVideoModelLoader_TWO] Both modules patched successfully")
+            
+            # Call original loader with our patches in place
+            logging.info(f"[MultiGPU WanVideoModelLoader_TWO] Calling original loader with patched device")
+            result = original_loader.loadmodel(model, base_precision, load_device, quantization,
+                                              compile_args, attention_mode, block_swap_args, lora, vram_management_args, vace_model, fantasytalking_model, multitalk_model)
+            
+            # Leave patches in place for subsequent operations
+            logging.info(f"[MultiGPU WanVideoModelLoader_TWO] Model loaded on {selected_device}")
+            logging.info(f"[MultiGPU WanVideoModelLoader_TWO] ========== COMPLETE ==========")
+            
+            return result
+        else:
+            logging.error(f"[MultiGPU WanVideoModelLoader_TWO] Could not patch modules, falling back")
+            return original_loader.loadmodel(model, base_precision, load_device, quantization,
+                                            compile_args, attention_mode, block_swap_args, lora, vram_management_args, vace_model, fantasytalking_model, multitalk_model)
+
+
+class WanVideoBlockSwap:
+    @classmethod
+    def INPUT_TYPES(s):
+        from . import get_device_list
+        devices = get_device_list()
+        
+        return {
+            "required": {
+                "blocks_to_swap": ("INT", {"default": 20, "min": 0, "max": 40, "step": 1, 
+                                          "tooltip": "Number of transformer blocks to swap, the 14B model has 40, while the 1.3B model has 30 blocks"}),
+                "swap_device": (devices, {"default": "cpu",
+                                         "tooltip": "Device to swap blocks to during sampling (default: cpu for standard behavior)"}),
+                "model_offload_device": (devices, {"default": "cpu",
+                                                   "tooltip": "Device to offload entire model to when done (default: cpu)"}),
+                "offload_img_emb": ("BOOLEAN", {"default": False, "tooltip": "Offload img_emb to swap_device"}),
+                "offload_txt_emb": ("BOOLEAN", {"default": False, "tooltip": "Offload time_emb to swap_device"}),
+            },
+            "optional": {
+                "use_non_blocking": ("BOOLEAN", {"default": False, 
+                                                  "tooltip": "Use non-blocking memory transfer for offloading, reserves more RAM but is faster"}),
+                "vace_blocks_to_swap": ("INT", {"default": 0, "min": 0, "max": 15, "step": 1, 
+                                               "tooltip": "Number of VACE blocks to swap, the VACE model has 15 blocks"}),
+            },
+        }
+    
+    RETURN_TYPES = ("BLOCKSWAPARGS",)
+    RETURN_NAMES = ("block_swap_args",)
+    FUNCTION = "setargs"
+    CATEGORY = "WanVideoWrapper"
+    DESCRIPTION = "Block swap settings with explicit device selection for memory management across GPUs"
+    
+    def setargs(self, blocks_to_swap, swap_device, model_offload_device, offload_img_emb, offload_txt_emb, 
+                use_non_blocking=False, vace_blocks_to_swap=0):
+        import logging
+        import torch
+        import comfy.model_management as mm
+        
+        logging.info(f"[MultiGPU WanVideoBlockSwap] ========== CONFIGURATION ==========")
+        logging.info(f"[MultiGPU WanVideoBlockSwap] User selected swap device: {swap_device}")
+        logging.info(f"[MultiGPU WanVideoBlockSwap] User selected model offload device: {model_offload_device}")
+        logging.info(f"[MultiGPU WanVideoBlockSwap] Blocks to swap: {blocks_to_swap}")
+        
+        # Convert device strings to torch devices
+        selected_swap_device = torch.device(swap_device)
+        selected_offload_device = torch.device(model_offload_device)
+        logging.info(f"[MultiGPU WanVideoBlockSwap] Torch swap device: {selected_swap_device}")
+        logging.info(f"[MultiGPU WanVideoBlockSwap] Torch model offload device: {selected_offload_device}")
+        
+        # Patch the offload_device in WanVideo modules to use our selected swap device
+        # This needs to persist through model loading
+        import sys
+        
+        # Find the actual module paths (without the custom_nodes prefix)
+        for module_name in sys.modules.keys():
+            if 'WanVideoWrapper' in module_name and 'nodes_model_loading' in module_name:
+                module = sys.modules[module_name]
+                original_offload = getattr(module, 'offload_device', None)
+                # For model loading, use the model offload device
+                setattr(module, 'offload_device', selected_offload_device)
+                # Store the block swap device separately
+                setattr(module, '_block_swap_device_override', selected_swap_device)
+                setattr(module, '_model_offload_device_override', selected_offload_device)
+                logging.info(f"[MultiGPU WanVideoBlockSwap] Patched {module_name}")
+                logging.info(f"  - offload_device: {original_offload} -> {selected_offload_device}")
+                logging.info(f"  - _block_swap_device_override: {selected_swap_device}")
+            
+            if 'WanVideoWrapper' in module_name and module_name.endswith('.nodes'):
+                module = sys.modules[module_name]
+                original_offload = getattr(module, 'offload_device', None)
+                # For nodes.py, set the model offload device
+                setattr(module, 'offload_device', selected_offload_device)
+                setattr(module, '_block_swap_device_override', selected_swap_device)
+                setattr(module, '_model_offload_device_override', selected_offload_device)
+                logging.info(f"[MultiGPU WanVideoBlockSwap] Patched {module_name}")
+                logging.info(f"  - offload_device: {original_offload} -> {selected_offload_device}")
+        
+        # Also store in block_swap_args so it can be used directly
+        block_swap_args = {
+            "blocks_to_swap": blocks_to_swap,
+            "offload_img_emb": offload_img_emb,
+            "offload_txt_emb": offload_txt_emb,
+            "use_non_blocking": use_non_blocking,
+            "vace_blocks_to_swap": vace_blocks_to_swap,
+            "swap_device": swap_device,  # For block swapping
+            "model_offload_device": model_offload_device,  # For full model offload
+        }
+        
+        logging.info(f"[MultiGPU WanVideoBlockSwap] Block swap configuration complete")
+        logging.info(f"[MultiGPU WanVideoBlockSwap] Stored swap_device in args: {swap_device}")
+        logging.info(f"[MultiGPU WanVideoBlockSwap] Stored model_offload_device in args: {model_offload_device}")
+        logging.info(f"[MultiGPU WanVideoBlockSwap] ========== COMPLETE ==========")
+        
+        return (block_swap_args,)

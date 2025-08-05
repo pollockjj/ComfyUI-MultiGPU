@@ -28,7 +28,8 @@ from .nodes import (
     MMAudioModelLoader, MMAudioFeatureUtilsLoader, MMAudioSampler,
     PulidModelLoader, PulidInsightFaceLoader, PulidEvaClipLoader,
     HyVideoModelLoader, HyVideoVAELoader, DownloadAndLoadHyVideoTextEncoder,
-    WanVideoModelLoader, WanVideoVAELoader, LoadWanVideoT5TextEncoder
+    WanVideoModelLoader, WanVideoVAELoader, LoadWanVideoT5TextEncoder, LoadWanVideoClipTextEncoder,
+    WanVideoTextEncode, WanVideoBlockSwap, WanVideoModelLoader_TWO
 )
 
 current_device = mm.get_torch_device()
@@ -41,6 +42,7 @@ def get_torch_device_patched():
         device = torch.device("cpu")
     else:
         device = torch.device(current_device)
+    logging.info(f"[MultiGPU get_torch_device_patched] Returning device: {device} (current_device={current_device})")
     return device
 
 def text_encoder_device_patched():
@@ -49,10 +51,15 @@ def text_encoder_device_patched():
         device = torch.device("cpu")
     else:
         device = torch.device(current_text_encoder_device)
+    logging.info(f"[MultiGPU text_encoder_device_patched] Returning device: {device} (current_text_encoder_device={current_text_encoder_device})")
     return device
 
+logging.info(f"[MultiGPU] Patching mm.get_torch_device and mm.text_encoder_device")
+logging.info(f"[MultiGPU] Initial current_device: {current_device}")
+logging.info(f"[MultiGPU] Initial current_text_encoder_device: {current_text_encoder_device}")
 mm.get_torch_device = get_torch_device_patched
 mm.text_encoder_device = text_encoder_device_patched
+logging.info(f"[MultiGPU] Patches applied successfully")
 
 
 def create_model_hash(model, caller):
@@ -528,10 +535,18 @@ def override_class(cls):
 
         def override(self, *args, device=None, **kwargs):
             global current_device
+            
+            logging.info(f"[MultiGPU override_class] Called with device={device}, current_device={current_device}")
+            
             if device is not None:
                 current_device = device
+                logging.info(f"[MultiGPU override_class] Setting current_device to {device}")
+            
             fn = getattr(super(), cls.FUNCTION)
+            logging.info(f"[MultiGPU override_class] Calling wrapped function: {cls.__name__}.{cls.FUNCTION}")
             out = fn(*args, **kwargs)
+            logging.info(f"[MultiGPU override_class] Wrapped function completed successfully")
+            
             return out
 
     return NodeOverride
@@ -552,10 +567,13 @@ def override_class_clip(cls):
 
         def override(self, *args, device=None, **kwargs):
             global current_text_encoder_device
+            
             if device is not None:
                 current_text_encoder_device = device
+            
             fn = getattr(super(), cls.FUNCTION)
             out = fn(*args, **kwargs)
+            
             return out
 
     return NodeOverride
@@ -741,9 +759,14 @@ if check_module_exists("ComfyUI-HunyuanVideoWrapper") or check_module_exists("co
     NODE_CLASS_MAPPINGS["DownloadAndLoadHyVideoTextEncoderMultiGPU"] = override_class(DownloadAndLoadHyVideoTextEncoder)
 
 if check_module_exists("ComfyUI-WanVideoWrapper") or check_module_exists("comfyui-wanvideowrapper"):
-    NODE_CLASS_MAPPINGS["WanVideoModelLoaderMultiGPU"] = override_class(WanVideoModelLoader)
-    NODE_CLASS_MAPPINGS["WanVideoVAELoaderMultiGPU"] = override_class(WanVideoVAELoader)
-    NODE_CLASS_MAPPINGS["LoadWanVideoT5TextEncoderMultiGPU"] = override_class(LoadWanVideoT5TextEncoder)
+    # WanVideo uses custom implementation, not the standard override
+    NODE_CLASS_MAPPINGS["WanVideoModelLoaderMultiGPU"] = WanVideoModelLoader
+    NODE_CLASS_MAPPINGS["WanVideoModelLoaderMultiGPU_TWO"] = WanVideoModelLoader_TWO
+    NODE_CLASS_MAPPINGS["WanVideoVAELoaderMultiGPU"] = WanVideoVAELoader
+    NODE_CLASS_MAPPINGS["LoadWanVideoT5TextEncoderMultiGPU"] = LoadWanVideoT5TextEncoder
+    NODE_CLASS_MAPPINGS["LoadWanVideoClipTextEncoderMultiGPU"] = LoadWanVideoClipTextEncoder
+    NODE_CLASS_MAPPINGS["WanVideoTextEncodeMultiGPU"] = WanVideoTextEncode
+    NODE_CLASS_MAPPINGS["WanVideoBlockSwapMultiGPU"] = WanVideoBlockSwap
 
 
 logging.info(f"MultiGPU: Registration complete. Final mappings: {', '.join(NODE_CLASS_MAPPINGS.keys())}")
