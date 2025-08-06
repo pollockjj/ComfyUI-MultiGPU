@@ -1,9 +1,19 @@
-# ComfyUI-MultiGPU: Tools to free up your primary GPU’s VRAM by using your CPU or additional GPUs[^1]
+# ComfyUI-MultiGPU: Tools to free up your primary GPU’s VRAM by using your CPU or additional GPUs, now with tighter integration into kijai's WanVideoWrapper[^1]
 <p align="center">
   <img src="https://raw.githubusercontent.com/pollockjj/ComfyUI-MultiGPU/main/assets/distorch_average.png" width="600">
   <br>
   <em>Free almost all of your GPU for what matters: Maximum latent space processing</em>
 </p>
+
+### WanVideoWrapper Integration
+
+ComfyUI-MultiGPU now includes a custom, tightly integrated implementation for WanVideoWrapper, providing true multi-GPU support for advanced video generation workflows. Unlike the standard override nodes, these are bespoke wrappers that offer a more stable and feature-rich experience.
+
+**Key Capabilities:**
+
+*   **Load Models Anywhere:** Load different WanVideo models onto separate GPUs within the same workflow (e.g., Model 1 on `cuda:0`, Model 2 on `cuda:1`).
+*   **Swap Blocks Anywhere:** Utilize any GPU as a target for offloading transformer blocks via the `WanVideoBlockSwapMultiGPU` node (e.g., swap to `cuda:2`).
+*   **Reliable Device Tracking:** The device context is correctly managed even in complex dual-model workflows, ensuring the right model runs on the right GPU.
 
 ## The Core of ComfyUI-MultiGPU:
 [^1]: This **enhances memory management,** not parallel processing. Workflow steps still execute sequentially, but with components (in full or in part) loaded across your specified devices. *Performance gains* come from avoiding repeated model loading/unloading when VRAM is constrained. *Capability gains* come from offloading as much of the model (VAE/CLIP/UNet) off of your main **compute** device as possible—allowing you to maximize latent space for actual computation.
@@ -125,9 +135,13 @@ Currently supported nodes (automatically detected if available):
   - HyVideoVAELoaderMultiGPU
   - DownloadAndLoadHyVideoTextEncoderMultiGPU
 - WanVideoWrapper (requires [ComfyUI-WanVideoWrapper](https://github.com/kijai/ComfyUI-WanVideoWrapper)):
-  - WanVideoModelLoader
-  - WanVideoVAELoader
-  - LoadWanVideoT5TextEncoder
+  - `WanVideoModelLoaderMultiGPU` & `WanVideoModelLoaderMultiGPU_2`
+  - `WanVideoVAELoaderMultiGPU`
+  - `LoadWanVideoT5TextEncoderMultiGPU`
+  - `LoadWanVideoClipTextEncoderMultiGPU`
+  - `WanVideoTextEncodeMultiGPU`
+  - `WanVideoBlockSwapMultiGPU`
+  - `WanVideoSamplerMultiGPU`
 - **Native to ComfyUI-MultiGPU**
   - DeviceSelectorMultiGPU - Allows user to link loaders together to use the same selected device
   - HunyuanVideoEmbeddingsAdapter - Allows Kijai's excellent IP2V CLIP for HunyuanVideo to be used with Comfy Core sampler.
@@ -136,7 +150,12 @@ All MultiGPU nodes available for your install can be found in the "multigpu" cat
 
 ## Example workflows
 
-All workflows have been tested on a 2x 3090 linux setup, a 4070 win 11 setup, and a 3090/1070ti linux setup.
+All workflows have been tested on a 2x 3090 + 1060ti linux setup, a 4070 win 11 setup, and a 3090/1070ti linux setup.
+
+### Split WAN2.2 High and Low models on different GPUs while Block Swapping to a third GPU ###
+
+- [examples/wanvideo2_2_I2V_A14B_example_WIP_MultiGPU.json](https://github.com/pollockjj/ComfyUI-MultiGPU/blob/main/examples/wanvideo2_2_I2V_A14B_example_WIP_MultiGPU.json)
+  This workflow extends Kijai's I2V example for WanVideo 2.2, demonstrating a dual-model setup. The HIGH model is loaded on `cuda:0`, the LOW model on `cuda:1`, with block-swapping offloaded to `cuda:2`.
 
 ### Split GGUF-quantized UNet and CLIP models across multiple devices using DisTorch
 
