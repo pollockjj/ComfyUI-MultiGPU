@@ -28,8 +28,8 @@ from .nodes import (
     MMAudioModelLoader, MMAudioFeatureUtilsLoader, MMAudioSampler,
     PulidModelLoader, PulidInsightFaceLoader, PulidEvaClipLoader,
     HyVideoModelLoader, HyVideoVAELoader, DownloadAndLoadHyVideoTextEncoder,
-    WanVideoModelLoader, WanVideoVAELoader, LoadWanVideoT5TextEncoder, LoadWanVideoClipTextEncoder,
-    WanVideoTextEncode, WanVideoBlockSwap, WanVideoModelLoader_TWO
+    WanVideoModelLoader, WanVideoModelLoader_2, WanVideoVAELoader, LoadWanVideoT5TextEncoder, LoadWanVideoClipTextEncoder,
+    WanVideoTextEncode, WanVideoBlockSwap, WanVideoSampler
 )
 
 current_device = mm.get_torch_device()
@@ -761,12 +761,13 @@ if check_module_exists("ComfyUI-HunyuanVideoWrapper") or check_module_exists("co
 if check_module_exists("ComfyUI-WanVideoWrapper") or check_module_exists("comfyui-wanvideowrapper"):
     # WanVideo uses custom implementation, not the standard override
     NODE_CLASS_MAPPINGS["WanVideoModelLoaderMultiGPU"] = WanVideoModelLoader
-    NODE_CLASS_MAPPINGS["WanVideoModelLoaderMultiGPU_TWO"] = WanVideoModelLoader_TWO
+    NODE_CLASS_MAPPINGS["WanVideoModelLoaderMultiGPU_2"] = WanVideoModelLoader_2
     NODE_CLASS_MAPPINGS["WanVideoVAELoaderMultiGPU"] = WanVideoVAELoader
     NODE_CLASS_MAPPINGS["LoadWanVideoT5TextEncoderMultiGPU"] = LoadWanVideoT5TextEncoder
     NODE_CLASS_MAPPINGS["LoadWanVideoClipTextEncoderMultiGPU"] = LoadWanVideoClipTextEncoder
     NODE_CLASS_MAPPINGS["WanVideoTextEncodeMultiGPU"] = WanVideoTextEncode
     NODE_CLASS_MAPPINGS["WanVideoBlockSwapMultiGPU"] = WanVideoBlockSwap
+    NODE_CLASS_MAPPINGS["WanVideoSamplerMultiGPU"] = WanVideoSampler
 
 
 logging.info(f"MultiGPU: Registration complete. Final mappings: {', '.join(NODE_CLASS_MAPPINGS.keys())}")
