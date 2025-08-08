@@ -40,10 +40,12 @@ class UnetLoaderGGUFAdvanced(UnetLoaderGGUF):
 class CLIPLoaderGGUF:
     @classmethod
     def INPUT_TYPES(s):
+        import nodes
+        base = nodes.CLIPLoader.INPUT_TYPES()
         return {
             "required": {
                 "clip_name": (s.get_filename_list(),),
-                "type": (["stable_diffusion", "stable_cascade", "sd3", "stable_audio", "mochi", "ltxv", "pixart", "wan"],),
+                "type": base["required"]["type"],
             }
         }
 
@@ -77,12 +79,14 @@ class CLIPLoaderGGUF:
 class DualCLIPLoaderGGUF(CLIPLoaderGGUF):
     @classmethod
     def INPUT_TYPES(s):
+        import nodes
+        base = nodes.DualCLIPLoader.INPUT_TYPES()
         file_options = (s.get_filename_list(), )
         return {
             "required": {
                 "clip_name1": file_options,
                 "clip_name2": file_options,
-                "type": (("sdxl", "sd3", "flux", "hunyuan_video"),),
+                "type": base["required"]["type"],
             }
         }
 

@@ -1,7 +1,7 @@
 [project]
 name = "comfyui-multigpu"
 description = "Adds full multi-GPU support for WanVideoWrapper, enabling model loading and block-swapping on any device. Provides a suite of custom nodes to manage multiple GPUs for ComfyUI, including advanced GGUF offloading with DisTorch and device overrides for core nodes."
-version = "1.8.1"
+version = "1.8.2"
 license = {file = "LICENSE"}
 
 [project.urls]
