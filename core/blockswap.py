@@ -200,7 +200,7 @@ class BlockSwapManager:
         logging.info("[BlockSwap] Cleanup complete")
 
 
-class DisTorchBlockSwap:
+class DisTorch:
     """ComfyUI node for block swap configuration"""
     
     @classmethod
@@ -250,7 +250,7 @@ class DisTorchBlockSwap:
                          swap_device: str, compute_device: str, use_non_blocking: bool = False):
         """Apply block swap configuration to model"""
         
-        logging.info(f"[DisTorchBlockSwap] Configuring block swap:")
+        logging.info(f"[DisTorch] Configuring block swap:")
         logging.info(f"  Virtual VRAM: {virtual_vram_gb} GB")
         logging.info(f"  Swap space: {swap_space_gb} GB")
         logging.info(f"  Swap device: {swap_device}")
@@ -290,6 +290,6 @@ class DisTorchBlockSwap:
         if hasattr(model, 'load_device'):
             model.load_device = config.compute_device
         
-        logging.info("[DisTorchBlockSwap] Block swap configuration applied successfully")
+        logging.info("[DisTorch] Block swap configuration applied successfully")
         
         return (model,)
