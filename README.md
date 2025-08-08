@@ -135,13 +135,13 @@ Currently supported nodes (automatically detected if available):
   - HyVideoVAELoaderMultiGPU
   - DownloadAndLoadHyVideoTextEncoderMultiGPU
 - WanVideoWrapper (requires [ComfyUI-WanVideoWrapper](https://github.com/kijai/ComfyUI-WanVideoWrapper)):
-  - `WanVideoModelLoaderMultiGPU` & `WanVideoModelLoaderMultiGPU_2`
-  - `WanVideoVAELoaderMultiGPU`
-  - `LoadWanVideoT5TextEncoderMultiGPU`
-  - `LoadWanVideoClipTextEncoderMultiGPU`
-  - `WanVideoTextEncodeMultiGPU`
-  - `WanVideoBlockSwapMultiGPU`
-  - `WanVideoSamplerMultiGPU`
+  - WanVideoModelLoaderMultiGPU & WanVideoModelLoaderMultiGPU_2
+  - WanVideoVAELoaderMultiGPU
+  - LoadWanVideoT5TextEncoderMultiGPU
+  - LoadWanVideoClipTextEncoderMultiGPU
+  - WanVideoTextEncodeMultiGPU
+  - WanVideoBlockSwapMultiGPU
+  - WanVideoSamplerMultiGPU
 - **Native to ComfyUI-MultiGPU**
   - DeviceSelectorMultiGPU - Allows user to link loaders together to use the same selected device
   - HunyuanVideoEmbeddingsAdapter - Allows Kijai's excellent IP2V CLIP for HunyuanVideo to be used with Comfy Core sampler.
