@@ -26,6 +26,7 @@ from .nodes import (
     WanVideoModelLoader, WanVideoModelLoader_2, WanVideoVAELoader, LoadWanVideoT5TextEncoder, LoadWanVideoClipTextEncoder,
     WanVideoTextEncode, WanVideoBlockSwap, WanVideoSampler
 )
+from .core.blockswap import DisTorchBlockSwap
 
 current_device = mm.get_torch_device()
 current_text_encoder_device = mm.text_encoder_device()
@@ -583,6 +584,7 @@ def check_module_exists(module_path):
 NODE_CLASS_MAPPINGS = {
     "DeviceSelectorMultiGPU": DeviceSelectorMultiGPU,
     "HunyuanVideoEmbeddingsAdapter": HunyuanVideoEmbeddingsAdapter,
+    "DisTorchBlockSwap": DisTorchBlockSwap,
 }
 
 
