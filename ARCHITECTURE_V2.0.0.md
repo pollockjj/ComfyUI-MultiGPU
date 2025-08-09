@@ -1,351 +1,220 @@
 # ComfyUI-MultiGPU Architecture V2.0.0
+## DisTorch SafeTensor - Block Swap Memory Management
 
-## Executive Summary
+### ⚠️ BOOTSTRAP DOCUMENT - START HERE AFTER CONTEXT RESET ⚠️
 
-ComfyUI-MultiGPU provides intelligent model distribution across multiple GPUs and system RAM, optimizing for minimal VRAM usage while maintaining performance. Version 2.0 introduces a unified interface supporting both layer-by-layer transfers (DisTorch) and block swapping strategies.
+**PURPOSE**: This document captures the exact understanding and implementation plan for DisTorch SafeTensor, which generalizes the block-swap concept from WanVideoWrapper for any SafeTensor model.
 
-## Core Concepts
+**STATUS**: Implemented. The logic has been integrated into `__init__.py`.
 
-### 1. Virtual VRAM
-Virtual VRAM represents the extended memory pool available by offloading model components to other devices (CPU RAM or secondary GPUs). The system manages transfers between devices transparently during inference.
+---
 
-### 2. Transfer Strategies
+## STEP 1: UNDERSTAND THE EXISTING APPROACHES
 
-#### DisTorch (Layer-by-Layer)
-- **Mechanism**: Spoofs quantized tensors on offload device, dequantizes JIT to compute device
-- **Transfer Size**: Single layer at a time (~100-200MB)
-- **VRAM Usage**: Minimal (1 layer active)
-- **Best For**: Video generation (long inference times)
-- **Trade-off**: Many small PCIe transfers
+### 1A. ComfyUI-GGUF DisTorch Implementation
+**File**: `ComfyUI-GGUF/__init__.py` and `gguf_model_patcher.py`
+**Mechanism**: Distributes individual quantized layers across multiple devices. Dequantizes layers just-in-time for computation. Optimized for maximum memory savings with GGUF models.
+
+### 1B. ComfyUI-WanVideoWrapper Block Swap
+**File**: `ComfyUI-WanVideoWrapper/nodes_model_loading.py`
+**Mechanism**: Swaps entire, pre-defined model blocks (e.g., ResNet blocks, Attention blocks) between a compute device and a swap device during inference. It is highly effective but tailored specifically for the WanVideo model architecture.
+
+### 1C. ComfyUI-MultiGPU Integration
+**File**: `ComfyUI-MultiGPU/__init__.py`
+**IMPLEMENTATION LOCATION**: All DisTorch logic is implemented within this single file to ensure portability and avoid external dependencies.
+
+---
+
+## STEP 2: THE EXACT PROBLEM WE'RE SOLVING
+
+Users have large SafeTensor models that do not fit into a single GPU's VRAM. We provide them with a solution that is more flexible than single-layer offloading and more general-purpose than WanVideo's integrated approach.
+
+**DisTorch SafeTensor (NEW)**: A memory management solution that intelligently swaps large, contiguous blocks of a model between a primary compute GPU and a secondary swap device (another GPU or system RAM).
+
+---
+
+## STEP 3: DisTorch SafeTensor IMPLEMENTATION SPEC
+
+### The Wrapper Function
+The core of the implementation is the `override_class_with_distorch_safetensor` function, which wraps existing ComfyUI model loaders.
 
 ```python
-# DisTorch approach - minimal VRAM footprint
-def forward_hook(module, input, output):
-    # Load single layer
-    load_layer_to_device(module, compute_device)
-    output = module.forward(input)
-    # Immediately offload
-    offload_layer(module, offload_device)
-    return output
+def override_class_with_distorch_safetensor(cls):
+    """DisTorch wrapper for SafeTensor models, providing block-swap memory optimization."""
 ```
 
-#### Block Swap (New in V2)
-- **Mechanism**: Moves blocks of layers between devices
-- **Transfer Size**: Configurable (1-8GB blocks)
-- **VRAM Usage**: Reserved swap buffer
-- **Best For**: Image generation (short inference times)
-- **Trade-off**: Fewer, larger PCIe transfers
+### UI Parameters (What Users See)
+The node provides four key parameters to control the memory swapping behavior, ordered for intuitive use:
+
+1.  **`compute_device`**: The primary GPU where computations will occur (e.g., `cuda:0`).
+2.  **`compute_reserved_swap_gb`**: The amount of VRAM (in GB) to keep reserved on the `compute_device` for active blocks. This acts as a hot-cache.
+3.  **`virtualram_swap_device`**: The device to offload inactive blocks to (e.g., `cpu` or `cuda:1`).
+4.  **`virtualram_gb`**: The total size (in GB) of model blocks to offload to the `virtualram_swap_device`. This effectively creates "virtual VRAM" on your compute device.
+
+### The Math (20GB Model Example)
+- **Model**: 20GB total size.
+- **`compute_device`**: `cuda:0` (24GB VRAM)
+- **`compute_reserved_swap_gb`**: `1.0` GB
+- **`virtualram_swap_device`**: `cpu`
+- **`virtualram_gb`**: `4.0` GB
+
+**Result**:
+- **4GB** of the model's blocks are immediately moved to the `cpu`.
+- The remaining **16GB** of blocks are loaded onto `cuda:0`.
+- During inference, blocks are swapped as needed, but a buffer of at least **1GB** (`compute_reserved_swap_gb`) worth of blocks is kept on the compute device if possible.
+
+### Operation Flow
+1.  The user selects a model using a DisTorch-wrapped loader (e.g., `CheckpointLoaderSimpleDisTorchMultiGPU`).
+2.  The model is loaded normally by the underlying ComfyUI loader.
+3.  The `apply_block_swap` function analyzes the model to identify swappable blocks (e.g., input, middle, and output blocks of a UNet).
+4.  Based on `virtualram_gb`, a number of blocks are moved to the `virtualram_swap_device`.
+5.  The `forward` method of each offloaded block is patched with a hook.
+6.  When the model runs, the hook moves the required block to the `compute_device` just before it's needed and moves it back to the `virtualram_swap_device` afterward, using non-blocking transfers for efficiency.
+
+---
+
+## STEP 4: CURRENT IMPLEMENTATION CODE IN __init__.py
+
+The following code is a representation of the current implementation within `__init__.py`.
 
 ```python
-# Block swap approach - batched transfers
-def forward_hook(module, input, output):
-    if need_swap(module):
-        # Swap entire block
-        offload_block(current_block, offload_device)
-        load_block(next_block, compute_device)
-    return module.forward(input)
-```
-
-### 3. Unified Interface
-
-All strategies share common parameters:
-```python
-class VirtualVRAMConfig:
-    virtual_vram_gb: float    # Total model size to offload
-    swap_space_gb: float      # Reserved buffer on compute device
-    swap_device: str          # Where to offload ("cpu", "cuda:1")
+def override_class_with_distorch_safetensor(cls):
+    """DisTorch wrapper for SafeTensor models, providing block-swap memory optimization."""
     
-    # Derived behavior
-    if swap_space_gb < min_layer_size:
-        use_distorch()  # Layer-by-layer
-    else:
-        use_block_swap()  # Block transfers
-```
+    class NodeOverrideDisTorchSafeTensor(cls):
+        @classmethod
+        def INPUT_TYPES(s):
+            inputs = copy.deepcopy(cls.INPUT_TYPES())
+            devices = get_device_list()
+            compute_device = devices[1] if len(devices) > 1 else devices[0]
+            
+            inputs["optional"] = inputs.get("optional", {})
+            
+            # Reordered and renamed parameters
+            inputs["optional"]["compute_device"] = (devices, {
+                "default": compute_device,
+                "tooltip": "Primary device for computation."
+            })
+            inputs["optional"]["compute_reserved_swap_gb"] = ("FLOAT", {
+                "default": 1.0,
+                "min": 0.1,
+                "max": 16.0,
+                "step": 0.1,
+                "tooltip": "GB of VRAM to keep reserved on the compute device."
+            })
+            inputs["optional"]["virtualram_swap_device"] = (devices, {
+                "default": "cpu",
+                "tooltip": "Device to offload inactive model blocks to."
+            })
+            inputs["optional"]["virtualram_gb"] = ("FLOAT", {
+                "default": 4.0,
+                "min": 0.1,
+                "max": 64.0,
+                "step": 0.1,
+                "tooltip": "Amount of VRAM (in GB) to offload to the swap device."
+            })
+            return inputs
 
-## Implementation Architecture
+        CATEGORY = "multigpu"
+        FUNCTION = "override"
 
-### Memory Management
+        def override(self, *args, compute_device=None, compute_reserved_swap_gb=1.0, 
+                     virtualram_swap_device="cpu", virtualram_gb=4.0, **kwargs):
+            global current_device
+            
+            logging.info(f"[DisTorch SafeTensor] Override called with: compute_device={compute_device}, swap_device={virtualram_swap_device}, virtualram_gb={virtualram_gb}, reserved_gb={compute_reserved_swap_gb}")
 
-#### Size Calculation (Shared Utility)
-```python
-def calculate_model_size(model):
-    """Calculate actual memory footprint"""
-    total_bytes = 0
-    for param in model.parameters():
-        if hasattr(param, 'quant_type'):  # GGUF
-            # Account for quantization
-            total_bytes += calculate_gguf_size(param)
-        else:  # Safetensor
-            total_bytes += param.element_size() * param.nelement()
-    return total_bytes / (1024**3)  # GB
-```
-
-#### Block Partitioning
-```python
-def partition_model(model, swap_space_gb):
-    """Divide model into swappable blocks"""
-    blocks = []
-    current_block = []
-    current_size = 0
-    
-    for name, module in model.named_modules():
-        module_size = get_module_size(module)
-        
-        if current_size + module_size > swap_space_gb:
-            # Start new block
-            blocks.append(current_block)
-            current_block = [module]
-            current_size = module_size
-        else:
-            current_block.append(module)
-            current_size += module_size
-    
-    return blocks
-```
-
-### Hook System
-
-#### Pre/Post Forward Hooks
-```python
-class ModelWrapper:
-    def __init__(self, model, config):
-        self.model = model
-        self.config = config
-        self.blocks = partition_model(model, config.swap_space_gb)
-        self.current_block_idx = -1
-        
-        # Install hooks
-        for block_idx, block in enumerate(self.blocks):
-            for module in block:
-                module.register_forward_pre_hook(
-                    lambda m, i: self.pre_forward(m, block_idx)
+            if compute_device is not None:
+                current_device = compute_device
+            
+            fn = getattr(super(), cls.FUNCTION)
+            out = fn(*args, **kwargs)
+            
+            model = out[0]
+            if hasattr(model, 'model'):
+                logging.info("[DisTorch SafeTensor] Model has 'model' attribute, applying block swap.")
+                apply_block_swap(
+                    model,
+                    compute_device=compute_device,
+                    swap_device=virtualram_swap_device,
+                    virtual_vram_gb=virtualram_gb,
+                    reserved_swap_gb=compute_reserved_swap_gb
                 )
-    
-    def pre_forward(self, module, block_idx):
-        if block_idx != self.current_block_idx:
-            # Swap blocks
-            self.swap_blocks(self.current_block_idx, block_idx)
-            self.current_block_idx = block_idx
+            else:
+                logging.warning("[DisTorch SafeTensor] Loaded object does not have a 'model' attribute, skipping block swap.")
+            
+            return out
+
+    return NodeOverrideDisTorchSafeTensor
+
+
+def apply_block_swap(model_patcher, compute_device="cuda:0", swap_device="cpu",
+                    virtual_vram_gb=4.0, reserved_swap_gb=1.0):
+    """
+    Applies WanVideo-style block swapping by patching the forward method of individual model blocks.
+    """
+    # ... (Full implementation in __init__.py)
 ```
 
-### GGUF Handling
+---
 
-#### Quantized Tensor Management
+## STEP 5: REGISTRATION IN __init__.py
+
+The new DisTorch SafeTensor wrappers are registered for all relevant core ComfyUI nodes.
+
 ```python
-class GGUFHandler:
-    def handle_gguf_layer(self, layer):
-        if self.config.swap_space_gb < layer.size:
-            # Use DisTorch approach - dequantize JIT
-            return self.distorch_dequantize(layer)
-        else:
-            # Can move entire quantized block
-            return self.block_swap_quantized(layer)
-    
-    def distorch_dequantize(self, layer):
-        """Dequantize during transfer (COPY operation)"""
-        # Creates new tensor on compute device
-        return dequantize_to_device(layer, self.compute_device)
-    
-    def block_swap_quantized(self, layer):
-        """Move quantized tensor (SWAP operation)"""
-        # Moves existing tensor between devices
-        return layer.to(self.compute_device)
+# Register the new DisTorch SafeTensor wrappers
+NODE_CLASS_MAPPINGS["CheckpointLoaderSimpleDisTorchMultiGPU"] = override_class_with_distorch_safetensor(GLOBAL_NODE_CLASS_MAPPINGS["CheckpointLoaderSimple"])
+NODE_CLASS_MAPPINGS["UNETLoaderDisTorchMultiGPU"] = override_class_with_distorch_safetensor(GLOBAL_NODE_CLASS_MAPPINGS["UNETLoader"])
+# ... and so on for VAELoader, CLIPLoader, ControlNetLoader, etc.
 ```
 
-## Phase Implementation Plan
+---
 
-### Phase 1: Block Swap for Safetensors (Current Focus)
+## STEP 6: KEY DIFFERENCES
 
-**Goal**: Implement configurable block swapping for non-quantized models.
+### DisTorch (GGUF)
+- **Granularity**: Per-layer.
+- **Use Case**: Maximum memory saving on GGUF models, often with CPU offload.
+- **Implementation**: Complex allocation strings and quantization handling.
 
-**Implementation**:
-```python
-class DisTorchBlockSwap:
-    @classmethod
-    def INPUT_TYPES(s):
-        return {
-            "required": {
-                "model": ("MODEL",),
-                "virtual_vram_gb": ("FLOAT", {
-                    "default": 4.0, 
-                    "min": 0.1, 
-                    "max": 64.0,
-                    "step": 0.1
-                }),
-                "swap_space_gb": ("FLOAT", {
-                    "default": 1.0,
-                    "min": 0.1,
-                    "max": 16.0,
-                    "step": 0.1
-                }),
-                "swap_device": (["cpu", "cuda:0", "cuda:1"],),
-            }
-        }
-    
-    def apply(self, model, virtual_vram_gb, swap_space_gb, swap_device):
-        # Calculate model size
-        model_size = calculate_model_size(model)
-        
-        # Partition into blocks
-        blocks = partition_model(model, swap_space_gb)
-        
-        # Install swap hooks
-        wrapper = BlockSwapWrapper(model, blocks, swap_device)
-        
-        return (wrapper.model,)
-```
+### DisTorch SafeTensor (NEW)
+- **Granularity**: Per-block.
+- **Use Case**: Balancing memory and speed for any SafeTensor model.
+- **Implementation**: Simple forward hooks, model-agnostic.
 
-### Phase 2: Unified GGUF Support
+### WanVideo Block Swap
+- **Granularity**: Per-block (model-specific).
+- **Use Case**: Optimized specifically for WanVideo models.
+- **Implementation**: Integrated directly into the custom model's forward pass.
 
-**Goal**: Extend block swap to GGUF models, auto-selecting strategy.
+---
 
-**Decision Logic**:
-```python
-def select_strategy(model, config):
-    if is_gguf(model):
-        min_layer = get_min_layer_size(model)
-        if config.swap_space_gb < min_layer:
-            return DisTorchStrategy()  # Must dequantize JIT
-        else:
-            return BlockSwapStrategy()  # Can move quantized blocks
-    else:
-        return BlockSwapStrategy()  # Safetensors always use blocks
-```
+## WHY THIS MATTERS
 
-### Phase 3: Auto-Optimization
+1.  **Flexibility**: Enables running models that are larger than a single GPU's VRAM.
+2.  **Control**: Users can fine-tune the memory vs. speed trade-off.
+3.  **Compatibility**: Works with all standard SafeTensor models loaded through core ComfyUI nodes.
+4.  **Simplicity**: All logic is self-contained within the `ComfyUI-MultiGPU` custom node.
 
-**Goal**: Use empirical data to auto-configure optimal settings.
+---
 
-See `DOE_OPTIMIZATION.md` for detailed benchmarking plan.
+## STEP 7: IMPLEMENTATION CHECKLIST
 
-**Auto Mode**:
-```python
-def auto_configure(model, workload):
-    # Detect hardware
-    pcie_gen = detect_pcie_generation()
-    gpu_bandwidth = detect_gpu_bandwidth()
-    
-    # Analyze workload
-    is_video = workload.frames > 1
-    latent_size = workload.height * workload.width
-    
-    # Lookup optimal config from DOE results
-    if is_video:
-        return {"swap_space_gb": 0.1}  # Minimize transfers
-    else:
-        return lookup_optimal_config(
-            model.size, latent_size, pcie_gen
-        )
-```
+- [X] Delete `blockswap.py` (DONE)
+- [X] Document the approach (THIS DOCUMENT)
+- [X] Implement `override_class_with_distorch_safetensor` in `__init__.py` (DONE)
+- [X] Rename and reorder UI parameters (DONE)
+- [X] Expand coverage to all core ComfyUI nodes (DONE)
+- [ ] Test with SDXL checkpoint
+- [ ] Test with Flux checkpoint
+- [ ] Verify memory usage matches expectations
+- [ ] Measure transfer overhead
 
-## Performance Characteristics
+---
 
-### Transfer Overhead Analysis
+## FUTURE EXTENSIONS
 
-| Strategy | Transfer Size | Frequency | PCIe Time | Best Case |
-|----------|--------------|-----------|-----------|-----------|
-| DisTorch | 100-200MB | Every layer | High | Video (long inference) |
-| Block Swap (1GB) | 1GB | Every ~10 layers | Medium | Balanced |
-| Block Swap (4GB) | 4GB | Every ~40 layers | Low | Image (short inference) |
-
-### Memory Usage Patterns
-
-```
-DisTorch (0.1GB swap):
-|===|                    <- Active layer (100MB)
-|...|...|...|...|...|   <- Offloaded layers
-
-Block Swap (2GB swap):
-|==========|            <- Active block (2GB)
-|..........|..........|  <- Offloaded blocks
-```
-
-## Advantages Over Existing Solutions
-
-### vs. Sequential CPU Offload
-- **Granular Control**: Configure exact offload amount
-- **Multi-GPU Support**: Use secondary GPUs as fast swap
-- **Quantization Aware**: Handles GGUF efficiently
-
-### vs. Model Parallelism
-- **No Model Modification**: Works with any model
-- **Dynamic**: Adjusts to available resources
-- **Flexible**: User controls memory/speed trade-off
-
-## Code Organization
-
-```
-ComfyUI-MultiGPU/
-├── nodes.py              # Node definitions
-├── core/
-│   ├── distorch.py      # Original layer-by-layer
-│   ├── blockswap.py     # New block swapping
-│   ├── memory.py        # Shared memory utilities
-│   └── hooks.py         # Hook management
-├── strategies/
-│   ├── auto.py          # Auto-optimization
-│   ├── gguf.py          # GGUF-specific handling
-│   └── safetensor.py    # Safetensor handling
-└── benchmark/
-    ├── doe.py           # DOE test runner
-    └── profiles.py      # Hardware profiles
-```
-
-## Testing Strategy
-
-### Unit Tests
-- Memory calculation accuracy
-- Block partitioning logic
-- Hook installation/removal
-
-### Integration Tests
-- Safetensor models (SDXL, Flux)
-- GGUF models (quantized)
-- Multi-GPU configurations
-
-### Performance Tests
-- Measure transfer overhead
-- Verify memory usage
-- Benchmark vs baseline
-
-## Migration Path
-
-### For Existing Users
-1. Current DisTorch nodes continue working
-2. New unified node available alongside
-3. Gradual migration as benefits proven
-
-### Configuration Migration
-```python
-# Old DisTorch
-distorch_model = DisTorch(model, device_map)
-
-# New Unified (equivalent)
-unified_model = VirtualVRAM(
-    model, 
-    virtual_vram_gb=model_size,
-    swap_space_gb=0.1,  # DisTorch-like
-    swap_device="cpu"
-)
-```
-
-## Future Directions
-
-### Adaptive Strategies
-- Monitor transfer patterns
-- Adjust block size dynamically
-- Predict optimal points
-
-### Pipeline Integration
-- Coordinate with samplers
-- Batch-aware swapping
-- Multi-model orchestration
-
-### Hardware Acceleration
-- Direct Storage API
-- NVLink optimization
-- CXL memory pooling
-
-## Conclusion
-
-Version 2.0 unifies memory management strategies under a coherent interface, providing users with fine-grained control over the memory/performance trade-off while maintaining backward compatibility and preparing for future optimizations.
+1.  **Auto-mode**: Automatically determine optimal settings based on available VRAM and model size.
+2.  **Dynamic Block Sizing**: Group layers into blocks dynamically instead of relying on the model's predefined block structure.
+3.  **Advanced Profiling**: Add tools to measure transfer overhead and help users optimize their settings.
