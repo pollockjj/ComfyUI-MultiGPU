@@ -1,63 +1,43 @@
 # ComfyUI-MultiGPU Architecture V2.0.0
-## DisTorch SafeTensor - Block Swap Memory Management
+## DisTorch Unified Interface: SafeTensor & GGUF
 
 ### ⚠️ BOOTSTRAP DOCUMENT - START HERE AFTER CONTEXT RESET ⚠️
 
-**PURPOSE**: This document captures the exact understanding and implementation plan for DisTorch SafeTensor, which generalizes the block-swap concept from WanVideoWrapper for any SafeTensor model.
+**PURPOSE**: This document details the standardized, unified DisTorch interface for both SafeTensor and GGUF models, ensuring a consistent user experience.
 
-**STATUS**: Implemented. The logic has been integrated into `__init__.py` with robust block detection and detailed logging.
-
----
-
-## STEP 1: UNDERSTAND THE EXISTING APPROACHES
-
-### 1A. ComfyUI-GGUF DisTorch Implementation
-**File**: `ComfyUI-GGUF/__init__.py`
-**Mechanism**: Distributes individual quantized layers across multiple devices. Dequantizes layers just-in-time for computation. Optimized for maximum memory savings with GGUF models. Provides detailed, formatted logging tables.
-
-### 1B. ComfyUI-WanVideoWrapper Block Swap
-**File**: `ComfyUI-WanVideoWrapper/nodes_model_loading.py`
-**Mechanism**: Swaps entire, pre-defined model blocks between a compute device and a swap device. It is highly effective but tailored specifically for the WanVideo model architecture.
-
-### 1C. ComfyUI-MultiGPU Integration
-**File**: `ComfyUI-MultiGPU/__init__.py`
-**IMPLEMENTATION LOCATION**: All DisTorch logic is implemented within this single file to ensure portability and avoid external dependencies.
+**STATUS**: Implemented. The logic has been integrated into `__init__.py` with backward compatibility for legacy GGUF workflows.
 
 ---
 
-## STEP 2: THE EXACT PROBLEM WE'RE SOLVING
+## STEP 1: THE UNIFIED DisTorch PHILOSOPHY
 
-Users have large SafeTensor models (like SDXL, FLUX, etc.) that do not fit into a single GPU's VRAM. The goal is to provide a memory management solution that is flexible, model-agnostic, and provides clear, informative logging, on par with the GGUF DisTorch implementation.
-
-**DisTorch SafeTensor (NEW)**: A memory management solution that intelligently discovers and swaps large, contiguous blocks of a model between a primary compute GPU and a secondary swap device (another GPU or system RAM).
+The primary goal is to provide a single, intuitive interface for memory offloading, regardless of the model format. Users should not need to learn two different systems. Both SafeTensor and GGUF DisTorch nodes will now share the exact same UI parameters, leveraging the concepts popularized by the original GGUF implementation.
 
 ---
 
-## STEP 3: DisTorch SafeTensor IMPLEMENTATION SPEC
+## STEP 2: THE STANDARDIZED DisTorch INTERFACE
 
-### The Wrapper Function
-The core of the implementation is the `override_class_with_distorch_safetensor` function, which wraps existing ComfyUI model loaders.
-
-### UI Parameters (What Users See)
-The node provides four key parameters to control the memory swapping behavior, ordered for intuitive use:
+Both `override_class_with_distorch_safetensor` and the new `override_class_with_distorch_gguf` will present the following four parameters to the user:
 
 1.  **`compute_device`**: The primary GPU where computations will occur (e.g., `cuda:0`).
-2.  **`compute_reserved_swap_gb`**: The amount of VRAM (in GB) to keep reserved on the `compute_device` for active blocks. This acts as a hot-cache.
-3.  **`virtualram_swap_device`**: The device to offload inactive blocks to (e.g., `cpu` or `cuda:1`).
-4.  **`virtualram_gb`**: The total size (in GB) of model blocks to offload to the `virtualram_swap_device`.
+2.  **`virtual_ram_gb`**: The amount of "virtual VRAM" to create by offloading parts of the model. This is the primary control for memory savings.
+3.  **`donor_device`**: A dropdown list to select a single device to offload to (e.g., `cpu`, `cuda:1`). Defaults to `cpu`.
+4.  **`expert_mode_allocations`**: An advanced string for power users to define complex, multi-device distribution schemes, bypassing the simplified controls.
 
-### Intelligent Block Discovery
-The `apply_block_swap` function now uses a multi-stage process to find swappable blocks, ensuring compatibility with various model architectures, including FLUX.
-1.  **Standard UNet Structure**: Checks for `input_blocks`, `middle_block`, `output_blocks`.
-2.  **Generic `blocks` Attribute**: Looks for a `model.blocks` or `diffusion_model.blocks` list.
-3.  **Generic `layers` Attribute**: Looks for a `model.layers` or `diffusion_model.layers` list.
-4.  **Fallback to ModuleList**: Scans for any top-level `torch.nn.ModuleList` as a last resort.
+This creates a clear, consistent, and powerful user experience.
 
-### High-Quality Datalogging
-A new `analyze_safetensor_distorch` function generates detailed, formatted tables in the console, identical in style to the GGUF implementation, showing:
--   Device Allocations
--   Block Analysis (Type, Count, Memory)
--   Final Block Assignments
+---
+
+## STEP 3: IMPLEMENTATION DETAILS
+
+### SafeTensor DisTorch (`override_class_with_distorch_safetensor`)
+-   **Logic**: Uses the `virtual_ram_gb` to determine how many model blocks to offload to the selected `donor_device`.
+-   **Block Discovery**: Employs a robust, multi-stage discovery mechanism to find swappable blocks in various model architectures (UNet, FLUX, etc.).
+-   **Logging**: Generates high-quality, formatted tables detailing the block swap setup, identical in style to the GGUF logs.
+
+### GGUF DisTorch (`override_class_with_distorch_gguf`)
+-   **Logic**: A new wrapper has been created with the standardized UI. It translates the user's `virtual_ram_gb` and `donor_device` selection into the necessary allocation string for the GGUF backend.
+-   **Backward Compatibility**: The previous GGUF wrapper has been renamed to `override_class_with_distorch_gguf_legacy` and moved to the `multigpu/legacy` category. This ensures that existing workflows will **not** break.
 
 ---
 
@@ -66,70 +46,56 @@ A new `analyze_safetensor_distorch` function generates detailed, formatted table
 The following code is a representation of the current implementation within `__init__.py`.
 
 ```python
-def analyze_safetensor_distorch(model, compute_device, swap_device, virtual_vram_gb, reserved_swap_gb, all_blocks):
-    """Provides a detailed analysis of the block swap configuration, mimicking the GGUF DisTorch style."""
+# New Standardized GGUF Wrapper
+def override_class_with_distorch_gguf(cls):
+    """Standardized DisTorch wrapper for GGUF models."""
     # ... (Full implementation in __init__.py)
 
-def apply_block_swap(model_patcher, compute_device="cuda:0", swap_device="cpu",
-                    virtual_vram_gb=4.0, reserved_swap_gb=1.0):
-    """
-    Applies WanVideo-style block swapping by patching the forward method of individual model blocks.
-    """
-    # ... (Full implementation with intelligent block discovery in __init__.py)
+# Legacy GGUF Wrapper for Backward Compatibility
+def override_class_with_distorch_gguf_legacy(cls):
+    """Legacy DisTorch wrapper for GGUF models for backward compatibility."""
+    # ... (Full implementation in __init__.py)
+
+# Standardized SafeTensor Wrapper
+def override_class_with_distorch_safetensor(cls):
+    """DisTorch wrapper for SafeTensor models, providing block-swap memory optimization."""
+    # ... (Full implementation in __init__.py)
 ```
 
 ---
 
 ## STEP 5: REGISTRATION IN __init__.py
 
-The DisTorch SafeTensor wrappers are registered for all relevant core ComfyUI nodes under the `...DisTorchMultiGPU` alias.
+The new standardized wrappers are registered, and the legacy GGUF nodes are preserved.
 
 ```python
-# Register the new DisTorch SafeTensor wrappers
+# Register the new Standardized DisTorch GGUF wrappers
+NODE_CLASS_MAPPINGS["UnetLoaderGGUFDisTorchMultiGPU"] = override_class_with_distorch_gguf(UnetLoaderGGUF)
+NODE_CLASS_MAPPINGS["UnetLoaderGGUFDisTorchLegacyMultiGPU"] = override_class_with_distorch_gguf_legacy(UnetLoaderGGUF)
+
+# Register the new Standardized DisTorch SafeTensor wrappers
 NODE_CLASS_MAPPINGS["CheckpointLoaderSimpleDisTorchMultiGPU"] = override_class_with_distorch_safetensor(GLOBAL_NODE_CLASS_MAPPINGS["CheckpointLoaderSimple"])
-NODE_CLASS_MAPPINGS["UNETLoaderDisTorchMultiGPU"] = override_class_with_distorch_safetensor(GLOBAL_NODE_CLASS_MAPPINGS["UNETLoader"])
-# ... and so on for VAELoader, CLIPLoader, ControlNetLoader, etc.
+# ... and so on for all other core loaders.
 ```
 
 ---
 
-## STEP 6: KEY DIFFERENCES
+## STEP 6: IMPLEMENTATION CHECKLIST
 
-### DisTorch (GGUF)
-- **Granularity**: Per-layer.
-- **Logging**: High-quality, formatted tables.
-- **Use Case**: Maximum memory saving on GGUF models.
-
-### DisTorch SafeTensor (NEW)
-- **Granularity**: Per-block (intelligently discovered).
-- **Logging**: High-quality, formatted tables (matches GGUF style).
-- **Use Case**: Balancing memory and speed for **any** SafeTensor model.
-
-### WanVideo Block Swap
-- **Granularity**: Per-block (model-specific).
-- **Logging**: Basic.
-- **Use Case**: Optimized specifically for WanVideo models.
-
----
-
-## STEP 7: IMPLEMENTATION CHECKLIST
-
-- [X] Delete `blockswap.py` (DONE)
-- [X] Document the approach (THIS DOCUMENT)
-- [X] Implement `override_class_with_distorch_safetensor` in `__init__.py` (DONE)
-- [X] Rename and reorder UI parameters (DONE)
-- [X] Expand coverage to all core ComfyUI nodes (DONE)
-- [X] **Implement robust, multi-stage block discovery to support models like FLUX (DONE)**
-- [X] **Overhaul logging to match the high-quality, formatted style of the GGUF DisTorch implementation (DONE)**
+- [X] Standardize UI for both SafeTensor and GGUF DisTorch nodes (DONE)
+- [X] Implement new GGUF wrapper with simplified controls (DONE)
+- [X] Preserve old GGUF wrapper for backward compatibility under a "Legacy" name (DONE)
+- [X] Update SafeTensor wrapper to match the new standardized UI (DONE)
+- [X] Ensure SafeTensor block discovery is robust for models like FLUX (DONE)
+- [X] Ensure SafeTensor logging matches the GGUF style (DONE)
 - [ ] Test with SDXL checkpoint
 - [ ] Test with Flux checkpoint
-- [ ] Verify memory usage matches expectations
-- [ ] Measure transfer overhead
+- [ ] Test with GGUF models (new and legacy nodes)
+- [ ] Verify memory usage and performance
 
 ---
 
 ## FUTURE EXTENSIONS
 
-1.  **Auto-mode**: Automatically determine optimal settings based on available VRAM and model size.
-2.  **Dynamic Block Sizing**: Group layers into blocks dynamically instead of relying on the model's predefined block structure.
-3.  **Advanced Profiling**: Add tools to measure transfer overhead and help users optimize their settings.
+1.  **Auto-mode**: Automatically determine optimal settings based on available VRAM and model size for both GGUF and SafeTensor.
+2.  **Unified Expert Mode**: Explore a unified syntax for the `expert_mode_allocations` string that could apply to both model types.

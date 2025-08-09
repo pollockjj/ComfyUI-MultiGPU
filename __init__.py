@@ -472,57 +472,36 @@ def override_class_with_distorch_safetensor(cls):
             
             inputs["optional"] = inputs.get("optional", {})
             
-            # Reordered and renamed parameters
-            inputs["optional"]["compute_device"] = (devices, {
-                "default": compute_device,
-                "tooltip": "Primary device for computation."
-            })
-            inputs["optional"]["compute_reserved_swap_gb"] = ("FLOAT", {
-                "default": 1.0,
-                "min": 0.1,
-                "max": 16.0,
-                "step": 0.1,
-                "tooltip": "GB of VRAM to keep reserved on the compute device."
-            })
-            inputs["optional"]["virtualram_swap_device"] = (devices, {
-                "default": "cpu",
-                "tooltip": "Device to offload inactive model blocks to."
-            })
-            inputs["optional"]["virtualram_gb"] = ("FLOAT", {
-                "default": 4.0,
-                "min": 0.1,
-                "max": 64.0,
-                "step": 0.1,
-                "tooltip": "Amount of VRAM (in GB) to offload to the swap device."
-            })
+            inputs["optional"]["compute_device"] = (devices, {"default": compute_device})
+            inputs["optional"]["virtual_ram_gb"] = ("FLOAT", {"default": 4.0, "min": 0.0, "max": 100.0, "step": 0.1})
+            inputs["optional"]["donor_device"] = (devices, {"default": "cpu"})
+            inputs["optional"]["expert_mode_allocations"] = ("STRING", {"multiline": False, "default": ""})
             return inputs
 
         CATEGORY = "multigpu"
         FUNCTION = "override"
 
-        def override(self, *args, compute_device=None, compute_reserved_swap_gb=1.0, 
-                     virtualram_swap_device="cpu", virtualram_gb=4.0, **kwargs):
+        def override(self, *args, compute_device=None, virtual_ram_gb=4.0, 
+                     donor_device="cpu", expert_mode_allocations="", **kwargs):
             global current_device
             
-            logging.info(f"[DisTorch SafeTensor] Override called with: compute_device={compute_device}, swap_device={virtualram_swap_device}, virtualram_gb={virtualram_gb}, reserved_gb={compute_reserved_swap_gb}")
+            logging.info(f"[DisTorch SafeTensor] Override called with: compute_device={compute_device}, donor_device={donor_device}, virtual_ram_gb={virtual_ram_gb}")
 
             if compute_device is not None:
                 current_device = compute_device
             
-            # Call original loader function
             fn = getattr(super(), cls.FUNCTION)
             out = fn(*args, **kwargs)
             
-            # Apply block swap logic to the loaded model
             model = out[0]
             if hasattr(model, 'model'):
                 logging.info("[DisTorch SafeTensor] Model has 'model' attribute, applying block swap.")
                 apply_block_swap(
                     model,
                     compute_device=compute_device,
-                    swap_device=virtualram_swap_device,
-                    virtual_vram_gb=virtualram_gb,
-                    reserved_swap_gb=compute_reserved_swap_gb
+                    swap_device=donor_device,
+                    virtual_vram_gb=virtual_ram_gb,
+                    expert_mode_allocations=expert_mode_allocations
                 )
             else:
                 logging.warning("[DisTorch SafeTensor] Loaded object does not have a 'model' attribute, skipping block swap.")
@@ -596,7 +575,7 @@ def analyze_safetensor_distorch(model, compute_device, swap_device, virtual_vram
     logging.info(eq_line)
 
 def apply_block_swap(model_patcher, compute_device="cuda:0", swap_device="cpu",
-                    virtual_vram_gb=4.0, reserved_swap_gb=1.0):
+                    virtual_vram_gb=4.0, expert_mode_allocations=""):
     """
     Applies WanVideo-style block swapping by patching the forward method of individual model blocks.
     This allows for offloading parts of the model to a swap device to conserve VRAM.
@@ -645,7 +624,7 @@ def apply_block_swap(model_patcher, compute_device="cuda:0", swap_device="cpu",
     logging.info(f"[DisTorch SafeTensor] Successfully identified {len(all_blocks)} swappable blocks.")
 
     # Run and display the analysis
-    analyze_safetensor_distorch(model_to_patch, compute_device, swap_device, virtual_vram_gb, reserved_swap_gb, all_blocks)
+    analyze_safetensor_distorch(model_to_patch, compute_device, swap_device, virtual_vram_gb, 0.0, all_blocks)
 
     model_size_gb = sum(p.numel() * p.element_size() for p in model_to_patch.parameters()) / (1024**3)
     block_size_gb = model_size_gb / len(all_blocks) if all_blocks else 0
@@ -678,10 +657,9 @@ def apply_block_swap(model_patcher, compute_device="cuda:0", swap_device="cpu",
 # For backwards compatibility, keep the old name pointing to the new safetensor wrapper
 override_class_with_distorch_bs = override_class_with_distorch_safetensor
 
-# EXISTING DisTorch wrapper for GGUF models - DO NOT MODIFY
-def override_class_with_distorch_gguf(cls):
-    """DisTorch wrapper for GGUF models - DO NOT MODIFY"""
-    class NodeOverrideDisTorch(cls):
+def override_class_with_distorch_gguf_legacy(cls):
+    """Legacy DisTorch wrapper for GGUF models for backward compatibility."""
+    class NodeOverrideDisTorchLegacy(cls):
         @classmethod
         def INPUT_TYPES(s):
             inputs = copy.deepcopy(cls.INPUT_TYPES())
@@ -694,11 +672,10 @@ def override_class_with_distorch_gguf(cls):
             inputs["optional"]["expert_mode_allocations"] = ("STRING", {
                 "multiline": False, 
                 "default": "",
-                "tooltip": "Expert use only: Manual VRAM allocation string. Incorrect values can cause crashes. Do not modify unless you fully understand DisTorch memory management."
             })
             return inputs
 
-        CATEGORY = "multigpu"
+        CATEGORY = "multigpu/legacy"
         FUNCTION = "override"
 
         def override(self, *args, device=None, expert_mode_allocations=None, use_other_vram=None, virtual_vram_gb=0.0, **kwargs):
@@ -723,6 +700,52 @@ def override_class_with_distorch_gguf(cls):
 
             full_allocation = f"{expert_mode_allocations}#{vram_string}" if expert_mode_allocations or vram_string else ""
             
+            if hasattr(out[0], 'model'):
+                model_hash = create_model_hash(out[0], "override")
+                model_allocation_store[model_hash] = full_allocation
+            elif hasattr(out[0], 'patcher') and hasattr(out[0].patcher, 'model'):
+                model_hash = create_model_hash(out[0].patcher, "override")
+                model_allocation_store[model_hash] = full_allocation
+
+            return out
+
+    return NodeOverrideDisTorchLegacy
+
+def override_class_with_distorch_gguf(cls):
+    """Standardized DisTorch wrapper for GGUF models."""
+    class NodeOverrideDisTorchGGUF(cls):
+        @classmethod
+        def INPUT_TYPES(s):
+            inputs = copy.deepcopy(cls.INPUT_TYPES())
+            devices = get_device_list()
+            compute_device = devices[1] if len(devices) > 1 else devices[0]
+            
+            inputs["optional"] = inputs.get("optional", {})
+            inputs["optional"]["compute_device"] = (devices, {"default": compute_device})
+            inputs["optional"]["virtual_ram_gb"] = ("FLOAT", {"default": 4.0, "min": 0.0, "max": 100.0, "step": 0.1})
+            inputs["optional"]["donor_device"] = (devices, {"default": "cpu"})
+            inputs["optional"]["expert_mode_allocations"] = ("STRING", {"multiline": False, "default": ""})
+            return inputs
+
+        CATEGORY = "multigpu"
+        FUNCTION = "override"
+
+        def override(self, *args, compute_device=None, virtual_ram_gb=4.0, 
+                     donor_device="cpu", expert_mode_allocations="", **kwargs):
+            global current_device
+            if compute_device is not None:
+                current_device = compute_device
+            
+            register_patched_ggufmodelpatcher()
+            fn = getattr(super(), cls.FUNCTION)
+            out = fn(*args, **kwargs)
+
+            vram_string = ""
+            if virtual_ram_gb > 0:
+                vram_string = f"{compute_device};{virtual_ram_gb};{donor_device}"
+
+            full_allocation = f"{expert_mode_allocations}#{vram_string}" if expert_mode_allocations or vram_string else ""
+            
             logging.info(f"[DisTorch GGUF] Full allocation string: {full_allocation}")
             
             if hasattr(out[0], 'model'):
@@ -734,7 +757,7 @@ def override_class_with_distorch_gguf(cls):
 
             return out
 
-    return NodeOverrideDisTorch
+    return NodeOverrideDisTorchGGUF
 
 # Keep old name for compatibility but point to GGUF version
 override_class_with_distorch = override_class_with_distorch_gguf
@@ -862,8 +885,10 @@ if check_module_exists("ComfyUI-MMAudio") or check_module_exists("comfyui-mmaudi
 if check_module_exists("ComfyUI-GGUF") or check_module_exists("comfyui-gguf"):
     NODE_CLASS_MAPPINGS["UnetLoaderGGUFMultiGPU"] = override_class(UnetLoaderGGUF)
     NODE_CLASS_MAPPINGS["UnetLoaderGGUFDisTorchMultiGPU"] = override_class_with_distorch_gguf(UnetLoaderGGUF)
+    NODE_CLASS_MAPPINGS["UnetLoaderGGUFDisTorchLegacyMultiGPU"] = override_class_with_distorch_gguf_legacy(UnetLoaderGGUF)
     NODE_CLASS_MAPPINGS["UnetLoaderGGUFAdvancedMultiGPU"] = override_class(UnetLoaderGGUFAdvanced)
     NODE_CLASS_MAPPINGS["UnetLoaderGGUFAdvancedDisTorchMultiGPU"] = override_class_with_distorch_gguf(UnetLoaderGGUFAdvanced)
+    NODE_CLASS_MAPPINGS["UnetLoaderGGUFAdvancedDisTorchLegacyMultiGPU"] = override_class_with_distorch_gguf_legacy(UnetLoaderGGUFAdvanced)
     NODE_CLASS_MAPPINGS["CLIPLoaderGGUFMultiGPU"] = override_class_clip(CLIPLoaderGGUF)
     NODE_CLASS_MAPPINGS["CLIPLoaderGGUFDisTorchMultiGPU"] = override_class_with_distorch_clip(CLIPLoaderGGUF)
     NODE_CLASS_MAPPINGS["DualCLIPLoaderGGUFMultiGPU"] = override_class_clip(DualCLIPLoaderGGUF)
