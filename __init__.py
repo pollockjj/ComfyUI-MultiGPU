@@ -26,7 +26,7 @@ from .nodes import (
     WanVideoModelLoader, WanVideoModelLoader_2, WanVideoVAELoader, LoadWanVideoT5TextEncoder, LoadWanVideoClipTextEncoder,
     WanVideoTextEncode, WanVideoBlockSwap, WanVideoSampler
 )
-from .core.blockswap import DisTorch
+# DisTorch import removed - all implementations now in __init__.py
 
 current_device = mm.get_torch_device()
 current_text_encoder_device = mm.text_encoder_device()
@@ -460,7 +460,148 @@ def override_class_clip(cls):
 
     return NodeOverride
 
-def override_class_with_distorch(cls):
+def override_class_with_distorch_safetensor(cls):
+    """DisTorch wrapper for SafeTensor models, providing block-swap memory optimization."""
+    
+    class NodeOverrideDisTorchSafeTensor(cls):
+        @classmethod
+        def INPUT_TYPES(s):
+            inputs = copy.deepcopy(cls.INPUT_TYPES())
+            devices = get_device_list()
+            compute_device = devices[1] if len(devices) > 1 else devices[0]
+            
+            inputs["optional"] = inputs.get("optional", {})
+            
+            # Reordered and renamed parameters
+            inputs["optional"]["compute_device"] = (devices, {
+                "default": compute_device,
+                "tooltip": "Primary device for computation."
+            })
+            inputs["optional"]["compute_reserved_swap_gb"] = ("FLOAT", {
+                "default": 1.0,
+                "min": 0.1,
+                "max": 16.0,
+                "step": 0.1,
+                "tooltip": "GB of VRAM to keep reserved on the compute device."
+            })
+            inputs["optional"]["virtualram_swap_device"] = (devices, {
+                "default": "cpu",
+                "tooltip": "Device to offload inactive model blocks to."
+            })
+            inputs["optional"]["virtualram_gb"] = ("FLOAT", {
+                "default": 4.0,
+                "min": 0.1,
+                "max": 64.0,
+                "step": 0.1,
+                "tooltip": "Amount of VRAM (in GB) to offload to the swap device."
+            })
+            return inputs
+
+        CATEGORY = "multigpu"
+        FUNCTION = "override"
+
+        def override(self, *args, compute_device=None, compute_reserved_swap_gb=1.0, 
+                     virtualram_swap_device="cpu", virtualram_gb=4.0, **kwargs):
+            global current_device
+            
+            logging.info(f"[DisTorch SafeTensor] Override called with: compute_device={compute_device}, swap_device={virtualram_swap_device}, virtualram_gb={virtualram_gb}, reserved_gb={compute_reserved_swap_gb}")
+
+            if compute_device is not None:
+                current_device = compute_device
+            
+            # Call original loader function
+            fn = getattr(super(), cls.FUNCTION)
+            out = fn(*args, **kwargs)
+            
+            # Apply block swap logic to the loaded model
+            model = out[0]
+            if hasattr(model, 'model'):
+                logging.info("[DisTorch SafeTensor] Model has 'model' attribute, applying block swap.")
+                apply_block_swap(
+                    model,
+                    compute_device=compute_device,
+                    swap_device=virtualram_swap_device,
+                    virtual_vram_gb=virtualram_gb,
+                    reserved_swap_gb=compute_reserved_swap_gb
+                )
+            else:
+                logging.warning("[DisTorch SafeTensor] Loaded object does not have a 'model' attribute, skipping block swap.")
+            
+            return out
+
+    return NodeOverrideDisTorchSafeTensor
+
+
+def apply_block_swap(model_patcher, compute_device="cuda:0", swap_device="cpu",
+                    virtual_vram_gb=4.0, reserved_swap_gb=1.0):
+    """
+    Applies WanVideo-style block swapping by patching the forward method of individual model blocks.
+    This allows for offloading parts of the model to a swap device to conserve VRAM.
+    """
+    logging.info(f"[DisTorch SafeTensor] Initializing block swap: compute_device={compute_device}, swap_device={swap_device}")
+    
+    model_to_patch = None
+    if hasattr(model_patcher, 'model') and hasattr(model_patcher.model, 'diffusion_model'):
+        model_to_patch = model_patcher.model.diffusion_model
+    elif hasattr(model_patcher, 'model'):
+        model_to_patch = model_patcher.model
+    else:
+        logging.error("[DisTorch SafeTensor] Could not find a valid model to patch for block swapping.")
+        return
+
+    all_blocks = []
+    if hasattr(model_to_patch, 'input_blocks'):
+        all_blocks.extend(model_to_patch.input_blocks)
+    if hasattr(model_to_patch, 'middle_block'):
+        if isinstance(model_to_patch.middle_block, torch.nn.Module):
+            all_blocks.append(model_to_patch.middle_block)
+    if hasattr(model_to_patch, 'output_blocks'):
+        all_blocks.extend(model_to_patch.output_blocks)
+
+    if not all_blocks:
+        logging.warning("[DisTorch SafeTensor] No swappable blocks were found in the model.")
+        return
+    
+    logging.info(f"[DisTorch SafeTensor] Found {len(all_blocks)} swappable blocks in the model.")
+
+    model_size_gb = sum(p.numel() * p.element_size() for p in model_to_patch.parameters()) / (1024**3)
+    if len(all_blocks) > 0:
+        block_size_gb = model_size_gb / len(all_blocks)
+        blocks_to_offload = int(virtual_vram_gb / block_size_gb) if block_size_gb > 0 else 0
+        blocks_on_compute = len(all_blocks) - blocks_to_offload
+    else:
+        blocks_to_offload = 0
+        blocks_on_compute = 0
+
+    logging.info(f"[DisTorch SafeTensor] Model size: {model_size_gb:.2f} GB, Avg block size: {block_size_gb * 1024:.2f} MB")
+    logging.info(f"[DisTorch SafeTensor] Offloading {blocks_to_offload} blocks to {swap_device}. Keeping {blocks_on_compute} blocks on {compute_device}.")
+
+    for i, block in enumerate(all_blocks):
+        if i < blocks_on_compute:
+            block.to(compute_device)
+        else:
+            block.to(swap_device)
+            
+            original_forward = block.forward
+            
+            def create_patched_forward(original_f, b, cd, sd):
+                def patched_forward(*args, **kwargs):
+                    b.to(cd, non_blocking=True)
+                    result = original_f(*args, **kwargs)
+                    b.to(sd, non_blocking=True)
+                    return result
+                return patched_forward
+
+            block.forward = create_patched_forward(original_forward, block, torch.device(compute_device), torch.device(swap_device))
+            logging.info(f"[DisTorch SafeTensor] Patched forward method for block {i}.")
+
+    logging.info("[DisTorch SafeTensor] Block swap setup complete.")
+# For backwards compatibility, keep the old name pointing to the new safetensor wrapper
+override_class_with_distorch_bs = override_class_with_distorch_safetensor
+
+# EXISTING DisTorch wrapper for GGUF models - DO NOT MODIFY
+def override_class_with_distorch_gguf(cls):
+    """DisTorch wrapper for GGUF models - DO NOT MODIFY"""
     class NodeOverrideDisTorch(cls):
         @classmethod
         def INPUT_TYPES(s):
@@ -503,7 +644,7 @@ def override_class_with_distorch(cls):
 
             full_allocation = f"{expert_mode_allocations}#{vram_string}" if expert_mode_allocations or vram_string else ""
             
-            logging.info(f"[DisTorch] Full allocation string: {full_allocation}")
+            logging.info(f"[DisTorch GGUF] Full allocation string: {full_allocation}")
             
             if hasattr(out[0], 'model'):
                 model_hash = create_model_hash(out[0], "override")
@@ -515,6 +656,9 @@ def override_class_with_distorch(cls):
             return out
 
     return NodeOverrideDisTorch
+
+# Keep old name for compatibility but point to GGUF version
+override_class_with_distorch = override_class_with_distorch_gguf
 
 def override_class_with_distorch_clip(cls):
     class NodeOverrideDisTorch(cls):
@@ -584,7 +728,6 @@ def check_module_exists(module_path):
 NODE_CLASS_MAPPINGS = {
     "DeviceSelectorMultiGPU": DeviceSelectorMultiGPU,
     "HunyuanVideoEmbeddingsAdapter": HunyuanVideoEmbeddingsAdapter,
-    "DisTorch": DisTorch,
 }
 
 
@@ -598,6 +741,21 @@ if "QuadrupleCLIPLoader" in GLOBAL_NODE_CLASS_MAPPINGS:
     NODE_CLASS_MAPPINGS["QuadrupleCLIPLoaderMultiGPU"] = override_class_clip(GLOBAL_NODE_CLASS_MAPPINGS["QuadrupleCLIPLoader"])
 NODE_CLASS_MAPPINGS["CLIPVisionLoaderMultiGPU"] = override_class_clip(GLOBAL_NODE_CLASS_MAPPINGS["CLIPVisionLoader"])
 NODE_CLASS_MAPPINGS["CheckpointLoaderSimpleMultiGPU"] = override_class(GLOBAL_NODE_CLASS_MAPPINGS["CheckpointLoaderSimple"])
+NODE_CLASS_MAPPINGS["UNETLoaderDisTorchMultiGPU"] = override_class_with_distorch_safetensor(GLOBAL_NODE_CLASS_MAPPINGS["UNETLoader"])
+NODE_CLASS_MAPPINGS["VAELoaderDisTorchMultiGPU"] = override_class_with_distorch_safetensor(GLOBAL_NODE_CLASS_MAPPINGS["VAELoader"])
+NODE_CLASS_MAPPINGS["CLIPLoaderDisTorchMultiGPU"] = override_class_with_distorch_safetensor(GLOBAL_NODE_CLASS_MAPPINGS["CLIPLoader"])
+NODE_CLASS_MAPPINGS["DualCLIPLoaderDisTorchMultiGPU"] = override_class_with_distorch_safetensor(GLOBAL_NODE_CLASS_MAPPINGS["DualCLIPLoader"])
+if "TripleCLIPLoader" in GLOBAL_NODE_CLASS_MAPPINGS:
+    NODE_CLASS_MAPPINGS["TripleCLIPLoaderDisTorchMultiGPU"] = override_class_with_distorch_safetensor(GLOBAL_NODE_CLASS_MAPPINGS["TripleCLIPLoader"])
+if "QuadrupleCLIPLoader" in GLOBAL_NODE_CLASS_MAPPINGS:
+    NODE_CLASS_MAPPINGS["QuadrupleCLIPLoaderDisTorchMultiGPU"] = override_class_with_distorch_safetensor(GLOBAL_NODE_CLASS_MAPPINGS["QuadrupleCLIPLoader"])
+NODE_CLASS_MAPPINGS["CLIPVisionLoaderDisTorchMultiGPU"] = override_class_with_distorch_safetensor(GLOBAL_NODE_CLASS_MAPPINGS["CLIPVisionLoader"])
+NODE_CLASS_MAPPINGS["CheckpointLoaderSimpleDisTorchMultiGPU"] = override_class_with_distorch_safetensor(GLOBAL_NODE_CLASS_MAPPINGS["CheckpointLoaderSimple"])
+NODE_CLASS_MAPPINGS["ControlNetLoaderDisTorchMultiGPU"] = override_class_with_distorch_safetensor(GLOBAL_NODE_CLASS_MAPPINGS["ControlNetLoader"])
+if "DiffusersLoader" in GLOBAL_NODE_CLASS_MAPPINGS:
+    NODE_CLASS_MAPPINGS["DiffusersLoaderDisTorchMultiGPU"] = override_class_with_distorch_safetensor(GLOBAL_NODE_CLASS_MAPPINGS["DiffusersLoader"])
+if "DiffControlNetLoader" in GLOBAL_NODE_CLASS_MAPPINGS:
+    NODE_CLASS_MAPPINGS["DiffControlNetLoaderDisTorchMultiGPU"] = override_class_with_distorch_safetensor(GLOBAL_NODE_CLASS_MAPPINGS["DiffControlNetLoader"])
 NODE_CLASS_MAPPINGS["ControlNetLoaderMultiGPU"] = override_class(GLOBAL_NODE_CLASS_MAPPINGS["ControlNetLoader"])
 if "DiffusersLoader" in GLOBAL_NODE_CLASS_MAPPINGS:
     NODE_CLASS_MAPPINGS["DiffusersLoaderMultiGPU"] = override_class(GLOBAL_NODE_CLASS_MAPPINGS["DiffusersLoader"])
@@ -624,9 +782,9 @@ if check_module_exists("ComfyUI-MMAudio") or check_module_exists("comfyui-mmaudi
 
 if check_module_exists("ComfyUI-GGUF") or check_module_exists("comfyui-gguf"):
     NODE_CLASS_MAPPINGS["UnetLoaderGGUFMultiGPU"] = override_class(UnetLoaderGGUF)
-    NODE_CLASS_MAPPINGS["UnetLoaderGGUFDisTorchMultiGPU"] = override_class_with_distorch(UnetLoaderGGUF)
+    NODE_CLASS_MAPPINGS["UnetLoaderGGUFDisTorchMultiGPU"] = override_class_with_distorch_gguf(UnetLoaderGGUF)
     NODE_CLASS_MAPPINGS["UnetLoaderGGUFAdvancedMultiGPU"] = override_class(UnetLoaderGGUFAdvanced)
-    NODE_CLASS_MAPPINGS["UnetLoaderGGUFAdvancedDisTorchMultiGPU"] = override_class_with_distorch(UnetLoaderGGUFAdvanced)
+    NODE_CLASS_MAPPINGS["UnetLoaderGGUFAdvancedDisTorchMultiGPU"] = override_class_with_distorch_gguf(UnetLoaderGGUFAdvanced)
     NODE_CLASS_MAPPINGS["CLIPLoaderGGUFMultiGPU"] = override_class_clip(CLIPLoaderGGUF)
     NODE_CLASS_MAPPINGS["CLIPLoaderGGUFDisTorchMultiGPU"] = override_class_with_distorch_clip(CLIPLoaderGGUF)
     NODE_CLASS_MAPPINGS["DualCLIPLoaderGGUFMultiGPU"] = override_class_clip(DualCLIPLoaderGGUF)
