@@ -365,7 +365,7 @@ def override_class_with_distorch_gguf_v2(cls):
             
             inputs["optional"] = inputs.get("optional", {})
             inputs["optional"]["compute_device"] = (devices, {"default": compute_device})
-            inputs["optional"]["virtual_ram_gb"] = ("FLOAT", {"default": 4.0, "min": 0.0, "max": 100.0, "step": 0.1})
+            inputs["optional"]["virtual_vram_gb"] = ("FLOAT", {"default": 4.0, "min": 0.0, "max": 128.0, "step": 0.1})
             inputs["optional"]["donor_device"] = (devices, {"default": "cpu"})
             inputs["optional"]["expert_mode_allocations"] = ("STRING", {"multiline": False, "default": ""})
             return inputs
@@ -373,7 +373,7 @@ def override_class_with_distorch_gguf_v2(cls):
         CATEGORY = "multigpu/distorch_2"
         FUNCTION = "override"
 
-        def override(self, *args, compute_device=None, virtual_ram_gb=4.0, 
+        def override(self, *args, compute_device=None, virtual_vram_gb=4.0, 
                      donor_device="cpu", expert_mode_allocations="", **kwargs):
             from . import set_current_device
             if compute_device is not None:
@@ -384,8 +384,8 @@ def override_class_with_distorch_gguf_v2(cls):
             out = fn(*args, **kwargs)
 
             vram_string = ""
-            if virtual_ram_gb > 0:
-                vram_string = f"{compute_device};{virtual_ram_gb};{donor_device}"
+            if virtual_vram_gb > 0:
+                vram_string = f"{compute_device};{virtual_vram_gb};{donor_device}"
 
             full_allocation = f"{expert_mode_allocations}#{vram_string}" if expert_mode_allocations or vram_string else ""
             
