@@ -10,7 +10,7 @@ from collections import defaultdict
 import comfy.model_management as mm
 
 
-def analyze_safetensor_distorch(model, compute_device, swap_device, virtual_vram_gb, reserved_swap_gb, all_blocks):
+def analyze_safetensor_distorch(model, compute_device, swap_device, virtual_vram_gb, all_blocks):
     """Provides a detailed analysis of the block swap configuration, mimicking the GGUF DisTorch style."""
     
     eq_line = "=" * 60
@@ -28,7 +28,7 @@ def analyze_safetensor_distorch(model, compute_device, swap_device, virtual_vram
     compute_total_gb = mm.get_total_memory(torch.device(compute_device)) / (1024**3)
     swap_total_gb = mm.get_total_memory(torch.device(swap_device)) / (1024**3)
     
-    logging.info(fmt_assign.format(compute_device, "Compute", f"{compute_total_gb:.2f}", f"Reserve: {reserved_swap_gb:.2f}"))
+    logging.info(fmt_assign.format(compute_device, "Compute", f"{compute_total_gb:.2f}", ""))
     logging.info(fmt_assign.format(swap_device, "Swap", f"{swap_total_gb:.2f}", f"Offload: {virtual_vram_gb:.2f}"))
     logging.info(dash_line)
 
@@ -124,7 +124,7 @@ def apply_block_swap(model_patcher, compute_device="cuda:0", swap_device="cpu",
     logging.info(f"[DisTorch SafeTensor] Successfully identified {len(all_blocks)} swappable blocks.")
 
     # Run and display the analysis
-    analyze_safetensor_distorch(model_to_patch, compute_device, swap_device, virtual_vram_gb, 0.0, all_blocks)
+    analyze_safetensor_distorch(model_to_patch, compute_device, swap_device, virtual_vram_gb, all_blocks)
 
     model_size_gb = sum(p.numel() * p.element_size() for p in model_to_patch.parameters()) / (1024**3)
     block_size_gb = model_size_gb / len(all_blocks) if all_blocks else 0
