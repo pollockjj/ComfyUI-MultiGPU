@@ -290,63 +290,11 @@ def calculate_vvram_allocation_string(model, virtual_vram_str):
 
 
 def override_class_with_distorch_gguf(cls):
-    """Standardized DisTorch wrapper for GGUF models."""
-    from .nodes import get_device_list
-    from . import current_device
-    
-    class NodeOverrideDisTorchGGUF(cls):
-        @classmethod
-        def INPUT_TYPES(s):
-            inputs = copy.deepcopy(cls.INPUT_TYPES())
-            devices = get_device_list()
-            compute_device = devices[1] if len(devices) > 1 else devices[0]
-            
-            inputs["optional"] = inputs.get("optional", {})
-            inputs["optional"]["compute_device"] = (devices, {"default": compute_device})
-            inputs["optional"]["virtual_ram_gb"] = ("FLOAT", {"default": 4.0, "min": 0.0, "max": 100.0, "step": 0.1})
-            inputs["optional"]["donor_device"] = (devices, {"default": "cpu"})
-            inputs["optional"]["expert_mode_allocations"] = ("STRING", {"multiline": False, "default": ""})
-            return inputs
-
-        CATEGORY = "multigpu"
-        FUNCTION = "override"
-
-        def override(self, *args, compute_device=None, virtual_ram_gb=4.0, 
-                     donor_device="cpu", expert_mode_allocations="", **kwargs):
-            from . import set_current_device
-            if compute_device is not None:
-                set_current_device(compute_device)
-            
-            register_patched_ggufmodelpatcher()
-            fn = getattr(super(), cls.FUNCTION)
-            out = fn(*args, **kwargs)
-
-            vram_string = ""
-            if virtual_ram_gb > 0:
-                vram_string = f"{compute_device};{virtual_ram_gb};{donor_device}"
-
-            full_allocation = f"{expert_mode_allocations}#{vram_string}" if expert_mode_allocations or vram_string else ""
-            
-            logging.info(f"[DisTorch GGUF] Full allocation string: {full_allocation}")
-            
-            if hasattr(out[0], 'model'):
-                model_hash = create_model_hash(out[0], "override")
-                model_allocation_store[model_hash] = full_allocation
-            elif hasattr(out[0], 'patcher') and hasattr(out[0].patcher, 'model'):
-                model_hash = create_model_hash(out[0].patcher, "override")
-                model_allocation_store[model_hash] = full_allocation
-
-            return out
-
-    return NodeOverrideDisTorchGGUF
-
-
-def override_class_with_distorch_gguf_legacy(cls):
     """Legacy DisTorch wrapper for GGUF models for backward compatibility."""
     from .nodes import get_device_list
     from . import current_device
     
-    class NodeOverrideDisTorchLegacy(cls):
+    class NodeOverrideDisTorchGGUFLegacy(cls):
         @classmethod
         def INPUT_TYPES(s):
             inputs = copy.deepcopy(cls.INPUT_TYPES())
@@ -364,6 +312,10 @@ def override_class_with_distorch_gguf_legacy(cls):
 
         CATEGORY = "multigpu/legacy"
         FUNCTION = "override"
+        if hasattr(cls, 'TITLE'):
+            TITLE = f"{cls.TITLE} (Legacy)"
+        else:
+            TITLE = "Legacy DisTorch Node"
 
         def override(self, *args, device=None, expert_mode_allocations=None, use_other_vram=None, virtual_vram_gb=0.0, **kwargs):
             from . import set_current_device
@@ -396,7 +348,59 @@ def override_class_with_distorch_gguf_legacy(cls):
 
             return out
 
-    return NodeOverrideDisTorchLegacy
+    return NodeOverrideDisTorchGGUFLegacy
+
+
+def override_class_with_distorch_gguf_v2(cls):
+    """DisTorch 2.0 wrapper for GGUF models."""
+    from .nodes import get_device_list
+    from . import current_device
+    
+    class NodeOverrideDisTorchGGUFv2(cls):
+        @classmethod
+        def INPUT_TYPES(s):
+            inputs = copy.deepcopy(cls.INPUT_TYPES())
+            devices = get_device_list()
+            compute_device = devices[1] if len(devices) > 1 else devices[0]
+            
+            inputs["optional"] = inputs.get("optional", {})
+            inputs["optional"]["compute_device"] = (devices, {"default": compute_device})
+            inputs["optional"]["virtual_ram_gb"] = ("FLOAT", {"default": 4.0, "min": 0.0, "max": 100.0, "step": 0.1})
+            inputs["optional"]["donor_device"] = (devices, {"default": "cpu"})
+            inputs["optional"]["expert_mode_allocations"] = ("STRING", {"multiline": False, "default": ""})
+            return inputs
+
+        CATEGORY = "multigpu/distorch_2"
+        FUNCTION = "override"
+
+        def override(self, *args, compute_device=None, virtual_ram_gb=4.0, 
+                     donor_device="cpu", expert_mode_allocations="", **kwargs):
+            from . import set_current_device
+            if compute_device is not None:
+                set_current_device(compute_device)
+            
+            register_patched_ggufmodelpatcher()
+            fn = getattr(super(), cls.FUNCTION)
+            out = fn(*args, **kwargs)
+
+            vram_string = ""
+            if virtual_ram_gb > 0:
+                vram_string = f"{compute_device};{virtual_ram_gb};{donor_device}"
+
+            full_allocation = f"{expert_mode_allocations}#{vram_string}" if expert_mode_allocations or vram_string else ""
+            
+            logging.info(f"[DisTorch GGUF] Full allocation string: {full_allocation}")
+            
+            if hasattr(out[0], 'model'):
+                model_hash = create_model_hash(out[0], "override")
+                model_allocation_store[model_hash] = full_allocation
+            elif hasattr(out[0], 'patcher') and hasattr(out[0].patcher, 'model'):
+                model_hash = create_model_hash(out[0].patcher, "override")
+                model_allocation_store[model_hash] = full_allocation
+
+            return out
+
+    return NodeOverrideDisTorchGGUFv2
 
 
 def override_class_with_distorch_clip(cls):

@@ -157,10 +157,10 @@ def apply_block_swap(model_patcher, compute_device="cuda:0", swap_device="cpu",
 
 
 def override_class_with_distorch_safetensor(cls):
-    """DisTorch wrapper for SafeTensor models, providing block-swap memory optimization."""
+    """DisTorch 2.0 wrapper for SafeTensor models, providing block-swap memory optimization."""
     from .nodes import get_device_list
     
-    class NodeOverrideDisTorchSafeTensor(cls):
+    class NodeOverrideDisTorchSafeTensorv2(cls):
         @classmethod
         def INPUT_TYPES(s):
             inputs = copy.deepcopy(cls.INPUT_TYPES())
@@ -175,7 +175,7 @@ def override_class_with_distorch_safetensor(cls):
             inputs["optional"]["expert_mode_allocations"] = ("STRING", {"multiline": False, "default": ""})
             return inputs
 
-        CATEGORY = "multigpu"
+        CATEGORY = "multigpu/distorch_2"
         FUNCTION = "override"
 
         def override(self, *args, compute_device=None, virtual_ram_gb=4.0, 
@@ -205,7 +205,7 @@ def override_class_with_distorch_safetensor(cls):
             
             return out
 
-    return NodeOverrideDisTorchSafeTensor
+    return NodeOverrideDisTorchSafeTensorv2
 
 
 # For backwards compatibility, keep the old name pointing to the new safetensor wrapper
