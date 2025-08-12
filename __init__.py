@@ -305,3 +305,7 @@ if check_module_exists("ComfyUI-WanVideoWrapper") or check_module_exists("comfyu
     NODE_CLASS_MAPPINGS["WanVideoSamplerMultiGPU"] = WanVideoSampler
 
 logging.info(f"MultiGPU: Registration complete. Final mappings: {', '.join(NODE_CLASS_MAPPINGS.keys())}")
+
+# --- Memory Logging Test ---
+from .debug_utils import log_memory_usage
+log_memory_usage("ComfyUI Startup")
