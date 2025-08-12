@@ -44,6 +44,38 @@ class FluxBlockSwapManager:
         self.patched_blocks = {}
 
 
+class QwenBlockSwapManager:
+    """
+    Manages block-swapping for Qwen models.
+    """
+    def __init__(self, model_patcher):
+        self.model_patcher = model_patcher
+        self.patched_blocks = {}
+
+    def apply_patch(self, compute_device, swap_device, blocks_to_swap):
+        logging.info(f"[QwenBlockSwapManager] Applying forward patch to {len(blocks_to_swap)} blocks.")
+        for i, block in enumerate(blocks_to_swap):
+            block.to(swap_device)
+            original_forward = block.forward
+            
+            def create_patched_forward(original_f, b, block_index, cd, sd):
+                def patched_forward(*args, **kwargs):
+                    b.to(cd, non_blocking=True)
+                    result = original_f(*args, **kwargs)
+                    b.to(sd, non_blocking=True)
+                    return result
+                return patched_forward
+
+            block.forward = create_patched_forward(original_forward, block, i, torch.device(compute_device), torch.device(swap_device))
+            self.patched_blocks[block] = original_forward
+
+    def cleanup(self):
+        logging.info(f"[QwenBlockSwapManager] Cleaning up {len(self.patched_blocks)} patched blocks.")
+        for block, original_forward in self.patched_blocks.items():
+            block.forward = original_forward
+        self.patched_blocks = {}
+
+
 def analyze_safetensor_distorch(model, compute_device, swap_device, virtual_vram_gb, all_blocks, blocks_to_swap):
     """Provides a detailed analysis of the block swap configuration, mimicking the GGUF DisTorch style."""
     
@@ -170,8 +202,120 @@ def apply_block_swap(model_patcher, compute_device="cuda:0", swap_device="cpu",
         model_patcher.block_swap_managers.append(manager)
 
         logging.info("[BlockSwap] FLUX block swap setup complete.")
+    
+    elif model_type == "QWEN":
+        manager = QwenBlockSwapManager(model_patcher)
+        
+        model_to_patch = model_patcher.model.diffusion_model
+        
+        if not hasattr(model_to_patch, 'transformer_blocks'):
+             logging.error("[BlockSwap] CRITICAL: Could not find 'transformer_blocks' in Qwen model. Please analyze model structure.")
+             log_unsupported_model_analysis(model_patcher)
+             return
+
+        all_blocks = model_to_patch.transformer_blocks
+
+        if not all_blocks:
+            logging.error("[BlockSwap] CRITICAL: No swappable blocks found for QWEN model.")
+            return
+
+        model_size_gb = sum(p.numel() * p.element_size() for p in model_to_patch.parameters()) / (1024**3)
+
+        if virtual_vram_gb > model_size_gb:
+            logging.warning(f"[BlockSwap] virtual_vram_gb ({virtual_vram_gb:.2f} GB) is larger than the model size ({model_size_gb:.2f} GB). Truncating to model size.")
+            virtual_vram_gb = model_size_gb
+            
+        vram_target_bytes = virtual_vram_gb * (1024**3)
+        current_swap_size = 0
+        blocks_to_swap = []
+
+        for block in reversed(all_blocks):
+            if current_swap_size < vram_target_bytes:
+                block_size = sum(p.numel() * p.element_size() for p in block.parameters())
+                blocks_to_swap.append(block)
+                current_swap_size += block_size
+            else:
+                break
+        
+        blocks_to_swap.reverse()
+
+        analyze_safetensor_distorch(model_to_patch, compute_device, swap_device, virtual_vram_gb, all_blocks, blocks_to_swap)
+
+        if not blocks_to_swap:
+            logging.warning("[BlockSwap] No blocks designated for swapping for QWEN model.")
+            return
+
+        manager.apply_patch(compute_device, swap_device, blocks_to_swap)
+
+        if not hasattr(model_patcher, 'block_swap_managers'):
+            model_patcher.block_swap_managers = []
+        model_patcher.block_swap_managers.append(manager)
+
+        logging.info("[BlockSwap] QWEN block swap setup complete.")
+
     else:
-        logging.warning(f"[BlockSwap] Model type '{model_type}' is not yet supported for block swapping.")
+        logging.warning(f"[BlockSwap] Model type '{model_type}' is not yet supported. Logging model structure for analysis.")
+        log_unsupported_model_analysis(model_patcher)
+
+
+def log_unsupported_model_analysis(model_patcher):
+    """
+    Logs the structure of an unsupported model for development purposes.
+    This is a diagnostic tool and does not modify the model.
+    """
+    logging.info("========================================================================")
+    logging.info("          INTERNAL MODEL ANALYZER (UNSUPPORTED MODEL DETECTED)")
+    logging.info("========================================================================")
+    
+    if not hasattr(model_patcher, 'model'):
+        logging.error("[ModelAnalyzer] Model patcher does not contain a 'model' attribute.")
+        return
+
+    model = model_patcher.model
+    logging.info(f"[ModelAnalyzer] Root Model Type: {type(model).__name__}")
+
+    if not hasattr(model, 'diffusion_model'):
+        logging.warning("[ModelAnalyzer] Model does not have a 'diffusion_model' attribute. Dumping root model attributes.")
+        _recursive_log_attrs(model, "model")
+    else:
+        diffusion_model = model.diffusion_model
+        logging.info(f"[ModelAnalyzer] Diffusion Model Type: {type(diffusion_model).__name__}")
+        _recursive_log_attrs(diffusion_model, "diffusion_model")
+
+    logging.info("========================================================================")
+    logging.info("                      MODEL ANALYSIS COMPLETE")
+    logging.info("========================================================================")
+
+def _recursive_log_attrs(module, path, seen_modules=None):
+    """Helper function to recursively log model attributes."""
+    if seen_modules is None:
+        seen_modules = set()
+
+    if id(module) in seen_modules:
+        return
+    seen_modules.add(id(module))
+
+    logging.info(f"--- Analyzing path: '{path}' (Type: {type(module).__name__}) ---")
+    
+    # Log named children first
+    children_found = False
+    for name, submodule in module.named_children():
+        children_found = True
+        new_path = f"{path}.{name}" if path else name
+        
+        # Heuristic check for potential block lists
+        if isinstance(submodule, (torch.nn.ModuleList, list)) and submodule and all(isinstance(x, torch.nn.Module) for x in submodule):
+            logging.info(f"  > [POTENTIAL BLOCK LIST] '{new_path}' | Type: {type(submodule).__name__}, Length: {len(submodule)}")
+            # Also inspect the first block in the list for more detail
+            if len(submodule) > 0:
+                _recursive_log_attrs(submodule[0], f"{new_path}[0]", seen_modules)
+        else:
+            logging.info(f"  - Child: '{new_path}' | Type: {type(submodule).__name__}")
+            # Recurse into non-list children
+            _recursive_log_attrs(submodule, new_path, seen_modules)
+            
+    if not children_found:
+        logging.info("  No named children found at this level.")
 
 
 def override_class_with_distorch_safetensor(cls):
