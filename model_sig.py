@@ -12,6 +12,8 @@ def get_model_type(model_patcher):
             return "FLUX"
         if "Qwen" in class_name:
             return "QWEN"
+        if "WanModel" in class_name:
+            return "WANVIDEO"
             
     # Fallback to the model_type enum for other cases
     if hasattr(model_patcher, 'model') and hasattr(model_patcher.model, 'model_type'):

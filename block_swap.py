@@ -76,6 +76,40 @@ class QwenBlockSwapManager:
         self.patched_blocks = {}
 
 
+class WanVideoBlockSwapManager:
+    """
+    Manages block-swapping for WanVideo models using a pre-allocated GPU shell block.
+    """
+    def __init__(self, model_patcher, gpu_shell_block):
+        self.model_patcher = model_patcher
+        self.gpu_shell_block = gpu_shell_block
+        self.patched_blocks = {}
+
+    def apply_patch(self, compute_device, swap_device, blocks_to_swap):
+        logging.info(f"[WanVideoBlockSwapManager] Applying state_dict patch to {len(blocks_to_swap)} blocks.")
+        for i, block in enumerate(blocks_to_swap):
+            block.to(swap_device) # Ensure the source block is on the swap device
+            original_forward = block.forward
+            
+            def create_patched_forward(cpu_block, gpu_shell):
+                def patched_forward(*args, **kwargs):
+                    logging.info(f"[DEBUG WANVIDEO SWAP] Loading state_dict from CPU block into GPU shell.")
+                    gpu_shell.load_state_dict(cpu_block.state_dict())
+                    logging.info(f"[DEBUG WANVIDEO SWAP] Executing forward pass on GPU shell.")
+                    result = gpu_shell.forward(*args, **kwargs)
+                    return result
+                return patched_forward
+
+            block.forward = create_patched_forward(block, self.gpu_shell_block)
+            self.patched_blocks[block] = original_forward
+
+    def cleanup(self):
+        logging.info(f"[WanVideoBlockSwapManager] Cleaning up {len(self.patched_blocks)} patched blocks.")
+        for block, original_forward in self.patched_blocks.items():
+            block.forward = original_forward
+        self.patched_blocks = {}
+
+
 def analyze_safetensor_distorch(model, compute_device, swap_device, virtual_vram_gb, all_blocks, blocks_to_swap):
     """Provides a detailed analysis of the block swap configuration, mimicking the GGUF DisTorch style."""
     
@@ -252,6 +286,66 @@ def apply_block_swap(model_patcher, compute_device="cuda:0", swap_device="cpu",
         model_patcher.block_swap_managers.append(manager)
 
         logging.info("[BlockSwap] QWEN block swap setup complete.")
+
+    elif model_type == "WANVIDEO":
+        model_to_patch = model_patcher.model.diffusion_model
+        
+        if not hasattr(model_to_patch, 'blocks'):
+             logging.error("[BlockSwap] CRITICAL: Could not find 'blocks' in WanVideo model. Please analyze model structure.")
+             log_unsupported_model_analysis(model_patcher)
+             return
+
+        all_blocks = model_to_patch.blocks
+
+        if not all_blocks:
+            logging.error("[BlockSwap] CRITICAL: No swappable blocks found for WanVideo model.")
+            return
+
+        # --- Pre-allocation Strategy ---
+        # 1. Find the largest block to create a shell
+        largest_block = max(all_blocks, key=lambda b: sum(p.numel() * p.element_size() for p in b.parameters()))
+        gpu_shell_block = copy.deepcopy(largest_block).to(compute_device)
+        shell_size_mb = sum(p.numel() * p.element_size() for p in gpu_shell_block.parameters()) / (1024**2)
+        logging.info(f"[BlockSwap] Created GPU shell block for WanVideo on {compute_device}, size: {shell_size_mb:.2f} MB")
+        
+        manager = WanVideoBlockSwapManager(model_patcher, gpu_shell_block)
+        # --- End Pre-allocation ---
+
+        model_size_gb = sum(p.numel() * p.element_size() for p in model_to_patch.parameters()) / (1024**3)
+
+        if virtual_vram_gb > model_size_gb:
+            logging.warning(f"[BlockSwap] virtual_vram_gb ({virtual_vram_gb:.2f} GB) is larger than the model size ({model_size_gb:.2f} GB). Truncating to model size.")
+            virtual_vram_gb = model_size_gb
+            
+        vram_target_bytes = virtual_vram_gb * (1024**3)
+        current_swap_size = 0
+        blocks_to_swap = []
+
+        # We still need to identify which blocks to swap (i.e., which ones will use the shell)
+        for block in reversed(all_blocks):
+            if current_swap_size < vram_target_bytes:
+                block_size = sum(p.numel() * p.element_size() for p in block.parameters())
+                blocks_to_swap.append(block)
+                current_swap_size += block_size
+            else:
+                # The rest of the blocks will remain on the compute device and not be patched
+                block.to(compute_device)
+
+        blocks_to_swap.reverse()
+
+        analyze_safetensor_distorch(model_to_patch, compute_device, swap_device, virtual_vram_gb, all_blocks, blocks_to_swap)
+
+        if not blocks_to_swap:
+            logging.warning("[BlockSwap] No blocks designated for swapping for WanVideo model.")
+            return
+
+        manager.apply_patch(compute_device, swap_device, blocks_to_swap)
+
+        if not hasattr(model_patcher, 'block_swap_managers'):
+            model_patcher.block_swap_managers = []
+        model_patcher.block_swap_managers.append(manager)
+
+        logging.info("[BlockSwap] WanVideo block swap setup complete using pre-allocation strategy.")
 
     else:
         logging.warning(f"[BlockSwap] Model type '{model_type}' is not yet supported. Logging model structure for analysis.")
