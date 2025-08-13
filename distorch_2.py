@@ -15,6 +15,7 @@ import comfy.model_patcher
 
 # Global store for safetensor model allocations - EXACTLY like GGUF
 safetensor_allocation_store = {}
+safetensor_settings_store = {}
 
 
 def create_safetensor_model_hash(model, caller):
@@ -42,7 +43,7 @@ def create_safetensor_model_hash(model, caller):
     final_hash = hashlib.sha256(identifier.encode()).hexdigest()
     
     # DEBUG STATEMENT - ALWAYS LOG THE HASH
-    logging.info(f"[SAFETENSOR_HASH] Created hash for {caller}: {final_hash[:8]}...")
+    logging.debug(f"[MULTIGPU_DISTORCHV2_HASH] Created hash for {caller}: {final_hash[:8]}...")
     return final_hash
 
 
@@ -61,7 +62,7 @@ def register_patched_safetensor_modelpatcher():
             allocations = safetensor_allocation_store.get(debug_hash)
             
             if allocations:
-                logging.info(f"[DISTORCH_SAFETENSOR] Using static allocation for model {debug_hash[:8]}")
+                logging.info(f"[MULTIGPU_DISTORCHV2] Using static allocation for model {debug_hash[:8]}")
                 # Parse allocation string and apply static assignment
                 device_assignments = analyze_safetensor_loading(self, allocations)
                 
@@ -78,7 +79,7 @@ def register_patched_safetensor_modelpatcher():
                     
                     if hasattr(module, 'weight') or hasattr(module, 'comfy_cast_weights'):
                         # Move to our assigned device
-                        logging.info(f"[DISTORCH_SAFETENSOR] Moving {block_name} to {target_device}")
+                        logging.debug(f"[MULTIGPU_DISTORCHV2] Moving {block_name} to {target_device}")
                         module.to(target_device)
                         # Mark for ComfyUI's cast system if not already marked
                         if hasattr(module, 'comfy_cast_weights'):
@@ -92,7 +93,7 @@ def register_patched_safetensor_modelpatcher():
         
         comfy.model_patcher.ModelPatcher.partially_load = new_partially_load
         comfy.model_patcher.ModelPatcher._distorch_patched = True
-        logging.info("[DISTORCH_SAFETENSOR] Successfully patched ModelPatcher.partially_load")
+        logging.info("[MULTIGPU_DISTORCHV2] Successfully patched ModelPatcher.partially_load")
 
 
 def analyze_safetensor_loading(model_patcher, allocations_str):
@@ -134,7 +135,7 @@ def analyze_safetensor_loading(model_patcher, allocations_str):
     # IDENTICAL LOGGING TO DISTORCH
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
     logging.info(eq_line)
-    logging.info("    DisTorch Safetensor Device Allocations")
+    logging.info("    DisTorch2 Model Device Allocations")
     logging.info(eq_line)
     logging.info(fmt_assign.format("Device", "Alloc %", "Total (GB)", " Alloc (GB)"))
     logging.info(dash_line)
@@ -158,13 +159,29 @@ def analyze_safetensor_loading(model_patcher, allocations_str):
     # Get the actual model from the patcher
     model = model_patcher.model if hasattr(model_patcher, 'model') else model_patcher
 
-    # Analyze all modules with weights - matching GGML pattern
+    # First pass: calculate total memory to establish threshold
+    total_memory = 0
+    for name, module in model.named_modules():
+        if hasattr(module, "weight") or hasattr(module, "comfy_cast_weights"):
+            try:
+                block_memory = mm.module_size(module)
+            except:
+                block_memory = 0
+                if hasattr(module, 'weight') and module.weight is not None:
+                    block_memory += module.weight.numel() * module.weight.element_size()
+                if hasattr(module, 'bias') and module.bias is not None:
+                    block_memory += module.bias.numel() * module.bias.element_size()
+            total_memory += block_memory
+
+    # Set the minimum block size threshold (0.1% of total model memory)
+    MIN_BLOCK_THRESHOLD = total_memory * 0.001
+
+    # Second pass: analyze and collect all blocks, then filter
+    all_blocks = []
     for name, module in model.named_modules():
         if hasattr(module, "weight") or hasattr(module, "comfy_cast_weights"):
             block_type = type(module).__name__
-            block_summary[block_type] = block_summary.get(block_type, 0) + 1
             
-            # Calculate memory using ComfyUI's module_size or manual calculation
             try:
                 block_memory = mm.module_size(module)
             except:
@@ -174,12 +191,17 @@ def analyze_safetensor_loading(model_patcher, allocations_str):
                 if hasattr(module, 'bias') and module.bias is not None:
                     block_memory += module.bias.numel() * module.bias.element_size()
             
+            # Populate summary dictionaries with ALL blocks for accurate reporting
+            block_summary[block_type] = block_summary.get(block_type, 0) + 1
             memory_by_type[block_type] += block_memory
-            total_memory += block_memory
-            block_list.append((name, module, block_type))
+            all_blocks.append((name, module, block_type, block_memory))
+
+    # Filter out tiny blocks from the distribution list
+    block_list = [b for b in all_blocks if b[3] >= MIN_BLOCK_THRESHOLD]
+    tiny_block_list = [b for b in all_blocks if b[3] < MIN_BLOCK_THRESHOLD]
 
     # Log layer distribution - IDENTICAL FORMAT TO GGML
-    logging.info("   DisTorch Safetensor Layer Distribution")
+    logging.info("    DisTorch2 Model Layer Distribution")
     logging.info(dash_line)
     fmt_layer = "{:<12}{:>10}{:>14}{:>10}"
     logging.info(fmt_layer.format("Layer Type", "Layers", "Memory (MB)", "% Total"))
@@ -192,60 +214,102 @@ def analyze_safetensor_loading(model_patcher, allocations_str):
     
     logging.info(dash_line)
 
-    # Distribute blocks across devices - EXACTLY like GGML
-    nonzero_devices = [d for d, r in DEVICE_RATIOS_DISTORCH.items() if r > 0]
-    nonzero_total_ratio = sum(DEVICE_RATIOS_DISTORCH[d] for d in nonzero_devices)
+    # Distribute blocks sequentially from the tail of the model
     device_assignments = {device: [] for device in DEVICE_RATIOS_DISTORCH.keys()}
-    block_assignments = {}  # Map block name to device
-    
-    total_blocks = len(block_list)
-    current_block = 0
+    block_assignments = {}
 
-    for idx, device in enumerate(nonzero_devices):
-        ratio = DEVICE_RATIOS_DISTORCH[device]
-        if idx == len(nonzero_devices) - 1:
-            # Last device gets remaining blocks
-            device_block_count = total_blocks - current_block
+    # Determine the primary compute device (first non-cpu device)
+    compute_device = "cuda:0" # Fallback
+    for dev in sorted_devices:
+        if dev != "cpu":
+            compute_device = dev
+            break
+            
+    # Calculate total memory to be offloaded to donor devices
+    total_offload_gb = sum(DEVICE_RATIOS_DISTORCH.get(d, 0) for d in sorted_devices if d != compute_device)
+    total_offload_bytes = total_offload_gb * (1024**3)
+    
+    offloaded_bytes = 0
+    
+    # Iterate from the TAIL of the model
+    for block_name, module, block_type, block_memory in reversed(block_list):
+        try:
+            # block_memory is already calculated
+            pass
+        except:
+            block_memory = 0
+            if hasattr(module, 'weight') and module.weight is not None:
+                block_memory += module.weight.numel() * module.weight.element_size()
+            if hasattr(module, 'bias') and module.bias is not None:
+                block_memory += module.bias.numel() * module.bias.element_size()
+
+        # Assign to donor device (currently assumes one donor 'cpu') until target is met
+        if offloaded_bytes < total_offload_bytes:
+            # For now, simple offload to CPU, will expand for multi-donor
+            donor_device = "cpu"
+            for dev in sorted_devices:
+                if dev != compute_device:
+                    donor_device = dev
+                    break # Use first available donor
+            
+            block_assignments[block_name] = donor_device
+            offloaded_bytes += block_memory
         else:
-            device_block_count = int((ratio / nonzero_total_ratio) * total_blocks)
-        
-        start_idx = current_block
-        end_idx = current_block + device_block_count
-        device_blocks = block_list[start_idx:end_idx]
-        device_assignments[device] = device_blocks
-        
-        # Track block name to device mapping
-        for block_name, module, block_type in device_blocks:
-            block_assignments[block_name] = device
-        
-        current_block += device_block_count
+            # Assign remaining blocks to the primary compute device
+            block_assignments[block_name] = compute_device
+
+    # Explicitly assign tiny blocks to the compute device
+    if tiny_block_list:
+        for block_name, module, block_type, block_memory in tiny_block_list:
+            block_assignments[block_name] = compute_device
+
+    # Populate device_assignments from the final block_assignments
+    for block_name, device in block_assignments.items():
+        # Find the block in the original list to get all its info
+        for b_name, b_module, b_type, b_mem in all_blocks:
+            if b_name == block_name:
+                device_assignments[device].append((b_name, b_module, b_type, b_mem))
+                break
 
     # Log final assignments - IDENTICAL FORMAT TO GGML
-    logging.info("  DisTorch Safetensor Final Device/Layer Assignments")
+    logging.info("DisTorch2 Model Final Device/Layer Assignments")
     logging.info(dash_line)
     logging.info(fmt_assign.format("Device", "Layers", "Memory (MB)", "% Total"))
     logging.info(dash_line)
     
+    # Calculate and log tiny blocks separately
+    if tiny_block_list:
+        tiny_block_memory = sum(b[3] for b in tiny_block_list)
+        tiny_mem_mb = tiny_block_memory / (1024 * 1024)
+        tiny_mem_percent = (tiny_block_memory / total_memory) * 100 if total_memory > 0 else 0
+        device_label = f"{compute_device}(<0.1%)"
+        logging.info(fmt_assign.format(device_label, str(len(tiny_block_list)), f"{tiny_mem_mb:.2f}", f"{tiny_mem_percent:.1f}%"))
+
+    # Log distributed blocks
     total_assigned_memory = 0
     device_memories = {}
     
     for device, blocks in device_assignments.items():
-        device_memory = 0
-        for block_name, module, block_type in blocks:
-            # Use the memory we calculated earlier
-            if block_summary[block_type] > 0:
-                mem_per_layer = memory_by_type[block_type] / block_summary[block_type]
-                device_memory += mem_per_layer
+        # Exclude tiny blocks from this calculation
+        dist_blocks = [b for b in blocks if b[3] >= MIN_BLOCK_THRESHOLD]
+        if not dist_blocks:
+            continue
+
+        device_memory = sum(b[3] for b in dist_blocks)
         device_memories[device] = device_memory
         total_assigned_memory += device_memory
 
-    sorted_assignments = sorted(device_assignments.keys(), key=lambda d: (d == "cpu", d))
+    sorted_assignments = sorted(device_memories.keys(), key=lambda d: (d == "cpu", d))
 
     for dev in sorted_assignments:
-        blocks = device_assignments[dev]
+        # Get only the distributed blocks for the count
+        dist_blocks = [b for b in device_assignments[dev] if b[3] >= MIN_BLOCK_THRESHOLD]
+        if not dist_blocks:
+            continue
+            
         mem_mb = device_memories[dev] / (1024 * 1024)
         mem_percent = (device_memories[dev] / total_memory) * 100 if total_memory > 0 else 0
-        logging.info(fmt_assign.format(dev, str(len(blocks)), f"{mem_mb:.2f}", f"{mem_percent:.1f}%"))
+        logging.info(fmt_assign.format(dev, str(len(dist_blocks)), f"{mem_mb:.2f}", f"{mem_percent:.1f}%"))
     
     logging.info(dash_line)
 
@@ -267,7 +331,7 @@ def calculate_safetensor_vvram_allocation(model_patcher, virtual_vram_str):
 
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
     logging.info(eq_line)
-    logging.info("     DisTorch Safetensor Virtual VRAM Analysis")
+    logging.info("    DisTorch2 Model Virtual VRAM Analysis")
     logging.info(eq_line)
     logging.info(fmt_assign.format("Object", "Role", "Original(GB)", "Total(GB)", "Virt(GB)"))
     logging.info(dash_line)
@@ -349,7 +413,7 @@ def calculate_safetensor_vvram_allocation(model_patcher, virtual_vram_str):
     allocation_string = ";".join(allocation_parts)
     
     fmt_mem = "{:<20}{:>20}"
-    logging.info(fmt_mem.format("\nAllocation String", allocation_string))
+    logging.info(fmt_mem.format("\n  v2 Expert String", allocation_string))
 
     return allocation_string
 
@@ -385,10 +449,6 @@ def override_class_with_distorch_safetensor_v2(cls):
             
             # Register our patched ModelPatcher
             register_patched_safetensor_modelpatcher()
-            
-            # Call original function
-            fn = getattr(super(), cls.FUNCTION)
-            out = fn(*args, **kwargs)
 
             # Build allocation string - EXACTLY like GGUF
             vram_string = ""
@@ -397,15 +457,49 @@ def override_class_with_distorch_safetensor_v2(cls):
 
             full_allocation = f"{expert_mode_allocations}#{vram_string}" if expert_mode_allocations or vram_string else ""
             
-            logging.info(f"[DisTorch Safetensor] Full allocation string: {full_allocation}")
+            # --- Force Model Reload on Setting Change ---
+            # Create a hash of the DisTorch settings
+            settings_str = f"{compute_device}{virtual_vram_gb}{donor_device}{expert_mode_allocations}"
+            settings_hash = hashlib.sha256(settings_str.encode()).hexdigest()[:8]
+
+            # Temporarily load the model to get its hash, without applying our patch yet
+            fn = getattr(super(), cls.FUNCTION)
+            temp_out = fn(*args, **kwargs)
+            
+            model_to_check = None
+            if hasattr(temp_out[0], 'model'):
+                model_to_check = temp_out[0]
+            elif hasattr(temp_out[0], 'patcher') and hasattr(temp_out[0].patcher, 'model'):
+                model_to_check = temp_out[0].patcher
+            
+            if model_to_check:
+                model_hash = create_safetensor_model_hash(model_to_check, "override_check")
+                
+                last_settings_hash = safetensor_settings_store.get(model_hash)
+                
+                if last_settings_hash != settings_hash:
+                    logging.info(f"[MultiGPU_DisTorch2] Settings changed for model {model_hash[:8]}. Forcing reload.")
+                    mm.unload_model(model_to_check)
+                    # Update the settings store *before* reloading
+                    safetensor_settings_store[model_hash] = settings_hash
+                    # Call the loader again now that the model is unloaded
+                    out = fn(*args, **kwargs)
+                else:
+                    out = temp_out # Use the already loaded model
+            else:
+                out = temp_out # Should not happen, but as a fallback
+
+            logging.info(f"[MULTIGPU_DISTORCHV2] Full allocation string: {full_allocation}")
             
             # Store allocation for the model - EXACTLY like GGUF
             if hasattr(out[0], 'model'):
                 model_hash = create_safetensor_model_hash(out[0], "override")
                 safetensor_allocation_store[model_hash] = full_allocation
+                safetensor_settings_store[model_hash] = settings_hash # Ensure it's set
             elif hasattr(out[0], 'patcher') and hasattr(out[0].patcher, 'model'):
                 model_hash = create_safetensor_model_hash(out[0].patcher, "override") 
                 safetensor_allocation_store[model_hash] = full_allocation
+                safetensor_settings_store[model_hash] = settings_hash # Ensure it's set
 
             return out
 

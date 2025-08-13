@@ -22,6 +22,7 @@ def create_model_hash(model, caller):
     first_layers = str(list(model.model_state_dict().keys())[:3])
     identifier = f"{model_type}_{model_size}_{first_layers}"
     final_hash = hashlib.sha256(identifier.encode()).hexdigest()
+    logging.debug(f"[MultiGPU_DisTorch_HASH] Created hash for {caller}: {final_hash[:8]}...")
     return final_hash
 
 
@@ -100,7 +101,7 @@ def analyze_ggml_loading(model, allocations_str):
 
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
     logging.info(eq_line)
-    logging.info("          DisTorch Device Allocations")
+    logging.info("    DisTorch Model Device Allocations")
     logging.info(eq_line)
     logging.info(fmt_assign.format("Device", "Alloc %", "Total (GB)", " Alloc (GB)"))
     logging.info(dash_line)
@@ -133,7 +134,7 @@ def analyze_ggml_loading(model, allocations_str):
             memory_by_type[layer_type] += layer_memory
             total_memory += layer_memory
 
-    logging.info("     DisTorch GGML Layer Distribution")
+    logging.info("    DisTorch Model Layer Distribution")
     logging.info(dash_line)
     fmt_layer = "{:<12}{:>10}{:>14}{:>10}"
     logging.info(fmt_layer.format("Layer Type", "Layers", "Memory (MB)", "% Total"))
@@ -161,7 +162,7 @@ def analyze_ggml_loading(model, allocations_str):
         device_assignments[device] = layer_list[start_idx:end_idx]
         current_layer += device_layer_count
 
-    logging.info("    DisTorch Final Device/Layer Assignments")
+    logging.info("DisTorch Model Final Device/Layer Assignments")
     logging.info(dash_line)
     fmt_assign = "{:<12}{:>10}{:>14}{:>10}"
     logging.info(fmt_assign.format("Device", "Layers", "Memory (MB)", "% Total"))
@@ -201,7 +202,7 @@ def calculate_vvram_allocation_string(model, virtual_vram_str):
 
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
     logging.info(eq_line)
-    logging.info("          DisTorch Virtual VRAM Analysis")
+    logging.info("    DisTorch Model Virtual VRAM Analysis")
     logging.info(eq_line)
     logging.info(fmt_assign.format("Object", "Role", "Original(GB)", "Total(GB)", "Virt(GB)"))
     logging.info(dash_line)
@@ -284,7 +285,7 @@ def calculate_vvram_allocation_string(model, virtual_vram_str):
 
     allocation_string = ";".join(allocation_parts)
     fmt_mem = "{:<20}{:>20}"
-    logging.info(fmt_mem.format("\nAllocation String", allocation_string))
+    logging.info(fmt_mem.format("\n  v1 Expert String", allocation_string))
 
     return allocation_string
 
@@ -389,7 +390,7 @@ def override_class_with_distorch_gguf_v2(cls):
 
             full_allocation = f"{expert_mode_allocations}#{vram_string}" if expert_mode_allocations or vram_string else ""
             
-            logging.info(f"[DisTorch GGUF] Full allocation string: {full_allocation}")
+            logging.info(f"[MultiGPU_DisTorch] Full allocation string: {full_allocation}")
             
             if hasattr(out[0], 'model'):
                 model_hash = create_model_hash(out[0], "override")
@@ -450,7 +451,7 @@ def override_class_with_distorch_clip(cls):
 
             full_allocation = f"{expert_mode_allocations}#{vram_string}" if expert_mode_allocations or vram_string else ""
             
-            logging.info(f"[DisTorch] Full allocation string: {full_allocation}")
+            logging.info(f"[MultiGPU_DisTorch] Full allocation string: {full_allocation}")
             
             if hasattr(out[0], 'model'):
                 model_hash = create_model_hash(out[0], "override")
