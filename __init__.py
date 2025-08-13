@@ -9,7 +9,7 @@ from nodes import NODE_CLASS_MAPPINGS as GLOBAL_NODE_CLASS_MAPPINGS
 
 # --- DisTorch V2 Logging Configuration ---
 # Set to "E" for Engineering (DEBUG) or "P" for Production (INFO)
-LOG_LEVEL = "P"
+LOG_LEVEL = "E"
 
 # Configure logger
 log_level = logging.DEBUG if LOG_LEVEL == "E" else logging.INFO
