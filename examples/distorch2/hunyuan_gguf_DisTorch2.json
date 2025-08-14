@@ -1,0 +1,776 @@
+{
+  "id": "476d2791-c10e-4a18-a548-2fbc6aa0f024",
+  "revision": 0,
+  "last_node_id": 121,
+  "last_link_id": 158,
+  "nodes": [
+    {
+      "id": 72,
+      "type": "FluxGuidance",
+      "pos": [
+        3012.307373046875,
+        -267.3423767089844
+      ],
+      "size": [
+        211.60000610351562,
+        58
+      ],
+      "flags": {},
+      "order": 10,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "conditioning",
+          "type": "CONDITIONING",
+          "link": 83
+        }
+      ],
+      "outputs": [
+        {
+          "name": "CONDITIONING",
+          "type": "CONDITIONING",
+          "slot_index": 0,
+          "links": [
+            79
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "FluxGuidance"
+      },
+      "widgets_values": [
+        6
+      ],
+      "color": "#233",
+      "bgcolor": "#355"
+    },
+    {
+      "id": 73,
+      "type": "ModelSamplingSD3",
+      "pos": [
+        3030.986328125,
+        216.49542236328125
+      ],
+      "size": [
+        210,
+        58
+      ],
+      "flags": {},
+      "order": 7,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 157
+        }
+      ],
+      "outputs": [
+        {
+          "name": "MODEL",
+          "type": "MODEL",
+          "slot_index": 0,
+          "links": [
+            78
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "ModelSamplingSD3"
+      },
+      "widgets_values": [
+        7
+      ]
+    },
+    {
+      "id": 74,
+      "type": "VAEDecodeTiled",
+      "pos": [
+        3246.459716796875,
+        191.86683654785156
+      ],
+      "size": [
+        210,
+        150
+      ],
+      "flags": {},
+      "order": 13,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "samples",
+          "type": "LATENT",
+          "link": 85
+        },
+        {
+          "name": "vae",
+          "type": "VAE",
+          "link": 99
+        }
+      ],
+      "outputs": [
+        {
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "slot_index": 0,
+          "links": [
+            82
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "VAEDecodeTiled"
+      },
+      "widgets_values": [
+        256,
+        64,
+        64,
+        8
+      ]
+    },
+    {
+      "id": 66,
+      "type": "BasicScheduler",
+      "pos": [
+        3250.771484375,
+        41.81864929199219
+      ],
+      "size": [
+        210,
+        109.8011474609375
+      ],
+      "flags": {},
+      "order": 8,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 158
+        }
+      ],
+      "outputs": [
+        {
+          "name": "SIGMAS",
+          "type": "SIGMAS",
+          "links": [
+            90
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "BasicScheduler"
+      },
+      "widgets_values": [
+        "simple",
+        20,
+        1
+      ]
+    },
+    {
+      "id": 69,
+      "type": "KSamplerSelect",
+      "pos": [
+        3505.5615234375,
+        -276.5766296386719
+      ],
+      "size": [
+        210,
+        58
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "SAMPLER",
+          "type": "SAMPLER",
+          "links": [
+            89
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "KSamplerSelect"
+      },
+      "widgets_values": [
+        "euler"
+      ]
+    },
+    {
+      "id": 115,
+      "type": "EmptyHunyuanLatentVideo",
+      "pos": [
+        3026.87939453125,
+        50.70602035522461
+      ],
+      "size": [
+        210.09432983398438,
+        130
+      ],
+      "flags": {
+        "collapsed": false
+      },
+      "order": 1,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "LATENT",
+          "type": "LATENT",
+          "slot_index": 0,
+          "links": [
+            155
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "EmptyHunyuanLatentVideo"
+      },
+      "widgets_values": [
+        368,
+        640,
+        65,
+        1
+      ]
+    },
+    {
+      "id": 78,
+      "type": "Note",
+      "pos": [
+        2631.16015625,
+        -399.4529113769531
+      ],
+      "size": [
+        353.56494140625,
+        190.77996826171875
+      ],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "title": "This workflow requires ComfyUI-GGUF",
+      "properties": {},
+      "widgets_values": [
+        "**⚠️ Dependency Alert! ⚠️**\n\nThis workflow relies on nodes from the [ComfyUI-GGUF](https://github.com/city96/ComfyUI-GGUF) custom node repository to function correctly. \n\nSpecifically:\n\n*\"CLIPLoaderGGUFMultiGPU\" \n\nwill not work without this dependency installed. Please install ComfyUI-GGUF before attempting to run this workflow."
+      ],
+      "color": "#332922",
+      "bgcolor": "#593930"
+    },
+    {
+      "id": 68,
+      "type": "RandomNoise",
+      "pos": [
+        3244.127685546875,
+        -303.9937438964844
+      ],
+      "size": [
+        250.37998962402344,
+        82
+      ],
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "NOISE",
+          "type": "NOISE",
+          "links": [
+            87
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "RandomNoise"
+      },
+      "widgets_values": [
+        5770521,
+        "fixed"
+      ],
+      "color": "#2a363b",
+      "bgcolor": "#3f5159"
+    },
+    {
+      "id": 70,
+      "type": "VHS_VideoCombine",
+      "pos": [
+        3809.87548828125,
+        -522.964111328125
+      ],
+      "size": [
+        338.94024658203125,
+        902.6787109375
+      ],
+      "flags": {},
+      "order": 14,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 82
+        },
+        {
+          "name": "audio",
+          "shape": 7,
+          "type": "AUDIO",
+          "link": null
+        },
+        {
+          "name": "meta_batch",
+          "shape": 7,
+          "type": "VHS_BatchManager",
+          "link": null
+        },
+        {
+          "name": "vae",
+          "shape": 7,
+          "type": "VAE",
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "Filenames",
+          "type": "VHS_FILENAMES",
+          "links": null
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "VHS_VideoCombine"
+      },
+      "widgets_values": {
+        "frame_rate": 24,
+        "loop_count": 0,
+        "filename_prefix": "HunyuanVideo",
+        "format": "video/h264-mp4",
+        "pix_fmt": "yuv420p",
+        "crf": 19,
+        "save_metadata": true,
+        "trim_to_audio": false,
+        "pingpong": false,
+        "save_output": true,
+        "videopreview": {
+          "hidden": false,
+          "paused": false,
+          "params": {
+            "filename": "HunyuanVideo_00002.mp4",
+            "subfolder": "",
+            "type": "output",
+            "format": "video/h264-mp4",
+            "frame_rate": 24,
+            "workflow": "HunyuanVideo_00002.png",
+            "fullpath": "/home/johnj/ComfyUI/output/HunyuanVideo_00002.mp4"
+          },
+          "muted": false
+        }
+      }
+    },
+    {
+      "id": 64,
+      "type": "BasicGuider",
+      "pos": [
+        3288.76025390625,
+        -192.04156494140625
+      ],
+      "size": [
+        222.3482666015625,
+        46
+      ],
+      "flags": {
+        "collapsed": true
+      },
+      "order": 11,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 78
+        },
+        {
+          "name": "conditioning",
+          "type": "CONDITIONING",
+          "link": 79
+        }
+      ],
+      "outputs": [
+        {
+          "name": "GUIDER",
+          "type": "GUIDER",
+          "slot_index": 0,
+          "links": [
+            88
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "BasicGuider"
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 67,
+      "type": "CLIPTextEncode",
+      "pos": [
+        3032.827392578125,
+        -153.691650390625
+      ],
+      "size": [
+        422.84503173828125,
+        164.31304931640625
+      ],
+      "flags": {},
+      "order": 9,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "clip",
+          "type": "CLIP",
+          "link": 156
+        }
+      ],
+      "outputs": [
+        {
+          "name": "CONDITIONING",
+          "type": "CONDITIONING",
+          "slot_index": 0,
+          "links": [
+            83
+          ]
+        }
+      ],
+      "title": "CLIP Text Encode (Positive Prompt)",
+      "properties": {
+        "Node name for S&R": "CLIPTextEncode"
+      },
+      "widgets_values": [
+        "A light green frog with brown spots stares forward with its left eye moving subtly. The frog's skin is textured with small bumps, and its spots appear in irregular patterns across its head and face. The eye is round and black with a subtle shine. The head is slightly tilted to its left, and the body is barely visible. The background is a flat, solid bright yellow color, extending beyond the frog in all directions, with the lower part having a slight gradient into a lighter green. The camera zooms in slowly on the frog's eye and the frog looks directly at the viewer. The overall lighting is bright and diffused, creating a soft appearance."
+      ],
+      "color": "#232",
+      "bgcolor": "#353"
+    },
+    {
+      "id": 76,
+      "type": "VAELoaderMultiGPU",
+      "pos": [
+        2632.252685546875,
+        327.2115783691406
+      ],
+      "size": [
+        341.07464599609375,
+        87.14057922363281
+      ],
+      "flags": {},
+      "order": 4,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "VAE",
+          "type": "VAE",
+          "slot_index": 0,
+          "links": [
+            99
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "VAELoaderMultiGPU"
+      },
+      "widgets_values": [
+        "hunyuan_video_vae_bf16.safetensors",
+        "cuda:1"
+      ],
+      "color": "#233",
+      "bgcolor": "#355"
+    },
+    {
+      "id": 75,
+      "type": "SamplerCustomAdvanced",
+      "pos": [
+        3517.626953125,
+        -117.69574737548828
+      ],
+      "size": [
+        292.4319763183594,
+        479.03521728515625
+      ],
+      "flags": {
+        "collapsed": false
+      },
+      "order": 12,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "noise",
+          "type": "NOISE",
+          "link": 87
+        },
+        {
+          "name": "guider",
+          "type": "GUIDER",
+          "link": 88
+        },
+        {
+          "name": "sampler",
+          "type": "SAMPLER",
+          "link": 89
+        },
+        {
+          "name": "sigmas",
+          "type": "SIGMAS",
+          "link": 90
+        },
+        {
+          "name": "latent_image",
+          "type": "LATENT",
+          "link": 155
+        }
+      ],
+      "outputs": [
+        {
+          "name": "output",
+          "type": "LATENT",
+          "slot_index": 0,
+          "links": [
+            85
+          ]
+        },
+        {
+          "name": "denoised_output",
+          "type": "LATENT",
+          "links": null
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "SamplerCustomAdvanced"
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 121,
+      "type": "UnetLoaderGGUFDisTorch2MultiGPU",
+      "pos": [
+        2627.078125,
+        -58.38229751586914
+      ],
+      "size": [
+        335.6441345214844,
+        154
+      ],
+      "flags": {},
+      "order": 5,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "MODEL",
+          "type": "MODEL",
+          "links": [
+            157,
+            158
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "UnetLoaderGGUFDisTorch2MultiGPU"
+      },
+      "widgets_values": [
+        "hunyuan-video-t2v-720p-Q8_0.gguf",
+        "cuda:0",
+        8,
+        "cpu",
+        ""
+      ],
+      "color": "#233",
+      "bgcolor": "#355"
+    },
+    {
+      "id": 120,
+      "type": "DualCLIPLoaderGGUFMultiGPU",
+      "pos": [
+        2629.646484375,
+        143.52830505371094
+      ],
+      "size": [
+        348.16229248046875,
+        130
+      ],
+      "flags": {},
+      "order": 6,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "CLIP",
+          "type": "CLIP",
+          "slot_index": 0,
+          "links": [
+            156
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "DualCLIPLoaderGGUFMultiGPU"
+      },
+      "widgets_values": [
+        "clip_l.safetensors",
+        "llava-llama-3-8B-v1_1-Q4_K_M.gguf",
+        "hunyuan_video",
+        "cpu"
+      ],
+      "color": "#233",
+      "bgcolor": "#355"
+    }
+  ],
+  "links": [
+    [
+      78,
+      73,
+      0,
+      64,
+      0,
+      "MODEL"
+    ],
+    [
+      79,
+      72,
+      0,
+      64,
+      1,
+      "CONDITIONING"
+    ],
+    [
+      82,
+      74,
+      0,
+      70,
+      0,
+      "IMAGE"
+    ],
+    [
+      83,
+      67,
+      0,
+      72,
+      0,
+      "CONDITIONING"
+    ],
+    [
+      85,
+      75,
+      0,
+      74,
+      0,
+      "LATENT"
+    ],
+    [
+      87,
+      68,
+      0,
+      75,
+      0,
+      "NOISE"
+    ],
+    [
+      88,
+      64,
+      0,
+      75,
+      1,
+      "GUIDER"
+    ],
+    [
+      89,
+      69,
+      0,
+      75,
+      2,
+      "SAMPLER"
+    ],
+    [
+      90,
+      66,
+      0,
+      75,
+      3,
+      "SIGMAS"
+    ],
+    [
+      99,
+      76,
+      0,
+      74,
+      1,
+      "VAE"
+    ],
+    [
+      155,
+      115,
+      0,
+      75,
+      4,
+      "LATENT"
+    ],
+    [
+      156,
+      120,
+      0,
+      67,
+      0,
+      "CLIP"
+    ],
+    [
+      157,
+      121,
+      0,
+      73,
+      0,
+      "MODEL"
+    ],
+    [
+      158,
+      121,
+      0,
+      66,
+      0,
+      "MODEL"
+    ]
+  ],
+  "groups": [
+    {
+      "id": 1,
+      "title": "GGUFDisTorchMultiGPU",
+      "bounding": [
+        2620.569091796875,
+        -121.6815185546875,
+        360.4816589355469,
+        537.903076171875
+      ],
+      "color": "#8AA",
+      "font_size": 24,
+      "flags": {}
+    }
+  ],
+  "config": {},
+  "extra": {
+    "ds": {
+      "scale": 1.167184107045179,
+      "offset": [
+        -2141.8625685908787,
+        473.0554876075415
+      ]
+    },
+    "ue_links": [],
+    "VHS_latentpreview": false,
+    "VHS_latentpreviewrate": 0,
+    "VHS_MetadataImage": true,
+    "VHS_KeepIntermediate": true,
+    "frontendVersion": "1.24.4"
+  },
+  "version": 0.4
+}
