@@ -1,4 +1,4 @@
-# ComfyUI-MultiGPU: Tools to free up your primary GPU’s VRAM by using your CPU or additional GPUs, now with tighter integration into kijai's WanVideoWrapper[^1]
+# ComfyUI-MultiGPU v2.0.0: Universal `.safetensors` and GGUF Multi-GPU Distribution with DisTorch
 <p align="center">
   <img src="https://raw.githubusercontent.com/pollockjj/ComfyUI-MultiGPU/main/assets/distorch_average.png" width="600">
   <br>
@@ -18,10 +18,10 @@ ComfyUI-MultiGPU now includes a custom, tightly integrated implementation for Wa
 ## The Core of ComfyUI-MultiGPU:
 [^1]: This **enhances memory management,** not parallel processing. Workflow steps still execute sequentially, but with components (in full or in part) loaded across your specified devices. *Performance gains* come from avoiding repeated model loading/unloading when VRAM is constrained. *Capability gains* come from offloading as much of the model (VAE/CLIP/UNet) off of your main **compute** device as possible—allowing you to maximize latent space for actual computation.
 
-1. **DisTorch Virtual VRAM for UNet Loaders**: Move UNet layers off your compute GPU  
-   - Automatic distribution to RAM or other GPUs  
-   - One-number control of VRAM usage  
-   - Support for all GGUF models  
+1. **DisTorch Virtual VRAM for `.safetensors` and GGUF Models**: Move model layers off your compute GPU
+   - Automatic, memory-size based distribution to RAM or other GPUs
+   - One-number control of VRAM usage
+   - Universal support for `.safetensors` and GGUF models
 
 2. **CLIP Offloading**: Two solutions for LLM-based and standard CLIP models:  
    - **MultiGPU CLIP**: Full offload to CPU or secondary GPU  
@@ -83,7 +83,7 @@ With a 12GB GPU running an 8GB model:
 - Your GPU now has extra VRAM for larger batches, higher resolutions, or longer video
 
 ## 🚀 Compatibility
-Works with all GGUF-quantized ComfyUI/ComfyUI-GGUF-supported UNet/CLIP models.
+Works with all `.safetensors` and GGUF-quantized models.
 
 ⚙️ Expert users: For those of you who were here for the 1.0 release of DisTorch, manual allocation strings still available for advanced configurations. Each log will contain the allocation string for the run so it can be easily recreated and/or manipulated for more sophisticated setups.
 

@@ -7,6 +7,8 @@ import sys
 import torch
 import logging
 import hashlib
+
+logger = logging.getLogger("MultiGPU")
 import copy
 from collections import defaultdict
 import comfy.model_management as mm
@@ -22,7 +24,7 @@ def create_model_hash(model, caller):
     first_layers = str(list(model.model_state_dict().keys())[:3])
     identifier = f"{model_type}_{model_size}_{first_layers}"
     final_hash = hashlib.sha256(identifier.encode()).hexdigest()
-    logging.debug(f"[MultiGPU_DisTorch_HASH] Created hash for {caller}: {final_hash[:8]}...")
+    logger.debug(f"[MultiGPU_DisTorch_HASH] Created hash for {caller}: {final_hash[:8]}...")
     return final_hash
 
 
@@ -99,12 +101,11 @@ def analyze_ggml_loading(model, allocations_str):
             "alloc_gb": alloc_gb
         }
 
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-    logging.info(eq_line)
-    logging.info("    DisTorch Model Device Allocations")
-    logging.info(eq_line)
-    logging.info(fmt_assign.format("Device", "Alloc %", "Total (GB)", " Alloc (GB)"))
-    logging.info(dash_line)
+    logger.info(eq_line)
+    logger.info("    DisTorch Model Device Allocations")
+    logger.info(eq_line)
+    logger.info(fmt_assign.format("Device", "Alloc %", "Total (GB)", " Alloc (GB)"))
+    logger.info(dash_line)
 
     sorted_devices = sorted(device_table.keys(), key=lambda d: (d == "cpu", d))
 
@@ -112,9 +113,9 @@ def analyze_ggml_loading(model, allocations_str):
         frac = device_table[dev]["fraction"]
         tot_gb = device_table[dev]["total_gb"]
         alloc_gb = device_table[dev]["alloc_gb"]
-        logging.info(fmt_assign.format(dev,f"{int(frac * 100)}%",f"{tot_gb:.2f}",f"{alloc_gb:.2f}"))
+        logger.info(fmt_assign.format(dev,f"{int(frac * 100)}%",f"{tot_gb:.2f}",f"{alloc_gb:.2f}"))
 
-    logging.info(dash_line)
+    logger.info(dash_line)
 
     layer_summary = {}
     layer_list = []
@@ -134,16 +135,16 @@ def analyze_ggml_loading(model, allocations_str):
             memory_by_type[layer_type] += layer_memory
             total_memory += layer_memory
 
-    logging.info("    DisTorch Model Layer Distribution")
-    logging.info(dash_line)
+    logger.info("    DisTorch Model Layer Distribution")
+    logger.info(dash_line)
     fmt_layer = "{:<12}{:>10}{:>14}{:>10}"
-    logging.info(fmt_layer.format("Layer Type", "Layers", "Memory (MB)", "% Total"))
-    logging.info(dash_line)
+    logger.info(fmt_layer.format("Layer Type", "Layers", "Memory (MB)", "% Total"))
+    logger.info(dash_line)
     for layer_type, count in layer_summary.items():
         mem_mb = memory_by_type[layer_type] / (1024 * 1024)
         mem_percent = (memory_by_type[layer_type] / total_memory) * 100 if total_memory > 0 else 0
-        logging.info(fmt_layer.format(layer_type,str(count),f"{mem_mb:.2f}",f"{mem_percent:.1f}%"))
-    logging.info(dash_line)
+        logger.info(fmt_layer.format(layer_type,str(count),f"{mem_mb:.2f}",f"{mem_percent:.1f}%"))
+    logger.info(dash_line)
 
     nonzero_devices = [d for d, r in DEVICE_RATIOS_DISTORCH.items() if r > 0]
     nonzero_total_ratio = sum(DEVICE_RATIOS_DISTORCH[d] for d in nonzero_devices)
@@ -162,11 +163,11 @@ def analyze_ggml_loading(model, allocations_str):
         device_assignments[device] = layer_list[start_idx:end_idx]
         current_layer += device_layer_count
 
-    logging.info("DisTorch Model Final Device/Layer Assignments")
-    logging.info(dash_line)
+    logger.info("DisTorch Model Final Device/Layer Assignments")
+    logger.info(dash_line)
     fmt_assign = "{:<12}{:>10}{:>14}{:>10}"
-    logging.info(fmt_assign.format("Device", "Layers", "Memory (MB)", "% Total"))
-    logging.info(dash_line)
+    logger.info(fmt_assign.format("Device", "Layers", "Memory (MB)", "% Total"))
+    logger.info(dash_line)
     total_assigned_memory = 0
     device_memories = {}
     for device, layers in device_assignments.items():
@@ -185,8 +186,8 @@ def analyze_ggml_loading(model, allocations_str):
         layers = device_assignments[dev]
         mem_mb = device_memories[dev] / (1024 * 1024)
         mem_percent = (device_memories[dev] / total_memory) * 100 if total_memory > 0 else 0
-        logging.info(fmt_assign.format(dev,str(len(layers)),f"{mem_mb:.2f}",f"{mem_percent:.1f}%"))
-    logging.info(dash_line)
+        logger.info(fmt_assign.format(dev,str(len(layers)),f"{mem_mb:.2f}",f"{mem_percent:.1f}%"))
+    logger.info(dash_line)
 
     return {"device_assignments": device_assignments}
 
@@ -200,17 +201,16 @@ def calculate_vvram_allocation_string(model, virtual_vram_str):
     dash_line = "-" * 47
     fmt_assign = "{:<8} {:<6} {:>11} {:>9} {:>9}"
 
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-    logging.info(eq_line)
-    logging.info("    DisTorch Model Virtual VRAM Analysis")
-    logging.info(eq_line)
-    logging.info(fmt_assign.format("Object", "Role", "Original(GB)", "Total(GB)", "Virt(GB)"))
-    logging.info(dash_line)
+    logger.info(eq_line)
+    logger.info("    DisTorch Model Virtual VRAM Analysis")
+    logger.info(eq_line)
+    logger.info(fmt_assign.format("Object", "Role", "Original(GB)", "Total(GB)", "Virt(GB)"))
+    logger.info(dash_line)
 
     recipient_vram = mm.get_total_memory(torch.device(recipient_device)) / (1024**3)
     recipient_virtual = recipient_vram + virtual_vram_gb
 
-    logging.info(fmt_assign.format(recipient_device, 'recip', f"{recipient_vram:.2f}GB",f"{recipient_virtual:.2f}GB", f"+{virtual_vram_gb:.2f}GB"))
+    logger.info(fmt_assign.format(recipient_device, 'recip', f"{recipient_vram:.2f}GB",f"{recipient_virtual:.2f}GB", f"+{virtual_vram_gb:.2f}GB"))
 
     ram_donors = [d for d in donors.split(',') if d != 'cpu']
     remaining_vram_needed = virtual_vram_gb
@@ -228,15 +228,15 @@ def calculate_vvram_allocation_string(model, virtual_vram_str):
         donor_allocations[donor] = donation
             
         donor_device_info[donor] = (donor_vram, donor_virtual)
-        logging.info(fmt_assign.format(donor, 'donor', f"{donor_vram:.2f}GB",  f"{donor_virtual:.2f}GB", f"-{donation:.2f}GB"))
+        logger.info(fmt_assign.format(donor, 'donor', f"{donor_vram:.2f}GB",  f"{donor_virtual:.2f}GB", f"-{donation:.2f}GB"))
     
     system_dram_gb = mm.get_total_memory(torch.device('cpu')) / (1024**3)
     cpu_donation = remaining_vram_needed
     cpu_virtual = system_dram_gb - cpu_donation
     donor_allocations['cpu'] = cpu_donation
-    logging.info(fmt_assign.format('cpu', 'donor', f"{system_dram_gb:.2f}GB", f"{cpu_virtual:.2f}GB", f"-{cpu_donation:.2f}GB"))
+    logger.info(fmt_assign.format('cpu', 'donor', f"{system_dram_gb:.2f}GB", f"{cpu_virtual:.2f}GB", f"-{cpu_donation:.2f}GB"))
     
-    logging.info(dash_line)
+    logger.info(dash_line)
 
     layer_summary = {}
     layer_list = []
@@ -259,12 +259,12 @@ def calculate_vvram_allocation_string(model, virtual_vram_str):
     model_size_gb = total_memory / (1024**3)
     new_model_size_gb = max(0, model_size_gb - virtual_vram_gb)
 
-    logging.info(fmt_assign.format('model', 'model', f"{model_size_gb:.2f}GB",f"{new_model_size_gb:.2f}GB", f"-{virtual_vram_gb:.2f}GB"))
+    logger.info(fmt_assign.format('model', 'model', f"{model_size_gb:.2f}GB",f"{new_model_size_gb:.2f}GB", f"-{virtual_vram_gb:.2f}GB"))
 
     if model_size_gb > (recipient_vram * 0.9):
         on_recipient = recipient_vram * 0.9
         on_virtuals = model_size_gb - on_recipient
-        logging.info(f"\nWarning: Model size is greater than 90% of recipient VRAM. {on_virtuals:.2f} GB of GGML Layers Offloaded Automatically to Virtual VRAM.\n")
+        logger.info(f"\nWarning: Model size is greater than 90% of recipient VRAM. {on_virtuals:.2f} GB of GGML Layers Offloaded Automatically to Virtual VRAM.\n")
     else:
         on_recipient = model_size_gb
         on_virtuals = 0
@@ -285,7 +285,7 @@ def calculate_vvram_allocation_string(model, virtual_vram_str):
 
     allocation_string = ";".join(allocation_parts)
     fmt_mem = "{:<20}{:>20}"
-    logging.info(fmt_mem.format("\n  v1 Expert String", allocation_string))
+    logger.info(fmt_mem.format("\n  v1 Expert String", allocation_string))
 
     return allocation_string
 
@@ -390,7 +390,7 @@ def override_class_with_distorch_gguf_v2(cls):
 
             full_allocation = f"{expert_mode_allocations}#{vram_string}" if expert_mode_allocations or vram_string else ""
             
-            logging.info(f"[MultiGPU_DisTorch] Full allocation string: {full_allocation}")
+            logger.info(f"[MultiGPU_DisTorch] Full allocation string: {full_allocation}")
             
             if hasattr(out[0], 'model'):
                 model_hash = create_model_hash(out[0], "override")

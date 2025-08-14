@@ -9,12 +9,20 @@ from nodes import NODE_CLASS_MAPPINGS as GLOBAL_NODE_CLASS_MAPPINGS
 
 # --- DisTorch V2 Logging Configuration ---
 # Set to "E" for Engineering (DEBUG) or "P" for Production (INFO)
-LOG_LEVEL = "E"
+LOG_LEVEL = "P"
 
 # Configure logger
-log_level = logging.DEBUG if LOG_LEVEL == "E" else logging.INFO
-logging.basicConfig(level=log_level, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("MultiGPU")
+logger.propagate = False
+
+if not logger.handlers:
+    log_level = logging.DEBUG if LOG_LEVEL == "E" else logging.INFO
+    handler = logging.StreamHandler()
+    formatter = logging.Formatter('%(message)s')
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+    logger.setLevel(log_level)
+
 # --- End Logging Configuration ---
 
 # Global device state management
