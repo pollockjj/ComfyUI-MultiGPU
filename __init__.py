@@ -47,6 +47,11 @@ def get_device_list():
             devs += [f"xpu:{i}" for i in range(torch.xpu.device_count())]
     except Exception:
         pass
+    try:
+        if torch.backends.mps.is_available():
+            devs += ["mps"]
+    except Exception:
+        pass
     return devs
 
 def set_current_device(device):
