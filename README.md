@@ -20,12 +20,16 @@
   <em>DisTorch 2.0 in Action</em>
 </p>
 
-What is DisTorch? A simple portmanteau of "distributed" and "torch", the DisTorch nodes in this custom_node provide a way of thinking about moving the static parts of your main image generation model known as the `UNet` off your main compute card where, if needed by latent (image/or video) space, are preventing your model from either loading or running. By selecting one or more donor devices - main CPU DRAM or other cuda/xps device's VRAM - you can select how much of the model is loaded on that device instead of your main `compute` card. Just set how much VRAM you want to free up, and DisTorch handles the rest.
+What is DisTorch? Standing for "distributed torch", the DisTorch nodes in this custom_node provide a way of moving the static parts of your main image generation model known as the `UNet` off your main compute card to somewhere slower, but one that is not taking up space that could be better used for longer videos or more concurrent images. By selecting one or more donor devices - main CPU DRAM or another cuda/xps device's VRAM - you can select how much of the model is loaded on that device instead of your main `compute` card. Just set how much VRAM you want to free up, and DisTorch handles the rest.
 
 - **Virtual VRAM**: Defaults to 4GB - just adjust it based on your needs
 - **Two Modes**:
   - **Donor Device**: Offloads to device of your choice, defaults to system RAM
-  - **Expert Mode Allocation**: Arbitrarily assign parts of the Unet across *ALL* available devices - Fine-grained control on exactly where your models are loaded!
+  - **Expert Mode Allocation**: Arbitrarily assign parts of the Unet across *ALL* available devices - Fine-grained control on exactly where your models are loaded! Choose each device and what percent of that device is to be allocated for ComfyUI model loading and let ComfyUI-MultiGPU do the rest behind the scenes! 
+
+ - Hint: Every run using the standard `virtual_vram_gb` allocation scheme creates its own v2 Expert String listed in the log.
+   - **Example**:v2 Expert String cuda:0,0.2126;cpu,0.0851 = 21.26% of cuda:0 memory and 8.51% of CPU memory are dedicated to a model in this case. 
+   - Play around and see how the expert string moves for your devices. You'll be custom tuning in no time!
 
 ## 🎯 Key Benefits
 - Free up GPU VRAM instantly without complex settings
