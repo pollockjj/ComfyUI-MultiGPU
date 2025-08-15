@@ -9,7 +9,7 @@
 [^1]: This **enhances memory management,** not parallel processing. Workflow steps still execute sequentially, but with components (in full or in part) loaded across your specified devices. *Performance gains* come from avoiding repeated model loading/unloading when VRAM is constrained. *Capability gains* come from offloading as much of the model (VAE/CLIP/UNet) off of your main **compute** device as possible—allowing you to maximize latent space for actual computation.
 
 1.  **Universal .safetensors Support**: Native DisTorch2 distribution for all `.safetensors` models.
-2.  **Up to 10% Faster GGUF Inference**: The new DisTorch2 logic provides potential speedups for GGUF models.
+2.  **Up to 10% Faster GGUF Inference versus DisTorch1**: The new DisTorch2 logic provides potential speedups for GGUF models versus the DisTorch V1 method.
 3.  **Bespoke WanVideoWrapper Integration**: Tightly integrated, stable support for WanVideoWrapper with eight bespoke MultiGPU nodes.
 
 <h1 align="center">DisTorch: How It Works</h1>
