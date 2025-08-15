@@ -368,8 +368,3 @@ logger.info(dash_line)
 
 
 logger.info(f"[MultiGPU] Registration complete. Final mappings: {', '.join(NODE_CLASS_MAPPINGS.keys())}")
-
-# --- Memory Logging Test ---
-from .debug_utils import log_memory_usage
-logger.debug("ComfyUI Startup Memory Log:")
-log_memory_usage("ComfyUI Startup")
