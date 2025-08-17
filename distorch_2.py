@@ -1,22 +1,20 @@
 """
 DisTorch Safetensor Memory Management Module
 Contains all safetensor related code for distributed memory management
-Following EXACT patterns from distorch.py for GGUF
+Following the ethos: leverage ComfyUI core, monkey-patch minimally, don't rewrite
 """
 
-import sys
 import torch
 import logging
 import hashlib
-
-logger = logging.getLogger("MultiGPU")
 import copy
-import inspect
 from collections import defaultdict
 import comfy.model_management as mm
 import comfy.model_patcher
 
-# Global store for safetensor model allocations - EXACTLY like GGUF
+logger = logging.getLogger("MultiGPU")
+
+# Global store for safetensor model allocations
 safetensor_allocation_store = {}
 safetensor_settings_store = {}
 
@@ -51,52 +49,294 @@ def create_safetensor_model_hash(model, caller):
 
 
 def register_patched_safetensor_modelpatcher():
-    """Register and patch the ModelPatcher for distributed safetensor loading"""
-    # Patch ComfyUI's ModelPatcher
+    """Register the PROPERLY IMPLEMENTED monkey-patch for ModelPatcher"""
+    
     if not hasattr(comfy.model_patcher.ModelPatcher, '_distorch_patched'):
+        # Store original methods
         original_partially_load = comfy.model_patcher.ModelPatcher.partially_load
-
-        def new_partially_load(self, device_to, extra_memory=0, full_load=False, **kwargs):
-            """Override to use our static device assignments"""
+        original_load = comfy.model_patcher.ModelPatcher.load
+        
+        def new_partially_load(self, device_to, extra_memory=0, force_patch_weights=False):
+            """
+            Enhanced DisTorch2 partially_load that sets up block assignments
+            """
             global safetensor_allocation_store
             
-            # Check if we have a device allocation for this model
-            debug_hash = create_safetensor_model_hash(self, "partial_load")
-            allocations = safetensor_allocation_store.get(debug_hash)
+            # Check if we have allocations for this model
+            model_hash = create_safetensor_model_hash(self, "partial_load")
+            allocations = safetensor_allocation_store.get(model_hash)
             
             if allocations:
-                logger.info(f"[MULTIGPU_DISTORCHV2] Using static allocation for model {debug_hash[:8]}")
-                # Parse allocation string and apply static assignment
+                logger.info(f"[DISTORCH2] Setting up device distribution for model {model_hash[:8]}")
+                
+                # Parse allocations to get device assignments
                 device_assignments = analyze_safetensor_loading(self, allocations)
+                block_assignments = device_assignments['block_assignments']
                 
-                # Apply our static assignments instead of ComfyUI's dynamic ones
-                for block_name, target_device in device_assignments['block_assignments'].items():
-                    # Find the module by name
-                    parts = block_name.split('.')
-                    module = self.model
-                    for part in parts:
-                        if hasattr(module, part):
-                            module = getattr(module, part)
-                        else:
-                            break
-                    
-                    if hasattr(module, 'weight') or hasattr(module, 'comfy_cast_weights'):
-                        # Move to our assigned device
-                        logger.debug(f"[MULTIGPU_DISTORCHV2] Moving {block_name} to {target_device}")
-                        module.to(target_device)
-                        # Mark for ComfyUI's cast system if not already marked
-                        if hasattr(module, 'comfy_cast_weights'):
-                            module.comfy_cast_weights = True
+                # Count CPU vs GPU assignments for logging
+                cpu_blocks = sum(1 for d in block_assignments.values() if d == "cpu")
+                gpu_blocks = len(block_assignments) - cpu_blocks
+                logger.info(f"[DISTORCH2] Block distribution: {gpu_blocks} GPU, {cpu_blocks} CPU")
                 
-                # Return 0 to indicate no additional memory used on compute device
-                return 0
-            else:
-                # Fall back to original behavior - only pass valid args
-                return original_partially_load(self, device_to, extra_memory, **kwargs)
+                # Store block assignments on the object
+                self._distorch_block_assignments = block_assignments
+            
+            # Call original
+            result = original_partially_load(self, device_to, extra_memory, force_patch_weights)
+            
+            # Clean up
+            if hasattr(self, '_distorch_block_assignments'):
+                del self._distorch_block_assignments
+                
+            return result
         
+        def new_load(self, device_to=None, lowvram_model_memory=0, force_patch_weights=False, full_load=False):
+            """
+            Modified load that respects DisTorch lowvram decisions
+            This is where we intercept ComfyUI's lowvram decision AND handle GPU-to-GPU transfers
+            """
+            # Check if we have DisTorch assignments
+            has_distorch = hasattr(self, '_distorch_block_assignments')
+            
+            if has_distorch:
+                block_assignments = self._distorch_block_assignments
+                logger.info(f"[DISTORCH2] Intercepting load with custom block assignments")
+                
+                # DEBUG: Log what we're about to do
+                cpu_blocks = [k for k, v in block_assignments.items() if v == "cpu"]
+                gpu_blocks = {dev: [k for k, v in block_assignments.items() if v == dev and dev != "cpu"] 
+                             for dev in set(block_assignments.values()) if dev != "cpu"}
+                
+                logger.info(f"[DISTORCH2 DEBUG] CPU blocks to offload: {len(cpu_blocks)}")
+                for gpu_dev, blocks in gpu_blocks.items():
+                    logger.info(f"[DISTORCH2 DEBUG] {gpu_dev} blocks to assign: {len(blocks)}")
+                
+                # CRITICAL FIX: Force full_load=False when we have DisTorch assignments
+                if full_load:
+                    logger.warning(f"[DISTORCH2] Overriding full_load=True to False for distributed loading")
+                    full_load = False
+            
+            # Mostly copy ComfyUI's load logic but with our intercept
+            with self.use_ejected():
+                self.unpatch_hooks()
+                mem_counter = 0
+                patch_counter = 0
+                lowvram_counter = 0
+                loading = self._load_list()
+
+                # Track which modules go to which device for GPU-to-GPU transfers
+                gpu_device_moves = {} if has_distorch else None
+
+                load_completely = []
+                loading.sort(reverse=True)
+                for x in loading:
+                    n = x[1]
+                    m = x[2]
+                    params = x[3]
+                    module_mem = x[0]
+
+                    lowvram_weight = False
+
+                    weight_key = "{}.weight".format(n)
+                    bias_key = "{}.bias".format(n)
+
+                    # DISTORCH INTERCEPT: Handle both CPU and GPU assignments
+                    if has_distorch and n in block_assignments:
+                        target_device = block_assignments[n]
+                        if target_device == "cpu":
+                            # CPU offload through lowvram mechanism
+                            lowvram_weight = True
+                            logger.info(f"[DISTORCH2 DEBUG] Block {n} marked for CPU offload (lowvram)")
+                        elif target_device != device_to:
+                            # GPU-to-GPU transfer - track for later movement
+                            if gpu_device_moves is not None:
+                                gpu_device_moves[n] = (m, target_device)
+                            logger.debug(f"[DISTORCH2] Marking {n} for {target_device} (GPU transfer)")
+                    elif not full_load and hasattr(m, "comfy_cast_weights"):
+                        # Original ComfyUI logic (only if we don't have a DisTorch assignment)
+                        if mem_counter + module_mem >= lowvram_model_memory:
+                            lowvram_weight = True
+                            lowvram_counter += 1
+                            if hasattr(m, "prev_comfy_cast_weights"): #Already lowvramed
+                                logger.debug(f"[DISTORCH2 DEBUG] Skipping {n} - already lowvramed (prev_comfy_cast_weights exists)")
+                                continue
+
+                    cast_weight = self.force_cast_weights
+                    if lowvram_weight:
+                        # CRITICAL FIX: For DisTorch CPU offloading, always reset weight functions
+                        # even if prev_comfy_cast_weights exists, to ensure LowVramPatch is created
+                        is_distorch_cpu = has_distorch and n in block_assignments and block_assignments[n] == "cpu"
+                        
+                        if hasattr(m, "comfy_cast_weights"):
+                            # Reset weight functions for DisTorch CPU blocks
+                            if is_distorch_cpu or not hasattr(m, "prev_comfy_cast_weights"):
+                                logger.info(f"[DISTORCH2 DEBUG] Resetting weight functions for {n} (distorch_cpu={is_distorch_cpu})")
+                                m.weight_function = []
+                                m.bias_function = []
+                            else:
+                                logger.debug(f"[DISTORCH2 DEBUG] Module {n} already has comfy_cast_weights, prev={hasattr(m, 'prev_comfy_cast_weights')}")
+
+                        # Create LowVramPatch for weight
+                        if weight_key in self.patches:
+                            if force_patch_weights:
+                                logger.debug(f"[DISTORCH2 DEBUG] Force patching weight for {n}")
+                                self.patch_weight_to_device(weight_key)
+                            else:
+                                from comfy.model_patcher import LowVramPatch
+                                # For DisTorch CPU blocks, ensure we create new LowVramPatch
+                                if is_distorch_cpu:
+                                    logger.info(f"[DISTORCH2 DEBUG] Creating NEW LowVramPatch for CPU block {n} weight")
+                                    if not hasattr(m, 'weight_function'):
+                                        m.weight_function = []
+                                    m.weight_function = [LowVramPatch(weight_key, self.patches)]
+                                    patch_counter += 1
+                                    lowvram_counter += 1
+                                elif not hasattr(m, 'weight_function') or len(m.weight_function) == 0:
+                                    logger.debug(f"[DISTORCH2 DEBUG] Creating LowVramPatch for {n} weight")
+                                    m.weight_function = [LowVramPatch(weight_key, self.patches)]
+                                    patch_counter += 1
+                                else:
+                                    logger.debug(f"[DISTORCH2 DEBUG] Module {n} weight already has weight_function")
+                        else:
+                            logger.debug(f"[DISTORCH2 DEBUG] No patches for {weight_key}")
+                        
+                        # Create LowVramPatch for bias
+                        if bias_key in self.patches:
+                            if force_patch_weights:
+                                logger.debug(f"[DISTORCH2 DEBUG] Force patching bias for {n}")
+                                self.patch_weight_to_device(bias_key)
+                            else:
+                                from comfy.model_patcher import LowVramPatch
+                                # For DisTorch CPU blocks, ensure we create new LowVramPatch
+                                if is_distorch_cpu:
+                                    logger.info(f"[DISTORCH2 DEBUG] Creating NEW LowVramPatch for CPU block {n} bias")
+                                    if not hasattr(m, 'bias_function'):
+                                        m.bias_function = []
+                                    m.bias_function = [LowVramPatch(bias_key, self.patches)]
+                                    patch_counter += 1
+                                    lowvram_counter += 1
+                                elif not hasattr(m, 'bias_function') or len(m.bias_function) == 0:
+                                    logger.debug(f"[DISTORCH2 DEBUG] Creating LowVramPatch for {n} bias")
+                                    m.bias_function = [LowVramPatch(bias_key, self.patches)]
+                                    patch_counter += 1
+                                else:
+                                    logger.debug(f"[DISTORCH2 DEBUG] Module {n} bias already has bias_function")
+                        else:
+                            logger.debug(f"[DISTORCH2 DEBUG] No patches for {bias_key}")
+
+                        cast_weight = True
+                    else:
+                        if hasattr(m, "comfy_cast_weights"):
+                            from comfy.model_patcher import wipe_lowvram_weight
+                            wipe_lowvram_weight(m)
+
+                        if full_load or mem_counter + module_mem < lowvram_model_memory:
+                            mem_counter += module_mem
+                            load_completely.append((module_mem, n, m, params))
+
+                    if cast_weight and hasattr(m, "comfy_cast_weights"):
+                        m.prev_comfy_cast_weights = m.comfy_cast_weights
+                        m.comfy_cast_weights = True
+
+                    if weight_key in self.weight_wrapper_patches:
+                        m.weight_function.extend(self.weight_wrapper_patches[weight_key])
+
+                    if bias_key in self.weight_wrapper_patches:
+                        m.bias_function.extend(self.weight_wrapper_patches[bias_key])
+
+                    from comfy.model_patcher import move_weight_functions
+                    mem_counter += move_weight_functions(m, device_to)
+
+                load_completely.sort(reverse=True)
+                for x in load_completely:
+                    n = x[1]
+                    m = x[2]
+                    params = x[3]
+                    if hasattr(m, "comfy_patched_weights"):
+                        if m.comfy_patched_weights == True:
+                            continue
+
+                    for param in params:
+                        self.patch_weight_to_device("{}.{}".format(n, param), device_to=device_to)
+
+                    logging.debug("lowvram: loaded module regularly {} {}".format(n, m))
+                    m.comfy_patched_weights = True
+
+                for x in load_completely:
+                    x[2].to(device_to)
+
+                # CRITICAL: Handle GPU-to-GPU transfers AFTER normal loading
+                if gpu_device_moves:
+                    logger.info(f"[DISTORCH2] Performing GPU-to-GPU transfers for {len(gpu_device_moves)} modules")
+                    for module_name, (module, target_device) in gpu_device_moves.items():
+                        try:
+                            # Move the module to its target GPU
+                            module.to(target_device)
+                            logger.debug(f"[DISTORCH2] Moved {module_name} to {target_device}")
+                            
+                            # Update memory tracking
+                            module_size = comfy.model_management.module_size(module)
+                            # Note: This is approximate - we're removing from primary device memory
+                            # and adding to target device, but ComfyUI doesn't fully track multi-GPU
+                            mem_counter -= module_size
+                            
+                        except Exception as e:
+                            logger.error(f"[DISTORCH2] Failed to move {module_name} to {target_device}: {e}")
+
+                if lowvram_counter > 0:
+                    logger.info(f"[DISTORCH2 SUCCESS] Created {lowvram_counter} lowvram patches, {patch_counter} total patches")
+                    logging.info("loaded partially {} {} {}".format(lowvram_model_memory / (1024 * 1024), mem_counter / (1024 * 1024), patch_counter))
+                    self.model.model_lowvram = True
+                else:
+                    # DEBUG: Log why we're loading completely
+                    logger.info(f"[DISTORCH2 DEBUG] Loading completely - full_load={full_load}, lowvram_counter={lowvram_counter}")
+                    logging.info("loaded completely {} {} {}".format(lowvram_model_memory / (1024 * 1024), mem_counter / (1024 * 1024), full_load))
+                    self.model.model_lowvram = False
+                    if full_load:
+                        self.model.to(device_to)
+                        mem_counter = self.model_size()
+
+                self.model.lowvram_patch_counter += patch_counter
+                self.model.device = device_to
+                self.model.model_loaded_weight_memory = mem_counter
+                self.model.current_weight_patches_uuid = self.patches_uuid
+
+                from comfy.patcher_extension import CallbacksMP
+                for callback in self.get_all_callbacks(CallbacksMP.ON_LOAD):
+                    callback(self, device_to, lowvram_model_memory, force_patch_weights, full_load)
+
+                self.apply_hooks(self.forced_hooks, force_apply=True)
+                
+                # Final debug log with verification
+                if has_distorch:
+                    # Verify LowVramPatch creation for CPU blocks
+                    cpu_blocks_with_patches = 0
+                    cpu_blocks_verified = []
+                    for n in block_assignments:
+                        if block_assignments[n] == "cpu":
+                            # Find the module
+                            for x in loading:
+                                if x[1] == n:
+                                    m = x[2]
+                                    has_weight_func = hasattr(m, 'weight_function') and len(m.weight_function) > 0
+                                    has_bias_func = hasattr(m, 'bias_function') and len(m.bias_function) > 0
+                                    if has_weight_func or has_bias_func:
+                                        cpu_blocks_with_patches += 1
+                                        cpu_blocks_verified.append(n)
+                                    else:
+                                        logger.warning(f"[DISTORCH2 WARNING] CPU block {n} has NO LowVramPatch!")
+                                    break
+                    
+                    logger.info(f"[DISTORCH2 FINAL] Load complete - lowvram patches created: {lowvram_counter}, patch_counter: {patch_counter}, GPU transfers: {len(gpu_device_moves) if gpu_device_moves else 0}")
+                    logger.info(f"[DISTORCH2 VERIFY] CPU blocks with patches: {cpu_blocks_with_patches}/{len([b for b in block_assignments.values() if b == 'cpu'])}")
+                    if cpu_blocks_with_patches < 10 and len(cpu_blocks_verified) > 0:
+                        logger.info(f"[DISTORCH2 VERIFY] Verified CPU blocks: {cpu_blocks_verified[:10]}")
+        
+        # Apply the monkey-patches
         comfy.model_patcher.ModelPatcher.partially_load = new_partially_load
+        comfy.model_patcher.ModelPatcher.load = new_load
         comfy.model_patcher.ModelPatcher._distorch_patched = True
-        logger.info("[MULTIGPU_DISTORCHV2] Successfully patched ModelPatcher.partially_load")
+        logger.info("[DISTORCH2] Successfully patched ModelPatcher to intercept lowvram decisions")
 
 
 def analyze_safetensor_loading(model_patcher, allocations_str):
