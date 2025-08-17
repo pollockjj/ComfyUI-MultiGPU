@@ -163,66 +163,33 @@ def register_patched_safetensor_modelpatcher():
 
                     cast_weight = self.force_cast_weights
                     if lowvram_weight:
-                        # CRITICAL FIX: For DisTorch CPU offloading, always reset weight functions
-                        # even if prev_comfy_cast_weights exists, to ensure LowVramPatch is created
-                        is_distorch_cpu = has_distorch and n in block_assignments and block_assignments[n] == "cpu"
-                        
                         if hasattr(m, "comfy_cast_weights"):
-                            # Reset weight functions for DisTorch CPU blocks
-                            if is_distorch_cpu or not hasattr(m, "prev_comfy_cast_weights"):
-                                logger.info(f"[DISTORCH2 DEBUG] Resetting weight functions for {n} (distorch_cpu={is_distorch_cpu})")
-                                m.weight_function = []
-                                m.bias_function = []
-                            else:
-                                logger.debug(f"[DISTORCH2 DEBUG] Module {n} already has comfy_cast_weights, prev={hasattr(m, 'prev_comfy_cast_weights')}")
+                            m.weight_function = []
+                            m.bias_function = []
 
-                        # Create LowVramPatch for weight
-                        if weight_key in self.patches:
-                            if force_patch_weights:
-                                logger.debug(f"[DISTORCH2 DEBUG] Force patching weight for {n}")
-                                self.patch_weight_to_device(weight_key)
-                            else:
-                                from comfy.model_patcher import LowVramPatch
-                                # For DisTorch CPU blocks, ensure we create new LowVramPatch
-                                if is_distorch_cpu:
-                                    logger.info(f"[DISTORCH2 DEBUG] Creating NEW LowVramPatch for CPU block {n} weight")
-                                    if not hasattr(m, 'weight_function'):
-                                        m.weight_function = []
-                                    m.weight_function = [LowVramPatch(weight_key, self.patches)]
-                                    patch_counter += 1
-                                    lowvram_counter += 1
-                                elif not hasattr(m, 'weight_function') or len(m.weight_function) == 0:
-                                    logger.debug(f"[DISTORCH2 DEBUG] Creating LowVramPatch for {n} weight")
-                                    m.weight_function = [LowVramPatch(weight_key, self.patches)]
-                                    patch_counter += 1
+                        # DEFER TO COMFYUI'S LOGIC TO CREATE LowVramPatch FOR ALL PARAMETERS
+                        for param_name in params:
+                            param_key = f"{n}.{param_name}"
+                            if param_key in self.patches:
+                                if force_patch_weights:
+                                    self.patch_weight_to_device(param_key)
                                 else:
-                                    logger.debug(f"[DISTORCH2 DEBUG] Module {n} weight already has weight_function")
-                        else:
-                            logger.debug(f"[DISTORCH2 DEBUG] No patches for {weight_key}")
+                                    from comfy.model_patcher import LowVramPatch
+                                    # Dynamically assign to weight_function or bias_function
+                                    if 'bias' in param_name:
+                                        if not hasattr(m, 'bias_function'):
+                                            m.bias_function = []
+                                        m.bias_function.append(LowVramPatch(param_key, self.patches))
+                                    else:
+                                        if not hasattr(m, 'weight_function'):
+                                            m.weight_function = []
+                                        m.weight_function.append(LowVramPatch(param_key, self.patches))
+                                    patch_counter += 1
+                                    logger.info(f"[DISTORCH2] Created LowVramPatch for {param_key}")
                         
-                        # Create LowVramPatch for bias
-                        if bias_key in self.patches:
-                            if force_patch_weights:
-                                logger.debug(f"[DISTORCH2 DEBUG] Force patching bias for {n}")
-                                self.patch_weight_to_device(bias_key)
-                            else:
-                                from comfy.model_patcher import LowVramPatch
-                                # For DisTorch CPU blocks, ensure we create new LowVramPatch
-                                if is_distorch_cpu:
-                                    logger.info(f"[DISTORCH2 DEBUG] Creating NEW LowVramPatch for CPU block {n} bias")
-                                    if not hasattr(m, 'bias_function'):
-                                        m.bias_function = []
-                                    m.bias_function = [LowVramPatch(bias_key, self.patches)]
-                                    patch_counter += 1
-                                    lowvram_counter += 1
-                                elif not hasattr(m, 'bias_function') or len(m.bias_function) == 0:
-                                    logger.debug(f"[DISTORCH2 DEBUG] Creating LowVramPatch for {n} bias")
-                                    m.bias_function = [LowVramPatch(bias_key, self.patches)]
-                                    patch_counter += 1
-                                else:
-                                    logger.debug(f"[DISTORCH2 DEBUG] Module {n} bias already has bias_function")
-                        else:
-                            logger.debug(f"[DISTORCH2 DEBUG] No patches for {bias_key}")
+                        # This is a proxy for ComfyUI's internal counter
+                        if any(f"{n}.{p}" in self.patches for p in params):
+                            lowvram_counter += 1
 
                         cast_weight = True
                     else:
