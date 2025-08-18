@@ -146,6 +146,7 @@ def register_patched_safetensor_modelpatcher():
                         if target_device == "cpu":
                             # CPU offload through lowvram mechanism
                             lowvram_weight = True
+                            lowvram_counter += 1
                             logger.info(f"[DISTORCH2 DEBUG] Block {n} marked for CPU offload (lowvram)")
                         elif target_device != device_to:
                             # GPU-to-GPU transfer - track for later movement
@@ -390,7 +391,7 @@ def analyze_safetensor_loading(model_patcher, allocations_str):
     # Second pass: analyze and collect all blocks, then filter
     all_blocks = []
     for name, module in model.named_modules():
-        if hasattr(module, "weight") or hasattr(module, "comfy_cast_weights"):
+        if hasattr(module, "comfy_cast_weights"):
             block_type = type(module).__name__
             
             try:
@@ -468,6 +469,7 @@ def analyze_safetensor_loading(model_patcher, allocations_str):
                     break # Use first available donor
             
             block_assignments[block_name] = donor_device
+            setattr(module, 'distorch2_cpu_offload', True) # Attach the attribute here
             offloaded_bytes += block_memory
         else:
             # Assign remaining blocks to the primary compute device
@@ -558,7 +560,7 @@ def calculate_safetensor_vvram_allocation(model_patcher, virtual_vram_str):
     logger.info(fmt_assign.format(recipient_device, 'recip', f"{recipient_vram:.2f}GB",f"{recipient_virtual:.2f}GB", f"+{virtual_vram_gb:.2f}GB"))
 
     # Handle donor devices
-    ram_donors = [d for d in donors.split(',') if d != 'cpu']
+    ram_donors = [d for d in donors.split(',')]
     remaining_vram_needed = virtual_vram_gb
     
     donor_device_info = {}
@@ -566,7 +568,7 @@ def calculate_safetensor_vvram_allocation(model_patcher, virtual_vram_str):
     
     for donor in ram_donors:
         donor_vram = mm.get_total_memory(torch.device(donor)) / (1024**3)
-        max_donor_capacity = donor_vram * 0.9  # Use 90% max
+        max_donor_capacity = donor_vram
         
         donation = min(remaining_vram_needed, max_donor_capacity)
         donor_virtual = donor_vram - donation
@@ -576,12 +578,6 @@ def calculate_safetensor_vvram_allocation(model_patcher, virtual_vram_str):
         donor_device_info[donor] = (donor_vram, donor_virtual)
         logger.info(fmt_assign.format(donor, 'donor', f"{donor_vram:.2f}GB",  f"{donor_virtual:.2f}GB", f"-{donation:.2f}GB"))
     
-    # CPU gets the rest
-    system_dram_gb = mm.get_total_memory(torch.device('cpu')) / (1024**3)
-    cpu_donation = remaining_vram_needed
-    cpu_virtual = system_dram_gb - cpu_donation
-    donor_allocations['cpu'] = cpu_donation
-    logger.info(fmt_assign.format('cpu', 'donor', f"{system_dram_gb:.2f}GB", f"{cpu_virtual:.2f}GB", f"-{cpu_donation:.2f}GB"))
     
     logger.info(dash_line)
 
@@ -619,9 +615,6 @@ def calculate_safetensor_vvram_allocation(model_patcher, virtual_vram_str):
         donor_percent = donor_allocations[donor] / donor_vram
         allocation_parts.append(f"{donor},{donor_percent:.4f}")
     
-    cpu_percent = donor_allocations['cpu'] / system_dram_gb
-    allocation_parts.append(f"cpu,{cpu_percent:.4f}")
-
     allocation_string = ";".join(allocation_parts)
     
     fmt_mem = "{:<20}{:>20}"
