@@ -9,6 +9,7 @@ import logging
 import hashlib
 import copy
 from collections import defaultdict
+from . import current_device
 import comfy.model_management as mm
 import comfy.model_patcher
 
@@ -434,13 +435,7 @@ def analyze_safetensor_loading(model_patcher, allocations_str):
     device_assignments = {device: [] for device in DEVICE_RATIOS_DISTORCH.keys()}
     block_assignments = {}
 
-    # Determine the primary compute device (first non-cpu device)
-    compute_device = "cuda:0" # Fallback
-    for dev in sorted_devices:
-        if dev != "cpu":
-            compute_device = dev
-            break
-            
+    compute_device = str(current_device)
     # Calculate total memory to be offloaded to donor devices
     total_offload_gb = sum(DEVICE_RATIOS_DISTORCH.get(d, 0) for d in sorted_devices if d != compute_device)
     total_offload_bytes = total_offload_gb * (1024**3)
