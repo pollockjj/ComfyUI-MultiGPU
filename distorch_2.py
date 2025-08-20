@@ -18,9 +18,6 @@ logger = logging.getLogger("MultiGPU")
 # Global store for safetensor model allocations
 safetensor_allocation_store = {}
 safetensor_settings_store = {}
-DISTORCH_LOWVRAM_MODEL_MEMORY = None
-DISTORCH_FULL_LOAD = None
-DISTORCH_VRAM = None
 
 
 def create_safetensor_model_hash(model, caller):
@@ -96,28 +93,10 @@ def register_patched_safetensor_modelpatcher():
             return result
         
         def new_load(self, device_to=None, lowvram_model_memory=0, force_patch_weights=False, full_load=False):
-            global DISTORCH_VRAM, DISTORCH_FULL_LOAD
             with self.use_ejected():
                 self.unpatch_hooks()
                 mem_counter = 0
-                patch_counter = 0
-                lowvram_counter = 0
                 loading = self._load_list()
-
-                # Check if we have DisTorch assignments
-                has_distorch = hasattr(self, '_distorch_block_assignments')
-            
-                if has_distorch:
-                    block_assignments = self._distorch_block_assignments
-                    logger.info(f"[DISTORCH2_NEW_LOAD] Intercepting load with custom block assignments")
-                    if DISTORCH_VRAM is not None:
-                        lowvram_model_memory = DISTORCH_VRAM
-                        DISTORCH_VRAM = None
-                        logger.info(f"[DISTORCH2_NEW_LOAD] lowvram_model_memory: {lowvram_model_memory / (1024*1024*1024):.2f}GB (distorch vram allocation)")
-                    if DISTORCH_FULL_LOAD is not None:
-                        full_load = DISTORCH_FULL_LOAD
-                        DISTORCH_FULL_LOAD = None
-                        logger.info(f"[DISTORCH2_NEW_LOAD] full_load: {full_load} (distorch full load flag)")
 
                 load_completely = []
                 loading.sort(reverse=True)
@@ -127,47 +106,16 @@ def register_patched_safetensor_modelpatcher():
                     params = x[3]
                     module_mem = x[0]
 
-                    lowvram_weight = False
-
                     weight_key = "{}.weight".format(n)
-                    bias_key = "{}.bias".format(n)
-
-                    if not full_load and hasattr(m, "comfy_cast_weights"):
-                        logger.info(f"[DISTORCH2_NEW_LOAD] mem_counter = {mem_counter / (1024*1024):.2f}MB, module_mem = {module_mem / (1024*1024):.2f}MB")
-                        if mem_counter + module_mem >= lowvram_model_memory:
-                            lowvram_weight = True
-                            lowvram_counter += 1
-                            logger.info(f"[DISTORCH_NEW_LOAD] Offloading block: {n}, Size: {module_mem / (1024*1024):.2f}MB, Class: {m.__class__.__name__}")
-                            if hasattr(m, "prev_comfy_cast_weights"): #Already lowvramed
-                                continue
+                    bias_key = "{}.bias".format(n)                    
 
                     cast_weight = self.force_cast_weights
-                    if lowvram_weight:
-                        if hasattr(m, "comfy_cast_weights"):
-                            m.weight_function = []
-                            m.bias_function = []
 
-                        if weight_key in self.patches:
-                            if force_patch_weights:
-                                self.patch_weight_to_device(weight_key)
-                            else:
-                                m.weight_function = [LowVramPatch(weight_key, self.patches)]
-                                patch_counter += 1
-                        if bias_key in self.patches:
-                            if force_patch_weights:
-                                self.patch_weight_to_device(bias_key)
-                            else:
-                                m.bias_function = [LowVramPatch(bias_key, self.patches)]
-                                patch_counter += 1
+                    if hasattr(m, "comfy_cast_weights"):
+                        wipe_lowvram_weight(m)
 
-                        cast_weight = True
-                    else:
-                        if hasattr(m, "comfy_cast_weights"):
-                            wipe_lowvram_weight(m)
-
-                        if full_load or mem_counter + module_mem < lowvram_model_memory:
-                            mem_counter += module_mem
-                            load_completely.append((module_mem, n, m, params))
+                    mem_counter += module_mem
+                    load_completely.append((module_mem, n, m, params))
 
                     if cast_weight and hasattr(m, "comfy_cast_weights"):
                         m.prev_comfy_cast_weights = m.comfy_cast_weights
@@ -199,17 +147,9 @@ def register_patched_safetensor_modelpatcher():
                 for x in load_completely:
                     x[2].to(device_to)
 
-                if lowvram_counter > 0:
-                    logging.info("loaded partially {} {} {}".format(lowvram_model_memory / (1024 * 1024), mem_counter / (1024 * 1024), patch_counter))
-                    self.model.model_lowvram = True
-                else:
-                    logging.info("loaded completely {} {} {}".format(lowvram_model_memory / (1024 * 1024), mem_counter / (1024 * 1024), full_load))
-                    self.model.model_lowvram = False
-                    if full_load:
-                        self.model.to(device_to)
-                        mem_counter = self.model_size()
+                logging.info("loaded completely {} {} {}".format(lowvram_model_memory / (1024 * 1024), mem_counter / (1024 * 1024), full_load))
+                self.model.model_lowvram = False
 
-                self.model.lowvram_patch_counter += patch_counter
                 self.model.device = device_to
                 self.model.model_loaded_weight_memory = mem_counter
                 self.model.current_weight_patches_uuid = self.patches_uuid
@@ -368,14 +308,10 @@ def analyze_safetensor_loading(model_patcher, allocations_str):
     
     logger.info(dash_line)
 
-    global DISTORCH_FULL_LOAD, DISTORCH_VRAM
-    DISTORCH_FULL_LOAD = False
-    DISTORCH_VRAM = DEVICE_RATIOS_DISTORCH.get(compute_device, 0) * (1024**3)
-
     return {
         "device_assignments": device_assignments,
         "block_assignments": block_assignments,
-        "lowvram_model_memory": DEVICE_RATIOS_DISTORCH.get(compute_device, 0) * (1024**3),
+        "lowvram_model_memory": DISTORCH_VRAM,
     }
 
 
