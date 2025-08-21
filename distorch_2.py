@@ -98,58 +98,99 @@ def register_patched_safetensor_modelpatcher():
                 mem_counter = 0
                 loading = self._load_list()
 
-                load_completely = []
-                loading.sort(reverse=True)
-                for x in loading:
-                    n = x[1]
-                    m = x[2]
-                    params = x[3]
-                    module_mem = x[0]
+                # Check if we have DisTorch assignments
+                has_distorch = hasattr(self, '_distorch_block_assignments')
 
-                    weight_key = "{}.weight".format(n)
-                    bias_key = "{}.bias".format(n)                    
+                if has_distorch:
+                    block_assignments = self._distorch_block_assignments
+                    logger.info(f"[DISTORCH2_NEW_LOAD] Processing {len(block_assignments)} blocks with custom device assignments")
 
-                    cast_weight = self.force_cast_weights
+                    loading.sort(reverse=True)
+                    for module_size, module_name, module_object, params in loading:
+                        # Step 1: Write block/tensor to compute device first
+                        module_object.to(device_to)
 
-                    if hasattr(m, "comfy_cast_weights"):
-                        wipe_lowvram_weight(m)
+                        # Step 2: Apply LoRa patches while on compute device
+                        weight_key = "{}.weight".format(module_name)
+                        bias_key = "{}.bias".format(module_name)
 
-                    mem_counter += module_mem
-                    load_completely.append((module_mem, n, m, params))
+                        # Apply weight patches
+                        if weight_key in self.patches:
+                            self.patch_weight_to_device(weight_key, device_to=device_to)
+                        if weight_key in self.weight_wrapper_patches:
+                            module_object.weight_function.extend(self.weight_wrapper_patches[weight_key])
 
-                    if cast_weight and hasattr(m, "comfy_cast_weights"):
-                        m.prev_comfy_cast_weights = m.comfy_cast_weights
-                        m.comfy_cast_weights = True
+                        # Apply bias patches
+                        if bias_key in self.patches:
+                            self.patch_weight_to_device(bias_key, device_to=device_to)
+                        if bias_key in self.weight_wrapper_patches:
+                            module_object.bias_function.extend(self.weight_wrapper_patches[bias_key])
 
-                    if weight_key in self.weight_wrapper_patches:
-                        m.weight_function.extend(self.weight_wrapper_patches[weight_key])
+                        # Step 3: Move to ultimate destination based on DisTorch assignment
+                        target_device = block_assignments.get(module_name, device_to)
+                        if target_device != device_to:
+                            logger.debug(f"[DISTORCH2] Moving {module_name} from {device_to} to {target_device}")
+                            module_object.to(target_device)
 
-                    if bias_key in self.weight_wrapper_patches:
-                        m.bias_function.extend(self.weight_wrapper_patches[bias_key])
+                        # Mark as patched and update memory counter
+                        module_object.comfy_patched_weights = True
+                        mem_counter += module_size
 
-                    mem_counter += move_weight_functions(m, device_to)
+                    logging.info(f"[DISTORCH2_NEW_LOAD] DisTorch loading completed. Total memory: {mem_counter / (1024 * 1024):.2f}MB")
+                else:
+                    # Original ComfyUI loading logic for non-DisTorch models
+                    load_completely = []
+                    loading.sort(reverse=True)
+                    for x in loading:
+                        n = x[1]
+                        m = x[2]
+                        params = x[3]
+                        module_mem = x[0]
 
-                load_completely.sort(reverse=True)
-                for x in load_completely:
-                    n = x[1]
-                    m = x[2]
-                    params = x[3]
-                    if hasattr(m, "comfy_patched_weights"):
-                        if m.comfy_patched_weights == True:
-                            continue
+                        weight_key = "{}.weight".format(n)
+                        bias_key = "{}.bias".format(n)
 
-                    for param in params:
-                        self.patch_weight_to_device("{}.{}".format(n, param), device_to=device_to)
+                        cast_weight = self.force_cast_weights
 
-                    logging.debug("lowvram: loaded module regularly {} {}".format(n, m))
-                    m.comfy_patched_weights = True
+                        if hasattr(m, "comfy_cast_weights"):
+                            wipe_lowvram_weight(m)
 
-                for x in load_completely:
-                    x[2].to(device_to)
+                        mem_counter += module_mem
+                        load_completely.append((module_mem, n, m, params))
 
-                logging.info("loaded completely {} {} {}".format(lowvram_model_memory / (1024 * 1024), mem_counter / (1024 * 1024), full_load))
+                        if cast_weight and hasattr(m, "comfy_cast_weights"):
+                            m.prev_comfy_cast_weights = m.comfy_cast_weights
+                            m.comfy_cast_weights = True
+
+                        if weight_key in self.weight_wrapper_patches:
+                            m.weight_function.extend(self.weight_wrapper_patches[weight_key])
+
+                        if bias_key in self.weight_wrapper_patches:
+                            m.bias_function.extend(self.weight_wrapper_patches[bias_key])
+
+                        mem_counter += move_weight_functions(m, device_to)
+
+                    load_completely.sort(reverse=True)
+                    for x in load_completely:
+                        n = x[1]
+                        m = x[2]
+                        params = x[3]
+                        if hasattr(m, "comfy_patched_weights"):
+                            if m.comfy_patched_weights == True:
+                                continue
+
+                        for param in params:
+                            self.patch_weight_to_device("{}.{}".format(n, param), device_to=device_to)
+
+                        logging.debug("lowvram: loaded module regularly {} {}".format(n, m))
+                        m.comfy_patched_weights = True
+
+                    for x in load_completely:
+                        x[2].to(device_to)
+
+                    logging.info("loaded completely {} {} {}".format(lowvram_model_memory / (1024 * 1024), mem_counter / (1024 * 1024), full_load))
+
                 self.model.model_lowvram = False
-
                 self.model.device = device_to
                 self.model.model_loaded_weight_memory = mem_counter
                 self.model.current_weight_patches_uuid = self.patches_uuid
@@ -311,7 +352,7 @@ def analyze_safetensor_loading(model_patcher, allocations_str):
     return {
         "device_assignments": device_assignments,
         "block_assignments": block_assignments,
-        "lowvram_model_memory": DISTORCH_VRAM,
+        "lowvram_model_memory": total_assigned_memory,
     }
 
 
