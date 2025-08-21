@@ -12,6 +12,8 @@ from collections import defaultdict
 from . import current_device
 import comfy.model_management as mm
 import comfy.model_patcher
+import comfy.float
+import comfy.utils
 
 logger = logging.getLogger("MultiGPU")
 
@@ -92,7 +94,7 @@ def register_patched_safetensor_modelpatcher():
                 
             return result
         
-        def new_load(self, device_to=None, lowvram_model_memory=0, force_patch_weights=False, full_load=False):
+        def new_load(self, device_to=None, lowvram_model_memory=0, force_patch_weights=False, full_load=False, high_precision_loras=True):
             with self.use_ejected():
                 self.unpatch_hooks()
                 mem_counter = 0
@@ -126,8 +128,25 @@ def register_patched_safetensor_modelpatcher():
                         if bias_key in self.weight_wrapper_patches:
                             module_object.bias_function.extend(self.weight_wrapper_patches[bias_key])
 
-                        # Step 3: Move to ultimate destination based on DisTorch assignment
+                        # Step 3: FP8 casting for CPU storage (if enabled)
                         target_device = block_assignments.get(module_name, device_to)
+                        if not high_precision_loras and target_device == "cpu":
+                            # Use ComfyUI's proper function to detect original model dtype
+                            original_dtype = comfy.utils.weight_dtype(self.model.state_dict())
+
+                            # Check if this module has patches applied
+                            has_patches = weight_key in self.patches or bias_key in self.patches
+
+                            # Only downcast to FP8 if: original model was FP8 + has patches + moving to CPU
+                            if original_dtype in [torch.float8_e4m3fn, torch.float8_e5m2] and has_patches:
+                                for param in module_object.parameters():
+                                    if param.dtype.is_floating_point:
+                                        # Use ComfyUI's proper FP8 casting function
+                                        param.data = comfy.float.stochastic_rounding(param.data, torch.float8_e4m3fn)
+                                        param.dtype = torch.float8_e4m3fn
+                                        logger.debug(f"[DISTORCH2] Cast {module_name} to FP8 for CPU storage")
+
+                        # Step 4: Move to ultimate destination based on DisTorch assignment
                         if target_device != device_to:
                             logger.debug(f"[DISTORCH2] Moving {module_name} from {device_to} to {target_device}")
                             module_object.to(target_device)
@@ -459,6 +478,7 @@ def override_class_with_distorch_safetensor_v2(cls):
             inputs["optional"]["virtual_vram_gb"] = ("FLOAT", {"default": 4.0, "min": 0.0, "max": 128.0, "step": 0.1})
             inputs["optional"]["donor_device"] = (devices, {"default": "cpu"})
             inputs["optional"]["expert_mode_allocations"] = ("STRING", {"multiline": False, "default": ""})
+            inputs["optional"]["high_precision_loras"] = ("BOOLEAN", {"default": True})
             return inputs
 
         CATEGORY = "multigpu/distorch_2"
@@ -472,8 +492,8 @@ def override_class_with_distorch_safetensor_v2(cls):
             settings_str = f"{compute_device}{virtual_vram_gb}{donor_device}{expert_mode_allocations}"
             return hashlib.sha256(settings_str.encode()).hexdigest()
 
-        def override(self, *args, compute_device=None, virtual_vram_gb=4.0, 
-                     donor_device="cpu", expert_mode_allocations="", **kwargs):
+        def override(self, *args, compute_device=None, virtual_vram_gb=4.0,
+                     donor_device="cpu", expert_mode_allocations="", high_precision_loras=True, **kwargs):
             from . import set_current_device
             if compute_device is not None:
                 set_current_device(compute_device)
