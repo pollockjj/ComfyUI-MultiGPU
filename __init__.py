@@ -22,8 +22,8 @@ if not logger.handlers:
     handler.setFormatter(formatter)
     logger.addHandler(handler)
     logger.setLevel(log_level)
+    logger.info(f"[MultiGPU] Logger initialized with level: {logging.getLevelName(log_level)}")
 
-# --- End Logging Configuration ---
 
 # Global device state management
 current_device = mm.get_torch_device()
