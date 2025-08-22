@@ -4,6 +4,7 @@ Contains all safetensor related code for distributed memory management
 Following the ethos: leverage ComfyUI core, monkey-patch minimally, don't rewrite
 """
 
+from yaml import full_load
 import torch
 import logging
 import hashlib
@@ -66,6 +67,16 @@ def register_patched_safetensor_modelpatcher():
             """
             global safetensor_allocation_store
             
+            if not hasattr(self.model, '_distorch_high_precision_loras'):
+                logger.debug(f"[DEBUG_NEW_LOAD] high_precision_loras flag not retrieved from model. DisTorchV2 Loader not used. Reverting to normal loading behavior")
+                result = original_partially_load(self, device_to, extra_memory, force_patch_weights)
+                
+                # Clean up
+                if hasattr(self, '_distorch_block_assignments'):
+                    del self._distorch_block_assignments
+                    
+                return result
+
             # Check if we have allocations for this model
             model_hash = create_safetensor_model_hash(self, "partial_load")
             allocations = safetensor_allocation_store.get(model_hash)
@@ -94,13 +105,13 @@ def register_patched_safetensor_modelpatcher():
                 
             return result
         
-        def new_load(self, device_to=None, lowvram_model_memory=0, force_patch_weights=False, full_load=False, high_precision_loras=True):
-            # Retrieve the high_precision_loras value from the model if it was stored
+        def new_load(self, device_to=None, lowvram_model_memory=0, force_patch_weights=False, full_load=False):
             if hasattr(self.model, '_distorch_high_precision_loras'):
                 high_precision_loras = self.model._distorch_high_precision_loras
-                logger.info(f"[DEBUG] new_load retrieved high_precision_loras={high_precision_loras} from model")
+                logger.info(f"[DEBUG_NEW_LOAD] retrieved high_precision_loras={high_precision_loras} from model, DisTorchV2 Loaders used")
             else:
-                logger.info(f"[DEBUG] new_load using passed high_precision_loras={high_precision_loras}")
+                logger.debug(f"[DEBUG_NEW_LOAD] high_precision_loras flag not retrieved from model. DisTorchV2 Loader not used. Reverting to normal loading behavior")
+                return original_load(self, device_to, lowvram_model_memory, force_patch_weights, full_load)
 
             with self.use_ejected():
                 self.unpatch_hooks()
@@ -110,12 +121,14 @@ def register_patched_safetensor_modelpatcher():
                 # Check if we have DisTorch assignments
                 has_distorch = hasattr(self, '_distorch_block_assignments')
                 logger.info(f"[DEBUG] has_distorch={has_distorch}")
+                model_original_dtype = comfy.utils.weight_dtype(self.model.state_dict())
 
-                if has_distorch:
+                if not has_distorch:
+                    logger.info(f"[DEBUG_NEW_LOAD] DisTorch block assignments not found. Reverting to normal loading behavior")
+                    return original_load(self, device_to, lowvram_model_memory, force_patch_weights, full_load)
+                else:
                     block_assignments = self._distorch_block_assignments
                     logger.info(f"[DEBUG] Entering DisTorch loading path with {len(block_assignments)} blocks")
-
-                    fp8_downcasting = False  # Initialize here
 
                     loading.sort(reverse=True)
                     for module_size, module_name, module_object, params in loading:
@@ -126,123 +139,46 @@ def register_patched_safetensor_modelpatcher():
                         weight_key = "{}.weight".format(module_name)
                         bias_key = "{}.bias".format(module_name)
 
-                        # Apply weight patches
                         if weight_key in self.patches:
                             self.patch_weight_to_device(weight_key, device_to=device_to)
                         if weight_key in self.weight_wrapper_patches:
                             module_object.weight_function.extend(self.weight_wrapper_patches[weight_key])
 
-                        # Apply bias patches
                         if bias_key in self.patches:
                             self.patch_weight_to_device(bias_key, device_to=device_to)
                         if bias_key in self.weight_wrapper_patches:
                             module_object.bias_function.extend(self.weight_wrapper_patches[bias_key])
 
                         # Step 3: FP8 casting for CPU storage (if enabled)
-                        target_device = block_assignments.get(module_name, device_to)
-                        logger.info(f"[DEBUG] Processing {module_name} -> target_device={target_device}")
+                        block_target_device = block_assignments.get(module_name, device_to)
+                        has_patches = weight_key in self.patches or bias_key in self.patches
+                        
+                        logger.debug(f"[DEBUG] Processing {module_name} -> block_target_device={block_target_device}")
 
-                        if not high_precision_loras and target_device == "cpu":
+                        if not high_precision_loras and block_target_device == "cpu" and has_patches and model_original_dtype in [torch.float8_e4m3fn, torch.float8_e5m2]:
                             logger.info(f"[DEBUG] FP8 casting conditions met for {module_name}")
-                            # Use ComfyUI's proper function to detect original model dtype
-                            original_dtype = comfy.utils.weight_dtype(self.model.state_dict())
-
-                            # Check if this module has patches applied
-                            has_patches = weight_key in self.patches or bias_key in self.patches
-
-                            logger.info(f"[DEBUG] {module_name}: original_dtype={original_dtype}, has_patches={has_patches}")
-
-                            # Only downcast to FP8 if: original model was FP8 + has patches + moving to CPU
-                            if original_dtype in [torch.float8_e4m3fn, torch.float8_e5m2] and has_patches:
-                                logger.info(f"[DEBUG] Applying FP8 casting to {module_name}")
-                                fp8_downcasting = True
-                                for param_name, param in module_object.named_parameters():
-                                    if param.dtype.is_floating_point:
-                                        # Use ComfyUI's proper FP8 casting function
-                                        cast_data = comfy.float.stochastic_rounding(param.data, torch.float8_e4m3fn)
-                                        # Create new tensor with FP8 dtype and replace the parameter
-                                        new_param = torch.nn.Parameter(cast_data.to(torch.float8_e4m3fn))
-                                        # Preserve requires_grad setting
-                                        new_param.requires_grad = param.requires_grad
-                                        # Replace the parameter in the module
-                                        setattr(module_object, param_name, new_param)
-                                        logger.debug(f"[DISTORCH2] Cast {module_name}.{param_name} to FP8 for CPU storage")
-                            else:
-                                logger.info(f"[DEBUG] Skipping FP8 casting for {module_name}: conditions not met")
-                        else:
-                            logger.info(f"[DEBUG] FP8 casting conditions NOT met for {module_name}: high_precision_loras={high_precision_loras}, target_device={target_device}")
+                            for param_name, param in module_object.named_parameters():
+                                if param.dtype.is_floating_point:
+                                    # Use ComfyUI's proper FP8 casting function
+                                    cast_data = comfy.float.stochastic_rounding(param.data, torch.float8_e4m3fn)
+                                    # Create new tensor with FP8 dtype and replace the parameter
+                                    new_param = torch.nn.Parameter(cast_data.to(torch.float8_e4m3fn))
+                                    # Preserve requires_grad setting
+                                    new_param.requires_grad = param.requires_grad
+                                    # Replace the parameter in the module
+                                    setattr(module_object, param_name, new_param)
+                                    logger.debug(f"[DISTORCH2] Cast {module_name}.{param_name} to FP8 for CPU storage")
 
                         # Step 4: Move to ultimate destination based on DisTorch assignment
-                        if target_device != device_to:
-                            logger.debug(f"[DISTORCH2] Moving {module_name} from {device_to} to {target_device}")
-                            module_object.to(target_device)
+                        if block_target_device != device_to:
+                            logger.debug(f"[DISTORCH2] Moving {module_name} from {device_to} to {block_target_device}")
+                            module_object.to(block_target_device)
 
                         # Mark as patched and update memory counter
                         module_object.comfy_patched_weights = True
                         mem_counter += module_size
 
-                    logger.info(f"[DEBUG] Loop completed, fp8_downcasting={fp8_downcasting}")
-                    logging.info(f"[DISTORCH2_NEW_LOAD] DisTorch loading completed. Total memory: {mem_counter / (1024 * 1024):.2f}MB")
-                    if not high_precision_loras:
-                        logging.info("[DISTORCH2_NEW_LOAD] High precision LoRAs disabled, using FP8 casting for CPU storage on FP8 base models")
-                        if fp8_downcasting:
-                            logging.info("[DISTORCH2_NEW_LOAD] FP8 downcasting applied to patched weights on CPU")
-                        else:
-                            logging.info("[DISTORCH2_NEW_LOAD] No FP8 downcasting was applied")
-                    else:
-                        logging.info("[DISTORCH2_NEW_LOAD] High precision LoRAs enabled, skipping FP8 casting")
-                else:
-                    # Original ComfyUI loading logic for non-DisTorch models
-                    load_completely = []
-                    loading.sort(reverse=True)
-                    for x in loading:
-                        n = x[1]
-                        m = x[2]
-                        params = x[3]
-                        module_mem = x[0]
-
-                        weight_key = "{}.weight".format(n)
-                        bias_key = "{}.bias".format(n)
-
-                        cast_weight = self.force_cast_weights
-
-                        if hasattr(m, "comfy_cast_weights"):
-                            wipe_lowvram_weight(m)
-
-                        mem_counter += module_mem
-                        load_completely.append((module_mem, n, m, params))
-
-                        if cast_weight and hasattr(m, "comfy_cast_weights"):
-                            m.prev_comfy_cast_weights = m.comfy_cast_weights
-                            m.comfy_cast_weights = True
-
-                        if weight_key in self.weight_wrapper_patches:
-                            m.weight_function.extend(self.weight_wrapper_patches[weight_key])
-
-                        if bias_key in self.weight_wrapper_patches:
-                            m.bias_function.extend(self.weight_wrapper_patches[bias_key])
-
-                        mem_counter += move_weight_functions(m, device_to)
-
-                    load_completely.sort(reverse=True)
-                    for x in load_completely:
-                        n = x[1]
-                        m = x[2]
-                        params = x[3]
-                        if hasattr(m, "comfy_patched_weights"):
-                            if m.comfy_patched_weights == True:
-                                continue
-
-                        for param in params:
-                            self.patch_weight_to_device("{}.{}".format(n, param), device_to=device_to)
-
-                        logging.debug("lowvram: loaded module regularly {} {}".format(n, m))
-                        m.comfy_patched_weights = True
-
-                    for x in load_completely:
-                        x[2].to(device_to)
-
-                    logging.info("loaded completely {} {} {}".format(lowvram_model_memory / (1024 * 1024), mem_counter / (1024 * 1024), full_load))
+                    logger.info(f"[DISTORCH2_NEW_LOAD] DisTorch loading completed. Total memory: {mem_counter / (1024 * 1024):.2f}MB")
 
                 self.model.model_lowvram = False
                 self.model.device = device_to
@@ -258,7 +194,6 @@ def register_patched_safetensor_modelpatcher():
         comfy.model_patcher.ModelPatcher.partially_load = new_partially_load
         comfy.model_patcher.ModelPatcher.load = new_load
         comfy.model_patcher.ModelPatcher._distorch_patched = True
-        logger.info("[DISTORCH2] Successfully patched ModelPatcher to intercept lowvram decisions")
 
 
 def analyze_safetensor_loading(model_patcher, allocations_str):
@@ -563,7 +498,7 @@ def override_class_with_distorch_safetensor_v2(cls):
 
                 if last_settings_hash != settings_hash:
                     logger.info(f"[MultiGPU_DisTorch2] Settings changed for model {model_hash[:8]}. Previous settings hash: {last_settings_hash}, New settings hash: {settings_hash}. Forcing reload.")
-                    # The IS_CHANGED mechanism should handle the reload, this is for logging.
+                    # The IS_CHANGED mechanism should handle the reload, this is for logger.
                 else:
                     logger.info(f"[MultiGPU_DisTorch2] Settings unchanged for model {model_hash[:8]}. Using cached model.")
 
