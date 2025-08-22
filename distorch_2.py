@@ -82,7 +82,7 @@ def register_patched_safetensor_modelpatcher():
             allocations = safetensor_allocation_store.get(model_hash)
             
             if allocations:
-                logger.info(f"[DISTORCH2] Setting up device distribution for model {model_hash[:8]}")
+                logger.info(f"[MultiGPU_DisTorch2] Setting up device distribution for model {model_hash[:8]}")
                 
                 # Parse allocations to get device assignments
                 device_assignments = analyze_safetensor_loading(self, allocations)
@@ -91,7 +91,7 @@ def register_patched_safetensor_modelpatcher():
                 # Count CPU vs GPU assignments for logging
                 cpu_blocks = sum(1 for d in block_assignments.values() if d == "cpu")
                 gpu_blocks = len(block_assignments) - cpu_blocks
-                logger.info(f"[DISTORCH2] Block distribution: {gpu_blocks} GPU, {cpu_blocks} CPU")
+                logger.info(f"[MultiGPU_DisTorch2] Block distribution: {gpu_blocks} GPU, {cpu_blocks} CPU")
                 
                 # Store block assignments on the object
                 self._distorch_block_assignments = block_assignments
@@ -108,9 +108,8 @@ def register_patched_safetensor_modelpatcher():
         def new_load(self, device_to=None, lowvram_model_memory=0, force_patch_weights=False, full_load=False):
             if hasattr(self.model, '_distorch_high_precision_loras'):
                 high_precision_loras = self.model._distorch_high_precision_loras
-                logger.info(f"[DEBUG_NEW_LOAD] retrieved high_precision_loras={high_precision_loras} from model, DisTorchV2 Loaders used")
             else:
-                logger.debug(f"[DEBUG_NEW_LOAD] high_precision_loras flag not retrieved from model. DisTorchV2 Loader not used. Reverting to normal loading behavior")
+                logger.debug(f"[MultiGPU_DisTorch2] high_precision_loras flag not retrieved from model. DisTorchV2 Loader not used. Reverting to normal loading behavior")
                 return original_load(self, device_to, lowvram_model_memory, force_patch_weights, full_load)
 
             with self.use_ejected():
@@ -120,15 +119,13 @@ def register_patched_safetensor_modelpatcher():
 
                 # Check if we have DisTorch assignments
                 has_distorch = hasattr(self, '_distorch_block_assignments')
-                logger.info(f"[DEBUG] has_distorch={has_distorch}")
                 model_original_dtype = comfy.utils.weight_dtype(self.model.state_dict())
 
                 if not has_distorch:
-                    logger.info(f"[DEBUG_NEW_LOAD] DisTorch block assignments not found. Reverting to normal loading behavior")
+                    logger.info(f"[MultiGPU_DisTorch2] DisTorch block assignments not found. Reverting to normal loading behavior")
                     return original_load(self, device_to, lowvram_model_memory, force_patch_weights, full_load)
                 else:
                     block_assignments = self._distorch_block_assignments
-                    logger.info(f"[DEBUG] Entering DisTorch loading path with {len(block_assignments)} blocks")
 
                     loading.sort(reverse=True)
                     for module_size, module_name, module_object, params in loading:
@@ -153,32 +150,28 @@ def register_patched_safetensor_modelpatcher():
                         block_target_device = block_assignments.get(module_name, device_to)
                         has_patches = weight_key in self.patches or bias_key in self.patches
                         
-                        logger.debug(f"[DEBUG] Processing {module_name} -> block_target_device={block_target_device}")
+                        logger.debug(f"[MultiGPU_DisTorch2] Processing {module_name} -> block_target_device={block_target_device}")
 
                         if not high_precision_loras and block_target_device == "cpu" and has_patches and model_original_dtype in [torch.float8_e4m3fn, torch.float8_e5m2]:
-                            logger.info(f"[DEBUG] FP8 casting conditions met for {module_name}")
+                            logger.info(f"[MultiGPU_DisTorch2] FP8 casting conditions met for {module_name}")
                             for param_name, param in module_object.named_parameters():
                                 if param.dtype.is_floating_point:
-                                    # Use ComfyUI's proper FP8 casting function
                                     cast_data = comfy.float.stochastic_rounding(param.data, torch.float8_e4m3fn)
-                                    # Create new tensor with FP8 dtype and replace the parameter
                                     new_param = torch.nn.Parameter(cast_data.to(torch.float8_e4m3fn))
-                                    # Preserve requires_grad setting
                                     new_param.requires_grad = param.requires_grad
-                                    # Replace the parameter in the module
                                     setattr(module_object, param_name, new_param)
-                                    logger.debug(f"[DISTORCH2] Cast {module_name}.{param_name} to FP8 for CPU storage")
+                                    logger.debug(f"[MultiGPU_DisTorch2] Cast {module_name}.{param_name} to FP8 for CPU storage")
 
                         # Step 4: Move to ultimate destination based on DisTorch assignment
                         if block_target_device != device_to:
-                            logger.debug(f"[DISTORCH2] Moving {module_name} from {device_to} to {block_target_device}")
+                            logger.debug(f"[MultiGPU_DisTorch2] Moving {module_name} from {device_to} to {block_target_device}")
                             module_object.to(block_target_device)
 
                         # Mark as patched and update memory counter
                         module_object.comfy_patched_weights = True
                         mem_counter += module_size
 
-                    logger.info(f"[DISTORCH2_NEW_LOAD] DisTorch loading completed. Total memory: {mem_counter / (1024 * 1024):.2f}MB")
+                    logger.info(f"[MultiGPU_DisTorch2] DisTorch loading completed. Total memory: {mem_counter / (1024 * 1024):.2f}MB")
 
                 self.model.model_lowvram = False
                 self.model.device = device_to
@@ -464,7 +457,6 @@ def override_class_with_distorch_safetensor_v2(cls):
 
         def override(self, *args, compute_device=None, virtual_vram_gb=4.0,
                      donor_device="cpu", expert_mode_allocations="", high_precision_loras=True, **kwargs):
-            logger.info(f"[DEBUG_OVERRIDE] override called with high_precision_loras={high_precision_loras}")
 
             from . import set_current_device
             if compute_device is not None:
@@ -475,9 +467,6 @@ def override_class_with_distorch_safetensor_v2(cls):
 
             # Call original function
             fn = getattr(super(), cls.FUNCTION)
-            logger.info(f"[DEBUG_OVERRIDE] About to call model function with high_precision_loras={high_precision_loras}")
-            logger.info(f"[DEBUG_OVERRIDE] high_precision_loras in kwargs: {'high_precision_loras' in kwargs}")
-            logger.info(f"[DEBUG_OVERRIDE] kwargs keys: {list(kwargs.keys())}")
 
             # --- Check if we need to unload the model due to settings change ---
             # This logic is a bit redundant with IS_CHANGED, but provides clear logging
@@ -503,7 +492,6 @@ def override_class_with_distorch_safetensor_v2(cls):
                     logger.info(f"[MultiGPU_DisTorch2] Settings unchanged for model {model_hash[:8]}. Using cached model.")
 
             out = fn(*args, **kwargs)
-            logger.info(f"[DEBUG_OVERRIDE] Model function completed")
 
             # Store high_precision_loras in the model for later retrieval
             if hasattr(out[0], 'model'):
@@ -511,16 +499,14 @@ def override_class_with_distorch_safetensor_v2(cls):
             elif hasattr(out[0], 'patcher') and hasattr(out[0].patcher, 'model'):
                 out[0].patcher.model._distorch_high_precision_loras = high_precision_loras
 
-            # Build allocation string - EXACTLY like GGUF
             vram_string = ""
             if virtual_vram_gb > 0:
                 vram_string = f"{compute_device};{virtual_vram_gb};{donor_device}"
 
             full_allocation = f"{expert_mode_allocations}#{vram_string}" if expert_mode_allocations or vram_string else ""
             
-            logger.info(f"[MULTIGPU_DISTORCHV2] Full allocation string: {full_allocation}")
-            
-            # Store allocation for the model - EXACTLY like GGUF
+            logger.info(f"[MultiGPU_DisTorch2] Full allocation string: {full_allocation}")
+
             if hasattr(out[0], 'model'):
                 model_hash = create_safetensor_model_hash(out[0], "override")
                 safetensor_allocation_store[model_hash] = full_allocation
