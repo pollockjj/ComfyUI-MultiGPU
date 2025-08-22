@@ -85,7 +85,7 @@ def register_patched_safetensor_modelpatcher():
                 logger.info(f"[MultiGPU_DisTorch2] Setting up device distribution for model {model_hash[:8]}")
                 
                 # Parse allocations to get device assignments
-                device_assignments = analyze_safetensor_loading(self, allocations)
+                device_assignments = analyze_safetensor_loading_main(self, allocations)
                 block_assignments = device_assignments['block_assignments']
                 
                 # Count CPU vs GPU assignments for logging
@@ -335,6 +335,240 @@ def analyze_safetensor_loading(model_patcher, allocations_str):
         "device_assignments": device_assignments,
         "block_assignments": block_assignments,
         "lowvram_model_memory": total_assigned_memory,
+    }
+
+
+def analyze_safetensor_loading_main(model_patcher, allocations_str):
+    """
+    Analyze and distribute safetensor model blocks across devices
+    IDENTICAL LOGGING FORMAT TO analyze_ggml_loading
+    """
+    DEVICE_RATIOS_DISTORCH = {}
+    device_table = {}
+    distorch_alloc = allocations_str
+    virtual_vram_gb = 0.0
+
+    # Clear existing allocations
+    global safetensor_allocation_store
+    safetensor_allocation_store.clear()
+
+    # Parse allocation string EXACTLY like GGML
+    if '#' in allocations_str:
+        distorch_alloc, virtual_vram_str = allocations_str.split('#')
+        if not distorch_alloc:
+            distorch_alloc = calculate_safetensor_vvram_allocation(model_patcher, virtual_vram_str)
+
+    # EXACT SAME FORMATTING AS GGML
+    eq_line = "=" * 50
+    dash_line = "-" * 50
+    fmt_assign = "{:<18}{:>7}{:>14}{:>10}"
+
+    # Parse device allocations
+    for allocation in distorch_alloc.split(';'):
+        if ',' not in allocation:
+            continue
+        dev_name, fraction = allocation.split(',')
+        fraction = float(fraction)
+        total_mem_bytes = mm.get_total_memory(torch.device(dev_name))
+        alloc_gb = (total_mem_bytes * fraction) / (1024**3)
+        DEVICE_RATIOS_DISTORCH[dev_name] = alloc_gb
+        device_table[dev_name] = {
+            "fraction": fraction,
+            "total_gb": total_mem_bytes / (1024**3),
+            "alloc_gb": alloc_gb
+        }
+
+    # IDENTICAL LOGGING TO DISTORCH
+    logger.info(eq_line)
+    logger.info("    DisTorch2 Model Device Allocations")
+    logger.info(eq_line)
+    logger.info(fmt_assign.format("Device", "Alloc %", "Total (GB)", " Alloc (GB)"))
+    logger.info(dash_line)
+
+    sorted_devices = sorted(device_table.keys(), key=lambda d: (d == "cpu", d))
+
+    for dev in sorted_devices:
+        frac = device_table[dev]["fraction"]
+        tot_gb = device_table[dev]["total_gb"]
+        alloc_gb = device_table[dev]["alloc_gb"]
+        logger.info(fmt_assign.format(dev,f"{int(frac * 100)}%",f"{tot_gb:.2f}",f"{alloc_gb:.2f}"))
+
+    logger.info(dash_line)
+
+    # Analyze model blocks using ComfyUI's structure
+    block_summary = {}
+    block_list = []
+    memory_by_type = defaultdict(int)
+    total_memory = 0
+
+    # Get the actual model from the patcher
+    model = model_patcher.model if hasattr(model_patcher, 'model') else model_patcher
+
+    # First pass: calculate total memory to establish threshold
+    total_memory = 0
+    for name, module in model.named_modules():
+        if hasattr(module, "weight") or hasattr(module, "comfy_cast_weights"):
+            try:
+                block_memory = mm.module_size(module)
+            except:
+                block_memory = 0
+                if hasattr(module, 'weight') and module.weight is not None:
+                    block_memory += module.weight.numel() * module.weight.element_size()
+                if hasattr(module, 'bias') and module.bias is not None:
+                    block_memory += module.bias.numel() * module.bias.element_size()
+            total_memory += block_memory
+
+    # Set the minimum block size threshold (0.01% of total model memory)
+    MIN_BLOCK_THRESHOLD = total_memory * 0.0001
+    logger.debug(f"[MultiGPU_DisTorch2] Total model memory: {total_memory} bytes")
+    logger.debug(f"[MultiGPU_DisTorch2] Tiny block threshold (0.01%): {MIN_BLOCK_THRESHOLD} bytes")
+
+    # Second pass: analyze and collect all blocks, then filter
+    all_blocks = []
+    for name, module in model.named_modules():
+        if hasattr(module, "weight") or hasattr(module, "comfy_cast_weights"):
+            block_type = type(module).__name__
+            
+            try:
+                block_memory = mm.module_size(module)
+            except:
+                block_memory = 0
+                if hasattr(module, 'weight') and module.weight is not None:
+                    block_memory += module.weight.numel() * module.weight.element_size()
+                if hasattr(module, 'bias') and module.bias is not None:
+                    block_memory += module.bias.numel() * module.bias.element_size()
+            
+            # Populate summary dictionaries with ALL blocks for accurate reporting
+            block_summary[block_type] = block_summary.get(block_type, 0) + 1
+            memory_by_type[block_type] += block_memory
+            all_blocks.append((name, module, block_type, block_memory))
+
+    # Filter out tiny blocks from the distribution list
+    block_list = [b for b in all_blocks if b[3] >= MIN_BLOCK_THRESHOLD]
+    tiny_block_list = [b for b in all_blocks if b[3] < MIN_BLOCK_THRESHOLD]
+    
+    logger.debug(f"[MultiGPU_DisTorch2] Total blocks: {len(all_blocks)}")
+    logger.debug(f"[MultiGPU_DisTorch2] Distributable blocks: {len(block_list)}")
+    logger.debug(f"[MultiGPU_DisTorch2] Tiny blocks (<0.01%): {len(tiny_block_list)}")
+
+    # Log layer distribution - IDENTICAL FORMAT TO GGML
+    logger.info("    DisTorch2 Model Layer Distribution")
+    logger.info(dash_line)
+    fmt_layer = "{:<18}{:>7}{:>14}{:>10}"
+    logger.info(fmt_layer.format("Layer Type", "Layers", "Memory (MB)", "% Total"))
+    logger.info(dash_line)
+    
+    for layer_type, count in block_summary.items():
+        mem_mb = memory_by_type[layer_type] / (1024 * 1024)
+        mem_percent = (memory_by_type[layer_type] / total_memory) * 100 if total_memory > 0 else 0
+        logger.info(fmt_layer.format(layer_type[:18], str(count), f"{mem_mb:.2f}", f"{mem_percent:.1f}%"))
+    
+    logger.info(dash_line)
+
+    # Distribute blocks sequentially from the tail of the model
+    device_assignments = {device: [] for device in DEVICE_RATIOS_DISTORCH.keys()}
+    block_assignments = {}
+
+    # Determine the primary compute device (first non-cpu device)
+    compute_device = "cuda:0" # Fallback
+    for dev in sorted_devices:
+        if dev != "cpu":
+            compute_device = dev
+            break
+            
+    # Calculate total memory to be offloaded to donor devices
+    total_offload_gb = sum(DEVICE_RATIOS_DISTORCH.get(d, 0) for d in sorted_devices if d != compute_device)
+    total_offload_bytes = total_offload_gb * (1024**3)
+    
+    offloaded_bytes = 0
+    
+    # Iterate from the TAIL of the model
+    for block_name, module, block_type, block_memory in reversed(block_list):
+        try:
+            # block_memory is already calculated
+            pass
+        except:
+            block_memory = 0
+            if hasattr(module, 'weight') and module.weight is not None:
+                block_memory += module.weight.numel() * module.weight.element_size()
+            if hasattr(module, 'bias') and module.bias is not None:
+                block_memory += module.bias.numel() * module.bias.element_size()
+
+        # Assign to donor device (currently assumes one donor 'cpu') until target is met
+        if offloaded_bytes < total_offload_bytes:
+            # For now, simple offload to CPU, will expand for multi-donor
+            donor_device = "cpu"
+            for dev in sorted_devices:
+                if dev != compute_device:
+                    donor_device = dev
+                    break # Use first available donor
+            
+            block_assignments[block_name] = donor_device
+            logger.info(f"[MultiGPU_DisTorch2] Assigning block to donor device: {block_name} -> {donor_device}")
+            offloaded_bytes += block_memory
+        else:
+            # Assign remaining blocks to the primary compute device
+            block_assignments[block_name] = compute_device
+
+    # Explicitly assign tiny blocks to the compute device
+    if tiny_block_list:
+        for block_name, module, block_type, block_memory in tiny_block_list:
+            block_assignments[block_name] = compute_device
+
+    # Populate device_assignments from the final block_assignments
+    for block_name, device in block_assignments.items():
+        # Find the block in the original list to get all its info
+        for b_name, b_module, b_type, b_mem in all_blocks:
+            if b_name == block_name:
+                device_assignments[device].append((b_name, b_module, b_type, b_mem))
+                break
+
+    # Log final assignments - IDENTICAL FORMAT TO GGML
+    logger.info("DisTorch2 Model Final Device/Layer Assignments")
+    logger.info(dash_line)
+    logger.info(fmt_assign.format("Device", "Layers", "Memory (MB)", "% Total"))
+    logger.info(dash_line)
+    
+    # Calculate and log tiny blocks separately
+    if tiny_block_list:
+        tiny_block_memory = sum(b[3] for b in tiny_block_list)
+        tiny_mem_mb = tiny_block_memory / (1024 * 1024)
+        tiny_mem_percent = (tiny_block_memory / total_memory) * 100 if total_memory > 0 else 0
+        device_label = f"{compute_device} (<0.01%)"
+        logger.info(fmt_assign.format(device_label, str(len(tiny_block_list)), f"{tiny_mem_mb:.2f}", f"{tiny_mem_percent:.1f}%"))
+        logger.debug(f"[MultiGPU_DisTorch2] Tiny block memory breakdown: {tiny_block_memory} bytes ({tiny_mem_mb:.2f} MB), which is {tiny_mem_percent:.4f}% of total model memory.")
+
+    # Log distributed blocks
+    total_assigned_memory = 0
+    device_memories = {}
+    
+    for device, blocks in device_assignments.items():
+        # Exclude tiny blocks from this calculation
+        dist_blocks = [b for b in blocks if b[3] >= MIN_BLOCK_THRESHOLD]
+        if not dist_blocks:
+            continue
+
+        device_memory = sum(b[3] for b in dist_blocks)
+        device_memories[device] = device_memory
+        total_assigned_memory += device_memory
+
+    sorted_assignments = sorted(device_memories.keys(), key=lambda d: (d == "cpu", d))
+
+    for dev in sorted_assignments:
+        # Get only the distributed blocks for the count
+        dist_blocks = [b for b in device_assignments[dev] if b[3] >= MIN_BLOCK_THRESHOLD]
+        if not dist_blocks:
+            continue
+            
+        mem_mb = device_memories[dev] / (1024 * 1024)
+        mem_percent = (device_memories[dev] / total_memory) * 100 if total_memory > 0 else 0
+        logger.info(fmt_assign.format(dev, str(len(dist_blocks)), f"{mem_mb:.2f}", f"{mem_percent:.1f}%"))
+    
+    logger.info(dash_line)
+
+    return {
+        "device_assignments": device_assignments,
+        "block_assignments": block_assignments
     }
 
 
