@@ -326,7 +326,152 @@ def analyze_safetensor_loading(model_patcher, allocations_str):
         "device_assignments": device_assignments,
         "block_assignments": block_assignments
     }
+def analyze_safetensor_loading_comfy(model_patcher, allocations_str):
+    """
+    Analyze and distribute safetensor model blocks across devices utilizing model_patcher._load_list().sort(reverse=True) method like Comfy
+    """
+    DEVICE_RATIOS_DISTORCH = {}
+    device_table = {}
+    distorch_alloc = allocations_str
+    virtual_vram_gb = 0.0
 
+    # Parse allocation string EXACTLY like GGML
+    if '#' in allocations_str:
+        distorch_alloc, virtual_vram_str = allocations_str.split('#')
+        if not distorch_alloc:
+            distorch_alloc = calculate_safetensor_vvram_allocation(model_patcher, virtual_vram_str)
+
+    # EXACT SAME FORMATTING AS GGML
+    eq_line = "=" * 50
+    dash_line = "-" * 50
+    fmt_assign = "{:<18}{:>7}{:>14}{:>10}"
+
+    # Parse device allocations
+    for allocation in distorch_alloc.split(';'):
+        if ',' not in allocation:
+            continue
+        dev_name, fraction = allocation.split(',')
+        fraction = float(fraction)
+        total_mem_bytes = mm.get_total_memory(torch.device(dev_name))
+        alloc_gb = (total_mem_bytes * fraction) / (1024**3)
+        DEVICE_RATIOS_DISTORCH[dev_name] = alloc_gb
+        device_table[dev_name] = {
+            "fraction": fraction,
+            "total_gb": total_mem_bytes / (1024**3),
+            "alloc_gb": alloc_gb
+        }
+
+    # IDENTICAL LOGGING TO DISTORCH
+    logger.info(eq_line)
+    logger.info("    DisTorch2 Model Device Allocations")
+    logger.info(eq_line)
+    logger.info(fmt_assign.format("Device", "Alloc %", "Total (GB)", " Alloc (GB)"))
+    logger.info(dash_line)
+
+    sorted_devices = sorted(device_table.keys(), key=lambda d: (d == "cpu", d))
+
+    for dev in sorted_devices:
+        frac = device_table[dev]["fraction"]
+        tot_gb = device_table[dev]["total_gb"]
+        alloc_gb = device_table[dev]["alloc_gb"]
+        logger.info(fmt_assign.format(dev,f"{int(frac * 100)}%",f"{tot_gb:.2f}",f"{alloc_gb:.2f}"))
+
+    logger.info(dash_line)
+
+    # Get the model blocks using ComfyUI's method
+    block_list = model_patcher._load_list()
+    block_list.sort(reverse=True)
+
+    # Log layer distribution
+    total_memory = sum(b[0] for b in block_list)
+    memory_by_type = defaultdict(int)
+    block_summary = defaultdict(int)
+    for module_size, module_name, module_object, params in block_list:
+        block_type = module_object.__class__.__name__
+        block_summary[block_type] += 1
+        memory_by_type[block_type] += module_size
+
+    # Log layer distribution - IDENTICAL FORMAT TO GGML
+    logger.info("    DisTorch2 Model Layer Distribution")
+    logger.info(dash_line)
+    fmt_layer = "{:<18}{:>7}{:>14}{:>10}"
+    logger.info(fmt_layer.format("Layer Type", "Layers", "Memory (MB)", "% Total"))
+    logger.info(dash_line)
+    
+    for layer_type, count in block_summary.items():
+        mem_mb = memory_by_type[layer_type] / (1024 * 1024)
+        mem_percent = (memory_by_type[layer_type] / total_memory) * 100 if total_memory > 0 else 0
+        logger.info(fmt_layer.format(layer_type[:18], str(count), f"{mem_mb:.2f}", f"{mem_percent:.1f}%"))
+    
+    logger.info(dash_line)
+
+    # Distribute blocks sequentially
+    device_assignments = {device: [] for device in DEVICE_RATIOS_DISTORCH.keys()}
+    block_assignments = {}
+
+    compute_device = str(current_device)
+    # Calculate total memory to be offloaded to donor devices
+    total_offload_gb = sum(DEVICE_RATIOS_DISTORCH.get(d, 0) for d in sorted_devices if d != compute_device)
+    total_offload_bytes = total_offload_gb * (1024**3)
+    
+    offloaded_bytes = 0
+    
+    # Iterate through the sorted list (largest blocks first)
+    for module_size, module_name, module_object, params in block_list:
+        # Assign to donor device until target is met
+        if offloaded_bytes < total_offload_bytes:
+            # For now, simple offload to CPU, will expand for multi-donor
+            donor_device = "cpu"
+            for dev in sorted_devices:
+                if dev != compute_device:
+                    donor_device = dev
+                    break # Use first available donor
+            
+            block_assignments[module_name] = donor_device
+            setattr(module_object, 'distorch2_cpu_offload', True) # Attach the attribute here
+            offloaded_bytes += module_size
+        else:
+            # Assign remaining blocks to the primary compute device
+            block_assignments[module_name] = compute_device
+
+    # Populate device_assignments from the final block_assignments
+    for module_size, module_name, module_object, params in block_list:
+        device = block_assignments[module_name]
+        if device not in device_assignments:
+            device_assignments[device] = []
+        device_assignments[device].append((module_name, module_object, module_object.__class__.__name__, module_size))
+
+    # Log final assignments - IDENTICAL FORMAT TO GGML
+    logger.info("DisTorch2 Model Final Device/Layer Assignments")
+    logger.info(dash_line)
+    logger.info(fmt_assign.format("Device", "Layers", "Memory (MB)", "% Total"))
+    logger.info(dash_line)
+    
+    # Log distributed blocks
+    total_assigned_memory = 0
+    device_memories = {}
+    
+    for device, blocks in device_assignments.items():
+        device_memory = sum(b[3] for b in blocks)
+        device_memories[device] = device_memory
+        total_assigned_memory += device_memory
+
+    sorted_assignments = sorted(device_memories.keys(), key=lambda d: (d == "cpu", d))
+
+    for dev in sorted_assignments:
+        if dev not in device_memories:
+            continue
+        mem_mb = device_memories[dev] / (1024 * 1024)
+        mem_percent = (device_memories[dev] / total_memory) * 100 if total_memory > 0 else 0
+        logger.info(fmt_assign.format(dev, str(len(device_assignments[dev])), f"{mem_mb:.2f}", f"{mem_percent:.1f}%"))
+    
+    logger.info(dash_line)
+
+    return {
+        "device_assignments": device_assignments,
+        "block_assignments": block_assignments,
+        "lowvram_model_memory": total_assigned_memory,
+    }
 
 def calculate_safetensor_vvram_allocation(model_patcher, virtual_vram_str):
     """Calculate virtual VRAM allocation string for distributed safetensor loading"""
