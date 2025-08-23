@@ -158,47 +158,25 @@ def analyze_safetensor_loading(model_patcher, allocations_str):
     memory_by_type = defaultdict(int)
     total_memory = 0
 
-    # Get the actual model from the patcher
-    model = model_patcher.model if hasattr(model_patcher, 'model') else model_patcher
+    # Get blocks using ComfyUI's method for both passes
+    raw_block_list = model_patcher._load_list()
 
-    # First pass: calculate total memory to establish threshold
-    total_memory = 0
-    for name, module in model.named_modules():
-        if hasattr(module, "weight") or hasattr(module, "comfy_cast_weights"):
-            try:
-                block_memory = mm.module_size(module)
-            except:
-                block_memory = 0
-                if hasattr(module, 'weight') and module.weight is not None:
-                    block_memory += module.weight.numel() * module.weight.element_size()
-                if hasattr(module, 'bias') and module.bias is not None:
-                    block_memory += module.bias.numel() * module.bias.element_size()
-            total_memory += block_memory
+    # Calculate total memory from ComfyUI's list (first pass replacement)
+    total_memory = sum(module_size for module_size, _, _, _ in raw_block_list)
 
     # Set the minimum block size threshold (0.01% of total model memory)
     MIN_BLOCK_THRESHOLD = total_memory * 0.0001
     logger.debug(f"[MultiGPU_DisTorch2] Total model memory: {total_memory} bytes")
     logger.debug(f"[MultiGPU_DisTorch2] Tiny block threshold (0.01%): {MIN_BLOCK_THRESHOLD} bytes")
 
-    # Second pass: analyze and collect all blocks, then filter
+    # Build all_blocks from ComfyUI's list (second pass replacement)
     all_blocks = []
-    for name, module in model.named_modules():
-        if hasattr(module, "weight") or hasattr(module, "comfy_cast_weights"):
-            block_type = type(module).__name__
-            
-            try:
-                block_memory = mm.module_size(module)
-            except:
-                block_memory = 0
-                if hasattr(module, 'weight') and module.weight is not None:
-                    block_memory += module.weight.numel() * module.weight.element_size()
-                if hasattr(module, 'bias') and module.bias is not None:
-                    block_memory += module.bias.numel() * module.bias.element_size()
-            
-            # Populate summary dictionaries with ALL blocks for accurate reporting
-            block_summary[block_type] = block_summary.get(block_type, 0) + 1
-            memory_by_type[block_type] += block_memory
-            all_blocks.append((name, module, block_type, block_memory))
+    for module_size, module_name, module_object, params in raw_block_list:
+        block_type = type(module_object).__name__
+        # Populate summary dictionaries
+        block_summary[block_type] = block_summary.get(block_type, 0) + 1
+        memory_by_type[block_type] += module_size
+        all_blocks.append((module_name, module_object, block_type, module_size))
 
     # Filter out tiny blocks from the distribution list
     block_list = [b for b in all_blocks if b[3] >= MIN_BLOCK_THRESHOLD]
