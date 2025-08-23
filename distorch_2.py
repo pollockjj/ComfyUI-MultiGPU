@@ -15,6 +15,7 @@ import inspect
 from collections import defaultdict
 import comfy.model_management as mm
 import comfy.model_patcher
+from . import current_device
 
 # Global store for safetensor model allocations - EXACTLY like GGUF
 safetensor_allocation_store = {}
@@ -109,18 +110,15 @@ def analyze_safetensor_loading(model_patcher, allocations_str):
     distorch_alloc = allocations_str
     virtual_vram_gb = 0.0
 
-    # Parse allocation string EXACTLY like GGML
     if '#' in allocations_str:
         distorch_alloc, virtual_vram_str = allocations_str.split('#')
         if not distorch_alloc:
             distorch_alloc = calculate_safetensor_vvram_allocation(model_patcher, virtual_vram_str)
 
-    # EXACT SAME FORMATTING AS GGML
     eq_line = "=" * 50
     dash_line = "-" * 50
     fmt_assign = "{:<18}{:>7}{:>14}{:>10}"
 
-    # Parse device allocations
     for allocation in distorch_alloc.split(';'):
         if ',' not in allocation:
             continue
@@ -135,7 +133,6 @@ def analyze_safetensor_loading(model_patcher, allocations_str):
             "alloc_gb": alloc_gb
         }
 
-    # IDENTICAL LOGGING TO DISTORCH
     logger.info(eq_line)
     logger.info("    DisTorch2 Model Device Allocations")
     logger.info(eq_line)
@@ -152,13 +149,11 @@ def analyze_safetensor_loading(model_patcher, allocations_str):
 
     logger.info(dash_line)
 
-    # Analyze model blocks using ComfyUI's structure
     block_summary = {}
     block_list = []
     memory_by_type = defaultdict(int)
     total_memory = 0
 
-    # Get blocks using ComfyUI's method for both passes
     raw_block_list = model_patcher._load_list()
 
     # Calculate total memory from ComfyUI's list (first pass replacement)
@@ -186,7 +181,6 @@ def analyze_safetensor_loading(model_patcher, allocations_str):
     logger.debug(f"[MultiGPU_DisTorch2] Distributable blocks: {len(block_list)}")
     logger.debug(f"[MultiGPU_DisTorch2] Tiny blocks (<0.01%): {len(tiny_block_list)}")
 
-    # Log layer distribution - IDENTICAL FORMAT TO GGML
     logger.info("    DisTorch2 Model Layer Distribution")
     logger.info(dash_line)
     fmt_layer = "{:<18}{:>7}{:>14}{:>10}"
@@ -204,13 +198,8 @@ def analyze_safetensor_loading(model_patcher, allocations_str):
     device_assignments = {device: [] for device in DEVICE_RATIOS_DISTORCH.keys()}
     block_assignments = {}
 
-    # Determine the primary compute device (first non-cpu device)
-    compute_device = "cuda:0" # Fallback
-    for dev in sorted_devices:
-        if dev != "cpu":
-            compute_device = dev
-            break
-            
+    compute_device = str(current_device)
+
     # Calculate total memory to be offloaded to donor devices
     total_offload_gb = sum(DEVICE_RATIOS_DISTORCH.get(d, 0) for d in sorted_devices if d != compute_device)
     total_offload_bytes = total_offload_gb * (1024**3)
