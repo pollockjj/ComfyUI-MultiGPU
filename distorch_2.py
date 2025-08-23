@@ -87,6 +87,25 @@ def register_patched_safetensor_modelpatcher():
                 if hasattr(m, "comfy_cast_weights"):
                     logging.info(f"Unpatching weight {weight_key} for Distorch2")
                     wipe_lowvram_weight(m)
+                    
+                logging.info(f"Adding {n} to 'load_completely' list")
+                mem_counter += module_mem
+                load_completely.append((module_mem, n, m, params))
+
+                if cast_weight and hasattr(m, "comfy_cast_weights"):
+                    logging.info(f"Setting cast weights for {weight_key}")
+                    m.prev_comfy_cast_weights = m.comfy_cast_weights
+                    m.comfy_cast_weights = True
+
+                if weight_key in self.weight_wrapper_patches:
+                    logging.info(f"Patching weight wrapper {m} for Distorch2")
+                    m.weight_function.extend(self.weight_wrapper_patches[weight_key])
+
+                if bias_key in self.weight_wrapper_patches:
+                    logging.info(f"Patching bias wrapper {bias_key} for Distorch2")
+                    m.bias_function.extend(self.weight_wrapper_patches[bias_key])
+
+                mem_counter += move_weight_functions(m, device_to)
 
 
 
