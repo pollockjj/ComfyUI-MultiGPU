@@ -440,6 +440,7 @@ def override_class_with_distorch_safetensor_v2(cls):
             inputs["optional"]["virtual_vram_gb"] = ("FLOAT", {"default": 4.0, "min": 0.0, "max": 128.0, "step": 0.1})
             inputs["optional"]["donor_device"] = (devices, {"default": "cpu"})
             inputs["optional"]["expert_mode_allocations"] = ("STRING", {"multiline": False, "default": ""})
+            inputs["optional"]["high_precision_loras"] = ("BOOLEAN", {"default": True})
             return inputs
 
         CATEGORY = "multigpu/distorch_2"
@@ -448,28 +449,29 @@ def override_class_with_distorch_safetensor_v2(cls):
 
         @classmethod
         def IS_CHANGED(s, *args, compute_device=None, virtual_vram_gb=4.0, 
-                       donor_device="cpu", expert_mode_allocations="", **kwargs):
+                       donor_device="cpu", expert_mode_allocations="", high_precision_loras=True, **kwargs):
             # Create a hash of our specific settings
-            settings_str = f"{compute_device}{virtual_vram_gb}{donor_device}{expert_mode_allocations}"
+            settings_str = f"{compute_device}{virtual_vram_gb}{donor_device}{expert_mode_allocations}{high_precision_loras}"
             return hashlib.sha256(settings_str.encode()).hexdigest()
 
-        def override(self, *args, compute_device=None, virtual_vram_gb=4.0, 
-                     donor_device="cpu", expert_mode_allocations="", **kwargs):
+        def override(self, *args, compute_device=None, virtual_vram_gb=4.0,
+                     donor_device="cpu", expert_mode_allocations="", high_precision_loras=True, **kwargs):
+
             from . import set_current_device
             if compute_device is not None:
                 set_current_device(compute_device)
-            
+
             # Register our patched ModelPatcher
             register_patched_safetensor_modelpatcher()
-            
+
             # Call original function
             fn = getattr(super(), cls.FUNCTION)
-            
+
             # --- Check if we need to unload the model due to settings change ---
             # This logic is a bit redundant with IS_CHANGED, but provides clear logging
             settings_str = f"{compute_device}{virtual_vram_gb}{donor_device}{expert_mode_allocations}"
             settings_hash = hashlib.sha256(settings_str.encode()).hexdigest()
-            
+
             # Temporarily load to get hash without applying our patch
             temp_out = fn(*args, **kwargs)
             model_to_check = None
@@ -481,25 +483,29 @@ def override_class_with_distorch_safetensor_v2(cls):
             if model_to_check:
                 model_hash = create_safetensor_model_hash(model_to_check, "override_check")
                 last_settings_hash = safetensor_settings_store.get(model_hash)
-                
+
                 if last_settings_hash != settings_hash:
                     logger.info(f"[MultiGPU_DisTorch2] Settings changed for model {model_hash[:8]}. Previous settings hash: {last_settings_hash}, New settings hash: {settings_hash}. Forcing reload.")
-                    # The IS_CHANGED mechanism should handle the reload, this is for logging.
+                    # The IS_CHANGED mechanism should handle the reload, this is for logger.
                 else:
                     logger.info(f"[MultiGPU_DisTorch2] Settings unchanged for model {model_hash[:8]}. Using cached model.")
 
             out = fn(*args, **kwargs)
 
-            # Build allocation string - EXACTLY like GGUF
+            # Store high_precision_loras in the model for later retrieval
+            if hasattr(out[0], 'model'):
+                out[0].model._distorch_high_precision_loras = high_precision_loras
+            elif hasattr(out[0], 'patcher') and hasattr(out[0].patcher, 'model'):
+                out[0].patcher.model._distorch_high_precision_loras = high_precision_loras
+
             vram_string = ""
             if virtual_vram_gb > 0:
                 vram_string = f"{compute_device};{virtual_vram_gb};{donor_device}"
 
             full_allocation = f"{expert_mode_allocations}#{vram_string}" if expert_mode_allocations or vram_string else ""
             
-            logger.info(f"[MULTIGPU_DISTORCHV2] Full allocation string: {full_allocation}")
-            
-            # Store allocation for the model - EXACTLY like GGUF
+            logger.info(f"[MultiGPU_DisTorch2] Full allocation string: {full_allocation}")
+
             if hasattr(out[0], 'model'):
                 model_hash = create_safetensor_model_hash(out[0], "override")
                 safetensor_allocation_store[model_hash] = full_allocation
