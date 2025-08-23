@@ -58,9 +58,19 @@ def register_patched_safetensor_modelpatcher():
     if not hasattr(comfy.model_patcher.ModelPatcher, '_distorch_patched'):
         original_partially_load = comfy.model_patcher.ModelPatcher.partially_load
 
-        def new_partially_load(self, device_to, extra_memory=0, full_load=False, **kwargs):
+        def new_partially_load(self, device_to, extra_memory=0, full_load=False, force_patch_weights=False, **kwargs):
             """Override to use our static device assignments"""
             global safetensor_allocation_store
+
+            if not hasattr(self.model, '_distorch_high_precision_loras'):
+                logger.info(f"[DEBUG_NEW_LOAD] high_precision_loras flag not retrieved from model. DisTorchV2 Loader not used. Reverting to normal loading behavior")
+                result = original_partially_load(self, device_to, extra_memory, force_patch_weights)
+            
+                # Clean up
+                if hasattr(self, '_distorch_block_assignments'):
+                    del self._distorch_block_assignments
+                
+                return result
             
             # Check if we have a device allocation for this model
             debug_hash = create_safetensor_model_hash(self, "partial_load")
@@ -85,15 +95,15 @@ def register_patched_safetensor_modelpatcher():
                 cast_weight = self.force_cast_weights
 
                 if hasattr(m, "comfy_cast_weights"):
-                    logging.info(f"Unpatching weight {weight_key} for Distorch2")
+                    #logging.info(f"Unpatching weight {weight_key} for Distorch2")
                     wipe_lowvram_weight(m)
                     
-                logging.info(f"Adding {n} to 'load_completely' list")
+                #logging.info(f"Adding {n} to 'load_completely' list")
                 mem_counter += module_mem
                 load_completely.append((module_mem, n, m, params))
 
                 if cast_weight and hasattr(m, "comfy_cast_weights"):
-                    logging.info(f"Setting cast weights for {weight_key}")
+                    #logging.info(f"Setting cast weights for {weight_key}")
                     m.prev_comfy_cast_weights = m.comfy_cast_weights
                     m.comfy_cast_weights = True
 
