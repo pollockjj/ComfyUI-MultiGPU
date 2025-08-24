@@ -1,7 +1,6 @@
 """
 DisTorch Safetensor Memory Management Module
 Contains all safetensor related code for distributed memory management
-Following EXACT patterns from distorch.py for GGUF
 """
 
 import sys
@@ -17,13 +16,12 @@ import comfy.model_management as mm
 import comfy.model_patcher
 from . import current_device
 
-# Global store for safetensor model allocations - EXACTLY like GGUF
 safetensor_allocation_store = {}
 safetensor_settings_store = {}
 
 
 def create_safetensor_model_hash(model, caller):
-    """Create a unique hash for a safetensor model to track allocations - EXACTLY like GGUF"""
+    """Create a unique hash for a safetensor model to track allocations"""
     if hasattr(model, 'model'):
         # For ModelPatcher objects
         actual_model = model.model
@@ -47,7 +45,7 @@ def create_safetensor_model_hash(model, caller):
     final_hash = hashlib.sha256(identifier.encode()).hexdigest()
     
     # DEBUG STATEMENT - ALWAYS LOG THE HASH
-    logger.debug(f"[MULTIGPU_DISTORCHV2_HASH] Created hash for {caller}: {final_hash[:8]}...")
+    logger.debug(f"[MultiGPU_DisTorch2] Created hash for {caller}: {final_hash[:8]}...")
     return final_hash
 
 
@@ -62,8 +60,11 @@ def register_patched_safetensor_modelpatcher():
             """Override to use our static device assignments"""
             global safetensor_allocation_store
 
-            if not hasattr(self.model, '_distorch_high_precision_loras'):
-                logger.info(f"[DEBUG_NEW_LOAD] high_precision_loras flag not retrieved from model. DisTorchV2 Loader not used. Reverting to normal loading behavior")
+            # Check if we have a device allocation for this model
+            debug_hash = create_safetensor_model_hash(self, "partial_load")
+            allocations = safetensor_allocation_store.get(debug_hash)
+
+            if not hasattr(self.model, '_distorch_high_precision_loras') or not allocations:
                 result = original_partially_load(self, device_to, extra_memory, force_patch_weights)
             
                 # Clean up
@@ -72,10 +73,8 @@ def register_patched_safetensor_modelpatcher():
                 
                 return result
             
-            # Check if we have a device allocation for this model
-            debug_hash = create_safetensor_model_hash(self, "partial_load")
-            allocations = safetensor_allocation_store.get(debug_hash)
-            
+            logger.info(f"[MultiGPU_DisTorch2] high_precision_loras flag not retrieved from model. DisTorchV2 Loader not used. Reverting to normal loading behavior")
+
             mem_counter = 0
             patch_counter = 0
 
@@ -118,48 +117,43 @@ def register_patched_safetensor_modelpatcher():
                 mem_counter += move_weight_functions(m, device_to)
 
 
-
-            if allocations:
-                logger.info(f"[MULTIGPU_DISTORCHV2] Using static allocation for model {debug_hash[:8]}")
-                # Parse allocation string and apply static assignment
-                device_assignments = analyze_safetensor_loading(self, allocations)
+            logger.info(f"[MultiGPU_DisTorch2] Using static allocation for model {debug_hash[:8]}")
+            # Parse allocation string and apply static assignment
+            device_assignments = analyze_safetensor_loading(self, allocations)
 
 
-               
-                # Apply our static assignments instead of ComfyUI's dynamic ones
-                for block_name, target_device in device_assignments['block_assignments'].items():
-                    # Find the module by name
-                    parts = block_name.split('.')
-                    module = self.model
-                    for part in parts:
-                        if hasattr(module, part):
-                            module = getattr(module, part)
-                        else:
-                            break
-                    
-                    if hasattr(module, 'weight') or hasattr(module, 'comfy_cast_weights'):
-                        # Move to our assigned device
-                        logger.debug(f"[MULTIGPU_DISTORCHV2] Moving {block_name} to {target_device}")
-                        module.to(target_device)
-                        # Mark for ComfyUI's cast system if not already marked
-                        if hasattr(module, 'comfy_cast_weights'):
-                            module.comfy_cast_weights = True
+            
+            # Apply our static assignments instead of ComfyUI's dynamic ones
+            for block_name, target_device in device_assignments['block_assignments'].items():
+                # Find the module by name
+                parts = block_name.split('.')
+                module = self.model
+                for part in parts:
+                    if hasattr(module, part):
+                        module = getattr(module, part)
+                    else:
+                        break
                 
-                # Return 0 to indicate no additional memory used on compute device
-                return 0
-            else:
-                # Fall back to original behavior - only pass valid args
-                return original_partially_load(self, device_to, extra_memory, **kwargs)
+                if hasattr(module, 'weight') or hasattr(module, 'comfy_cast_weights'):
+                    # Move to our assigned device
+                    logger.debug(f"[MultiGPU_DisTorch2] Moving {block_name} to {target_device}")
+                    module.to(target_device)
+                    # Mark for ComfyUI's cast system if not already marked
+                    if hasattr(module, 'comfy_cast_weights'):
+                        module.comfy_cast_weights = True
+            
+            # Return 0 to indicate no additional memory used on compute device
+            return 0
+
         
         comfy.model_patcher.ModelPatcher.partially_load = new_partially_load
         comfy.model_patcher.ModelPatcher._distorch_patched = True
-        logger.info("[MULTIGPU_DISTORCHV2] Successfully patched ModelPatcher.partially_load")
+        logger.info("[MultiGPU_DisTorch2] Successfully patched ModelPatcher.partially_load")
 
 
 def analyze_safetensor_loading(model_patcher, allocations_str):
     """
     Analyze and distribute safetensor model blocks across devices
-    IDENTICAL LOGGING FORMAT TO analyze_ggml_loading
     """
     DEVICE_RATIOS_DISTORCH = {}
     device_table = {}
@@ -583,7 +577,7 @@ def calculate_safetensor_vvram_allocation(model_patcher, virtual_vram_str):
 
 
 def override_class_with_distorch_safetensor_v2(cls):
-    """DisTorch 2.0 wrapper for safetensor models - EXACTLY like GGUF wrapper"""
+    """DisTorch 2.0 wrapper for safetensor models"""
     from .nodes import get_device_list
     from . import current_device
     
@@ -645,7 +639,6 @@ def override_class_with_distorch_safetensor_v2(cls):
 
                 if last_settings_hash != settings_hash:
                     logger.info(f"[MultiGPU_DisTorch2] Settings changed for model {model_hash[:8]}. Previous settings hash: {last_settings_hash}, New settings hash: {settings_hash}. Forcing reload.")
-                    # The IS_CHANGED mechanism should handle the reload, this is for logger.
                 else:
                     logger.info(f"[MultiGPU_DisTorch2] Settings unchanged for model {model_hash[:8]}. Using cached model.")
 
