@@ -1,11 +1,11 @@
-# ComfyUI-MultiGPU v2.0.0: Universal .safetensors and GGUF Multi-GPU Distribution with DisTorch
+# ComfyUI-MultiGPU v2: Universal .safetensors and GGUF Multi-GPU Distribution with DisTorch
 <p align="center">
   <img src="https://raw.githubusercontent.com/pollockjj/ComfyUI-MultiGPU/main/assets/distorch_average.png" width="600">
   <br>
   <em>Free almost all of your GPU for what matters: Maximum latent space processing</em>
 </p>
 
-## The Core of ComfyUI-MultiGPU v2.0.0:
+## The Core of ComfyUI-MultiGPU v2:
 [^1]: This **enhances memory management,** not parallel processing. Workflow steps still execute sequentially, but with components (in full or in part) loaded across your specified devices. *Performance gains* come from avoiding repeated model loading/unloading when VRAM is constrained. *Capability gains* come from offloading as much of the model (VAE/CLIP/UNet) off of your main **compute** device as possible—allowing you to maximize latent space for actual computation.
 
 1.  **Universal .safetensors Support**: Native DisTorch2 distribution for all `.safetensors` models.
