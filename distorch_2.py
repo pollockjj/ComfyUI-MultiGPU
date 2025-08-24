@@ -63,86 +63,115 @@ def register_patched_safetensor_modelpatcher():
             # Check if we have a device allocation for this model
             debug_hash = create_safetensor_model_hash(self, "partial_load")
             allocations = safetensor_allocation_store.get(debug_hash)
+            
 
             if not hasattr(self.model, '_distorch_high_precision_loras') or not allocations:
-                result = original_partially_load(self, device_to, extra_memory, force_patch_weights)
-            
+                result = original_partially_load(self, device_to, extra_memory, force_patch_weights) 
                 # Clean up
                 if hasattr(self, '_distorch_block_assignments'):
                     del self._distorch_block_assignments
-                
+    
+
                 return result
-            
-            logger.info(f"[MultiGPU_DisTorch2] high_precision_loras flag not retrieved from model. DisTorchV2 Loader not used. Reverting to normal loading behavior")
+
+            logger.info(f"[MultiGPU_DisTorch2] DisTorchV2 Loader activated")
 
             mem_counter = 0
             patch_counter = 0
 
-            loading = self._load_list()
-
-            load_completely = []
-            loading.sort(reverse=True)
-            for x in loading:
-                n = x[1]
-                m = x[2]
-                params = x[3]
-                module_mem = x[0]
-
-                weight_key = "{}.weight".format(n)
-                bias_key = "{}.bias".format(n)
-
-                cast_weight = self.force_cast_weights
-
-                if hasattr(m, "comfy_cast_weights"):
-                    #logging.info(f"Unpatching weight {weight_key} for Distorch2")
-                    wipe_lowvram_weight(m)
-                    
-                #logging.info(f"Adding {n} to 'load_completely' list")
-                mem_counter += module_mem
-                load_completely.append((module_mem, n, m, params))
-
-                if cast_weight and hasattr(m, "comfy_cast_weights"):
-                    #logging.info(f"Setting cast weights for {weight_key}")
-                    m.prev_comfy_cast_weights = m.comfy_cast_weights
-                    m.comfy_cast_weights = True
-
-                if weight_key in self.weight_wrapper_patches:
-                    logging.info(f"Patching weight wrapper {m} for Distorch2")
-                    m.weight_function.extend(self.weight_wrapper_patches[weight_key])
-
-                if bias_key in self.weight_wrapper_patches:
-                    logging.info(f"Patching bias wrapper {bias_key} for Distorch2")
-                    m.bias_function.extend(self.weight_wrapper_patches[bias_key])
-
-                mem_counter += move_weight_functions(m, device_to)
-
-
             logger.info(f"[MultiGPU_DisTorch2] Using static allocation for model {debug_hash[:8]}")
             # Parse allocation string and apply static assignment
             device_assignments = analyze_safetensor_loading(self, allocations)
-
-
             
-            # Apply our static assignments instead of ComfyUI's dynamic ones
-            for block_name, target_device in device_assignments['block_assignments'].items():
-                # Find the module by name
-                parts = block_name.split('.')
-                module = self.model
-                for part in parts:
-                    if hasattr(module, part):
-                        module = getattr(module, part)
-                    else:
-                        break
+            model_type = type(self.model).__name__
+
+            if model_type == "SDXL" or model_type == "LTXV":
+                on_compute_patching = False
+            else:
+                on_compute_patching = True
+
+            if on_compute_patching:
+                high_precision_loras = self.model._distorch_high_precision_loras
+                loading = self._load_list()
+                loading.sort(reverse=True)
+                for module_size, module_name, module_object, params in loading:
+                    # Step 1: Write block/tensor to compute device first
+                    module_object.to(device_to)
+
+                    # Step 2: Apply LoRa patches while on compute device
+                    weight_key = "{}.weight".format(module_name)
+                    bias_key = "{}.bias".format(module_name)
+
+                    if weight_key in self.patches:
+                        self.patch_weight_to_device(weight_key, device_to=device_to)
+                    if weight_key in self.weight_wrapper_patches:
+                        module_object.weight_function.extend(self.weight_wrapper_patches[weight_key])
+
+                    if bias_key in self.patches:
+                        self.patch_weight_to_device(bias_key, device_to=device_to)
+                    if bias_key in self.weight_wrapper_patches:
+                        module_object.bias_function.extend(self.weight_wrapper_patches[bias_key])
+
+                    # Step 3: FP8 casting for CPU storage (if enabled)
+                    block_target_device = device_assignments['block_assignments'].get(module_name, device_to)
+                    has_patches = weight_key in self.patches or bias_key in self.patches
+                    
+                    logger.info(f"[MultiGPU_DisTorch2] Patch-on-Compute: Processing {module_name} -> block_target_device={block_target_device}")
+
+                    if not high_precision_loras and block_target_device == "cpu" and has_patches and model_original_dtype in [torch.float8_e4m3fn, torch.float8_e5m2]:
+                        logger.info(f"[MultiGPU_DisTorch2] FP8 casting conditions met for {module_name}")
+                        for param_name, param in module_object.named_parameters():
+                            if param.dtype.is_floating_point:
+                                cast_data = comfy.float.stochastic_rounding(param.data, torch.float8_e4m3fn)
+                                new_param = torch.nn.Parameter(cast_data.to(torch.float8_e4m3fn))
+                                new_param.requires_grad = param.requires_grad
+                                setattr(module_object, param_name, new_param)
+                                logger.debug(f"[MultiGPU_DisTorch2] Cast {module_name}.{param_name} to FP8 for CPU storage")
+
+                    # Step 4: Move to ultimate destination based on DisTorch assignment
+                    if block_target_device != device_to:
+                        logger.debug(f"[MultiGPU_DisTorch2] Moving {module_name} from {device_to} to {block_target_device}")
+                        module_object.to(block_target_device)
+
+                    # Mark as patched and update memory counter
+                    module_object.comfy_patched_weights = True
+                    mem_counter += module_size
+
+                logger.info(f"[MultiGPU_DisTorch2] DisTorch loading completed. Total memory: {mem_counter / (1024 * 1024):.2f}MB")
+
+            else:
+                # Apply our static assignments instead of ComfyUI's dynamic ones
+                for block_name, target_device in device_assignments['block_assignments'].items():
+                    # Find the module by name
+                    parts = block_name.split('.')
+                    module = self.model
+                    for part in parts:
+                        if hasattr(module, part):
+                            module = getattr(module, part)
+                        else:
+                            break
+                    
+                    if hasattr(module, 'weight') or hasattr(module, 'comfy_cast_weights'):
+                        # Move to our assigned device
+                        logger.info(f"[MultiGPU_DisTorch2] Patch-on-Device: Moving {block_name} to {target_device}")
+                        module.to(target_device)
+                        # Mark for ComfyUI's cast system if not already marked
+                        if hasattr(module, 'comfy_cast_weights'):
+                            module.comfy_cast_weights = True
                 
-                if hasattr(module, 'weight') or hasattr(module, 'comfy_cast_weights'):
-                    # Move to our assigned device
-                    logger.debug(f"[MultiGPU_DisTorch2] Moving {block_name} to {target_device}")
-                    module.to(target_device)
-                    # Mark for ComfyUI's cast system if not already marked
-                    if hasattr(module, 'comfy_cast_weights'):
-                        module.comfy_cast_weights = True
-            
-            # Return 0 to indicate no additional memory used on compute device
+                    weight_key = "{}.weight".format(block_name)
+                    bias_key = "{}.bias".format(block_name)
+
+                    if weight_key in self.patches:
+                        self.patch_weight_to_device(weight_key, device_to=target_device)
+                    if weight_key in self.weight_wrapper_patches:
+                        module_object.weight_function.extend(self.weight_wrapper_patches[weight_key])
+
+                    if bias_key in self.patches:
+                        self.patch_weight_to_device(bias_key, device_to=target_device)
+                    if bias_key in self.weight_wrapper_patches:
+                        module_object.bias_function.extend(self.weight_wrapper_patches[bias_key])
+
             return 0
 
         
@@ -248,7 +277,12 @@ def analyze_safetensor_loading(model_patcher, allocations_str):
     device_assignments = {device: [] for device in DEVICE_RATIOS_DISTORCH.keys()}
     block_assignments = {}
 
-    compute_device = str(current_device)
+    # Determine the primary compute device (first non-cpu device)
+    compute_device = "cuda:0" # Fallback
+    for dev in sorted_devices:
+        if dev != "cpu":
+            compute_device = dev
+            break
 
     # Calculate total memory to be offloaded to donor devices
     total_offload_gb = sum(DEVICE_RATIOS_DISTORCH.get(d, 0) for d in sorted_devices if d != compute_device)
