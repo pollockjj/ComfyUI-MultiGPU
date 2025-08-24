@@ -60,29 +60,20 @@ def register_patched_safetensor_modelpatcher():
             """Override to use our static device assignments"""
             global safetensor_allocation_store
 
-            # Check if we have a device allocation for this model
             debug_hash = create_safetensor_model_hash(self, "partial_load")
             allocations = safetensor_allocation_store.get(debug_hash)
-            
 
             if not hasattr(self.model, '_distorch_high_precision_loras') or not allocations:
                 result = original_partially_load(self, device_to, extra_memory, force_patch_weights) 
-                # Clean up
                 if hasattr(self, '_distorch_block_assignments'):
                     del self._distorch_block_assignments
-    
-
                 return result
 
-            logger.info(f"[MultiGPU_DisTorch2] DisTorchV2 Loader activated")
-
             mem_counter = 0
-            patch_counter = 0
 
             logger.info(f"[MultiGPU_DisTorch2] Using static allocation for model {debug_hash[:8]}")
-            # Parse allocation string and apply static assignment
             device_assignments = analyze_safetensor_loading(self, allocations)
-            
+            model_original_dtype = comfy.utils.weight_dtype(self.model.state_dict())
             high_precision_loras = self.model._distorch_high_precision_loras
             loading = self._load_list()
             loading.sort(reverse=True)
@@ -109,7 +100,6 @@ def register_patched_safetensor_modelpatcher():
                 has_patches = weight_key in self.patches or bias_key in self.patches
 
                 if not high_precision_loras and block_target_device == "cpu" and has_patches and model_original_dtype in [torch.float8_e4m3fn, torch.float8_e5m2]:
-                    logger.info(f"[MultiGPU_DisTorch2] FP8 casting conditions met for {module_name}")
                     for param_name, param in module_object.named_parameters():
                         if param.dtype.is_floating_point:
                             cast_data = comfy.float.stochastic_rounding(param.data, torch.float8_e4m3fn)
