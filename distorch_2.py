@@ -172,7 +172,6 @@ def analyze_safetensor_loading(model_patcher, allocations_str):
     parsed_allocations = {}
     wildcard_device = "cpu" # Default
 
-    # Parse allocation string
     raw_parsed = {}
     user_requested_values = {}
     for allocation in distorch_alloc.split(';'):
@@ -200,7 +199,6 @@ def analyze_safetensor_loading(model_patcher, allocations_str):
             logger.error(f"[MultiGPU_DisTorch2] Could not parse allocation '{allocation}': {e}")
             return
 
-    # Normalize and finalize allocations
     if mode in ["ratio", "byte"]:
         total_requested = sum(raw_parsed.values())
         if mode == "ratio":
@@ -224,7 +222,9 @@ def analyze_safetensor_loading(model_patcher, allocations_str):
     if wildcard_device not in parsed_allocations:
         parsed_allocations[wildcard_device] = 0
 
-    # Provide user feedback on allocation interpretation
+    # Sort devices for consistent processing
+    sorted_devices = sorted(parsed_allocations.keys(), key=lambda d: (d == "cpu", d))
+
     if not distorch_alloc or distorch_alloc.isspace():
         logger.info("[MultiGPU_DisTorch2] Examples:")
         logger.info("  Direct(byte) Mode - cuda:0,500mb;cuda:1,3.0g;cpu,5gb* -> '*' cpu = over/underflow device, put 0.50gb on cuda0, 3.00gb on cuda1, and 5.00gb (or the rest) on cpu")
@@ -319,16 +319,13 @@ def analyze_safetensor_loading(model_patcher, allocations_str):
                     
                     logger.info(f"[MultiGPU_DisTorch2] Ratio(%) Mode - {distorch_alloc} -> {ratio_string} ratio, put {put_part}")
 
-    # Log allocation table
     logger.info(eq_line)
     logger.info("    DisTorch2 Model Device Allocations")
     logger.info(eq_line)
     
-    fmt_rosetta = "{:<10}{:>8}{:>8}{:>10}{:>10}"
+    fmt_rosetta = "{:<10}{:>8}{:>8}{:>13}{:>10}"
     logger.info(fmt_rosetta.format("Device", "VRAM GB", "Dev %", "Model GB", "Dist Ratio"))
     logger.info(dash_line)
-
-    sorted_devices = sorted(parsed_allocations.keys(), key=lambda d: (d == "cpu", d))
     
     dist_ratio_values = []
     if mode == "ratio":
@@ -401,7 +398,8 @@ def analyze_safetensor_loading(model_patcher, allocations_str):
             compute_device = dev
             break
 
-    if mode == 'gb':
+    # For byte mode with wildcard, exclude wildcard from devices_to_fill
+    if mode == 'gb' or (mode == 'byte' and wildcard_device in raw_parsed):
         devices_to_fill = [d for d in sorted_devices if d != wildcard_device]
     else:
         devices_to_fill = sorted(device_quotas.keys(), key=lambda d: (d == "cpu", d))
