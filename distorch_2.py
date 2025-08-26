@@ -137,18 +137,18 @@ def analyze_safetensor_loading(model_patcher, allocations_str):
     distorch_alloc = allocations_str
     virtual_vram_gb = 0.0
 
-    if '#' in allocations_str:
-        distorch_alloc, virtual_vram_str = allocations_str.split('#')
-        if not distorch_alloc:
-            distorch_alloc = calculate_safetensor_vvram_allocation(model_patcher, virtual_vram_str)
-
-    # Determine the allocation mode
-    mode = "fraction"
-    if any(c in distorch_alloc.lower() for c in ['g', 'm', 'k', 'b']):
+    distorch_alloc, virtual_vram_str = allocations_str.split('#')
+    if not distorch_alloc:
+        mode = "fraction"
+        distorch_alloc = calculate_safetensor_vvram_allocation(model_patcher, virtual_vram_str)
+    elif any(c in distorch_alloc.lower() for c in ['g', 'm', 'k', 'b']):
         mode = "byte"
     elif "%" in distorch_alloc:
         mode = "ratio"
+        distorch_alloc = calculate_fraction_from_ratio_expert_string(model_patcher, distorch_alloc)
+        
     logger.info(f"[MultiGPU_DisTorch2] Detected allocation mode: {mode}")
+
 
     eq_line = "=" * 50
     dash_line = "-" * 50
@@ -240,37 +240,26 @@ def analyze_safetensor_loading(model_patcher, allocations_str):
             compute_device = dev
             break
 
-    # Calculate total memory to be offloaded to donor devices
-    total_offload_gb = sum(DEVICE_RATIOS_DISTORCH.get(d, 0) for d in sorted_devices if d != compute_device)
-    total_offload_bytes = total_offload_gb * (1024**3)
-    
-    offloaded_bytes = 0
-    
-    # Iterate from the TAIL of the model
-    for block_name, module, block_type, block_memory in reversed(block_list):
-        try:
-            # block_memory is already calculated
-            pass
-        except:
-            block_memory = 0
-            if hasattr(module, 'weight') and module.weight is not None:
-                block_memory += module.weight.numel() * module.weight.element_size()
-            if hasattr(module, 'bias') and module.bias is not None:
-                block_memory += module.bias.numel() * module.bias.element_size()
+    # Create a memory quota for each donor device based on its calculated allocation.
+    donor_devices = [d for d in sorted_devices if d != compute_device]
+    donor_quotas = {
+        dev: device_table[dev]["alloc_gb"] * (1024**3)
+        for dev in donor_devices
+    }
 
-        # Assign to donor device (currently assumes one donor 'cpu') until target is met
-        if offloaded_bytes < total_offload_bytes:
-            # For now, simple offload to CPU, will expand for multi-donor
-            donor_device = "cpu"
-            for dev in sorted_devices:
-                if dev != compute_device:
-                    donor_device = dev
-                    break # Use first available donor
-            
-            block_assignments[block_name] = donor_device
-            offloaded_bytes += block_memory
-        else:
-            # Assign remaining blocks to the primary compute device
+    # Iterate from the TAIL of the model, assigning blocks to donors until their quotas are filled.
+    for block_name, module, block_type, block_memory in reversed(block_list):
+        assigned_to_donor = False
+        # Attempt to assign the block to a donor device that has quota remaining.
+        for donor in donor_devices:
+            if donor_quotas[donor] >= block_memory:
+                block_assignments[block_name] = donor
+                donor_quotas[donor] -= block_memory
+                assigned_to_donor = True
+                break # Move to the next block
+        
+        # If no donor had enough quota, assign it to the primary compute device.
+        if not assigned_to_donor:
             block_assignments[block_name] = compute_device
 
     # Explicitly assign tiny blocks to the compute device
@@ -333,6 +322,51 @@ def analyze_safetensor_loading(model_patcher, allocations_str):
         "device_assignments": device_assignments,
         "block_assignments": block_assignments
     }
+
+def calculate_fraction_from_ratio_expert_string(model_patcher, ratio_str):
+    """
+    Converts a user-provided ratio string (which describes how to split the MODEL)
+    into a fraction string (which describes the fraction of DEVICE VRAM to use).
+    This is the correct bridge between the user-facing 'ratio' mode and the
+    internal 'fraction' system.
+    """
+    # 1. Get the model's total size in bytes. This is what we are splitting.
+    raw_block_list = model_patcher._load_list()
+    total_model_memory = sum(module_size for module_size, _, _, _ in raw_block_list)
+
+    # 2. Parse the user's ratio string (e.g., "cuda:0,75;cpu,25") into a dictionary.
+    raw_ratios = {}
+    for allocation in ratio_str.split(';'):
+        if ',' not in allocation: continue
+        dev_name, val_str = allocation.split(',', 1)
+        # Assumes the value is a unitless ratio number, ignores '%' for simplicity.
+        value = float(val_str.replace('%','').strip())
+        raw_ratios[dev_name] = value
+
+    # 3. Sum the total ratio parts to normalize against (e.g., 75 + 25 = 100).
+    total_ratio_parts = sum(raw_ratios.values())
+    
+    # 4. For each device, calculate the fraction of its VRAM required to hold its piece of the model.
+    allocation_parts = []
+    if total_ratio_parts > 0:
+        for dev, ratio_val in raw_ratios.items():
+            # a. Calculate how many bytes of the MODEL this device is responsible for.
+            #    e.g., (75 / 100) * 10GB_model = 7.5GB of the model goes on this device.
+            bytes_of_model_for_device = (ratio_val / total_ratio_parts) * total_model_memory
+            
+            # b. Get the total available VRAM for this specific device.
+            total_vram_of_device = mm.get_total_memory(torch.device(dev))
+            
+            # c. The internal 'fraction' is the portion of the device's VRAM we need to use.
+            #    e.g., 7.5GB_model_portion / 24GB_device_vram = 0.3125
+            if total_vram_of_device > 0:
+                required_fraction = bytes_of_model_for_device / total_vram_of_device
+                allocation_parts.append(f"{dev},{required_fraction:.4f}")
+
+    # 5. Return the newly constructed fraction string (e.g., "cuda:0,0.3125;cpu,0.0195").
+    result_string = ";".join(allocation_parts)
+    logger.info(f"[MultiGPU_DisTorch2] Converted ratio string to fraction string: {result_string}")
+    return result_string
 
 def calculate_safetensor_vvram_allocation(model_patcher, virtual_vram_str):
     """Calculate virtual VRAM allocation string for distributed safetensor loading"""
