@@ -16,6 +16,7 @@ from collections import defaultdict
 import comfy.model_management as mm
 import comfy.model_patcher
 from . import current_device
+from .nodes import get_device_list
 
 safetensor_allocation_store = {}
 safetensor_settings_store = {}
@@ -148,6 +149,12 @@ def analyze_safetensor_loading(model_patcher, allocations_str):
     elif "%" in distorch_alloc:
         mode = "ratio"
         distorch_alloc = calculate_fraction_from_ratio_expert_string(model_patcher, distorch_alloc)
+        
+    all_devices = get_device_list()
+    present_devices = {item.split(',')[0] for item in distorch_alloc.split(';') if ',' in item}
+    for device in all_devices:
+        if device not in present_devices:
+            distorch_alloc += f";{device},0.0"
 
     logger.info(f"[MultiGPU_DisTorch2] Final Allocation String: {distorch_alloc}")
 
@@ -169,7 +176,6 @@ def analyze_safetensor_loading(model_patcher, allocations_str):
             "alloc_gb": alloc_gb
         }
 
-    # Final Allocation Table
     logger.info(eq_line)
     logger.info("    DisTorch2 Model Device Allocations")
     logger.info(eq_line)
@@ -180,7 +186,6 @@ def analyze_safetensor_loading(model_patcher, allocations_str):
 
     sorted_devices = sorted(device_table.keys(), key=lambda d: (d == "cpu", d))
     
-    # Calculate total allocated model size for ratio calculation
     total_allocated_model_bytes = sum(d["alloc_gb"] * (1024**3) for d in device_table.values())
 
     for dev in sorted_devices:
@@ -188,7 +193,6 @@ def analyze_safetensor_loading(model_patcher, allocations_str):
         alloc_fraction = device_table[dev]["fraction"]
         alloc_gb = device_table[dev]["alloc_gb"]
         
-        # Calculate the distribution ratio percentage
         dist_ratio_percent = (alloc_gb * (1024**3) / total_allocated_model_bytes) * 100 if total_allocated_model_bytes > 0 else 0
 
         logger.info(fmt_rosetta.format(
@@ -208,15 +212,12 @@ def analyze_safetensor_loading(model_patcher, allocations_str):
 
     raw_block_list = model_patcher._load_list()
 
-    # Calculate total memory from ComfyUI's list (first pass replacement)
     total_memory = sum(module_size for module_size, _, _, _ in raw_block_list)
 
-    # Set the minimum block size threshold (0.01% of total model memory)
     MIN_BLOCK_THRESHOLD = total_memory * 0.0001
     logger.debug(f"[MultiGPU_DisTorch2] Total model memory: {total_memory} bytes")
     logger.debug(f"[MultiGPU_DisTorch2] Tiny block threshold (0.01%): {MIN_BLOCK_THRESHOLD} bytes")
 
-    # Build all_blocks from ComfyUI's list (second pass replacement)
     all_blocks = []
     for module_size, module_name, module_object, params in raw_block_list:
         block_type = type(module_object).__name__
@@ -225,7 +226,6 @@ def analyze_safetensor_loading(model_patcher, allocations_str):
         memory_by_type[block_type] += module_size
         all_blocks.append((module_name, module_object, block_type, module_size))
 
-    # Filter out tiny blocks from the distribution list
     block_list = [b for b in all_blocks if b[3] >= MIN_BLOCK_THRESHOLD]
     tiny_block_list = [b for b in all_blocks if b[3] < MIN_BLOCK_THRESHOLD]
     
@@ -247,15 +247,11 @@ def analyze_safetensor_loading(model_patcher, allocations_str):
     logger.info(dash_line)
 
     # Distribute blocks sequentially from the tail of the model
+
     device_assignments = {device: [] for device in DEVICE_RATIOS_DISTORCH.keys()}
     block_assignments = {}
 
-    # Determine the primary compute device (first non-cpu device)
-    compute_device = "cuda:0" # Fallback
-    for dev in sorted_devices:
-        if dev != "cpu":
-            compute_device = dev
-            break
+    compute_device = str(current_device)
 
     # Create a memory quota for each donor device based on its calculated allocation.
     donor_devices = [d for d in sorted_devices if d != compute_device]
@@ -267,7 +263,6 @@ def analyze_safetensor_loading(model_patcher, allocations_str):
     # Iterate from the TAIL of the model, assigning blocks to donors until their quotas are filled.
     for block_name, module, block_type, block_memory in reversed(block_list):
         assigned_to_donor = False
-        # Attempt to assign the block to a donor device that has quota remaining.
         for donor in donor_devices:
             if donor_quotas[donor] >= block_memory:
                 block_assignments[block_name] = donor
@@ -275,11 +270,9 @@ def analyze_safetensor_loading(model_patcher, allocations_str):
                 assigned_to_donor = True
                 break # Move to the next block
         
-        # If no donor had enough quota, assign it to the primary compute device.
         if not assigned_to_donor:
-            block_assignments[block_name] = compute_device
+            block_assignments[block_name] = "cpu"
 
-    # Explicitly assign tiny blocks to the compute device
     if tiny_block_list:
         for block_name, module, block_type, block_memory in tiny_block_list:
             block_assignments[block_name] = compute_device
@@ -292,13 +285,11 @@ def analyze_safetensor_loading(model_patcher, allocations_str):
                 device_assignments[device].append((b_name, b_module, b_type, b_mem))
                 break
 
-    # Log final assignments - IDENTICAL FORMAT TO GGML
     logger.info("DisTorch2 Model Final Device/Layer Assignments")
     logger.info(dash_line)
     logger.info(fmt_assign.format("Device", "Layers", "Memory (MB)", "% Total"))
     logger.info(dash_line)
     
-    # Calculate and log tiny blocks separately
     if tiny_block_list:
         tiny_block_memory = sum(b[3] for b in tiny_block_list)
         tiny_mem_mb = tiny_block_memory / (1024 * 1024)
@@ -307,12 +298,10 @@ def analyze_safetensor_loading(model_patcher, allocations_str):
         logger.info(fmt_assign.format(device_label, str(len(tiny_block_list)), f"{tiny_mem_mb:.2f}", f"{tiny_mem_percent:.1f}%"))
         logger.debug(f"[MultiGPU_DisTorch2] Tiny block memory breakdown: {tiny_block_memory} bytes ({tiny_mem_mb:.2f} MB), which is {tiny_mem_percent:.4f}% of total model memory.")
 
-    # Log distributed blocks
     total_assigned_memory = 0
     device_memories = {}
     
     for device, blocks in device_assignments.items():
-        # Exclude tiny blocks from this calculation
         dist_blocks = [b for b in blocks if b[3] >= MIN_BLOCK_THRESHOLD]
         if not dist_blocks:
             continue
@@ -420,7 +409,7 @@ def calculate_fraction_from_byte_expert_string(model_patcher, byte_str):
             allocation_parts.append(f"{dev},{fraction:.4f}")
     
     result_string = ";".join(allocation_parts)
-    logger.info(f"[MultiGPU_DisTorch2] Converted byte string '{byte_str}' to final fraction string: '{result_string}'")
+
     return result_string
 
 def calculate_fraction_from_ratio_expert_string(model_patcher, ratio_str):
@@ -470,7 +459,7 @@ def calculate_fraction_from_ratio_expert_string(model_patcher, ratio_str):
     logger.info(f"[MultiGPU_DisTorch2] Ratio(%) Mode - {ratio_str} -> {ratio_string} ratio, put {put_part}")
 
     result_string = ";".join(allocation_parts)
-    logger.info(f"[MultiGPU_DisTorch2] Converted ratio string to fraction string: {result_string}")
+
     return result_string
 
 def calculate_safetensor_vvram_allocation(model_patcher, virtual_vram_str):
