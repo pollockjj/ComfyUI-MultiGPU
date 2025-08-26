@@ -143,6 +143,9 @@ def analyze_safetensor_loading(model_patcher, allocations_str):
     if not distorch_alloc:
         mode = "fraction"
         distorch_alloc = calculate_safetensor_vvram_allocation(model_patcher, virtual_vram_str)
+        logger.info("[MultiGPU_DisTorch2] Examples:")
+        logger.info("  Direct(byte) Mode - cuda:0,500mb;cuda:1,3.0g;cpu,5gb* -> '*' cpu = over/underflow device, put 0.50gb on cuda0, 3.00gb on cuda1, and 5.00gb (or the rest) on cpu")
+        logger.info("  Ratio(%) Mode - cuda:0,8%;cuda:1,8%;cpu,4% -> 8:8:4 ratio, put 40% on cuda0, 40% on cuda1, and 20% on cpu")
     elif any(c in distorch_alloc.lower() for c in ['g', 'm', 'k', 'b']):
         mode = "byte"
         distorch_alloc = calculate_fraction_from_byte_expert_string(model_patcher, distorch_alloc)
@@ -542,7 +545,7 @@ def calculate_safetensor_vvram_allocation(model_patcher, virtual_vram_str):
     allocation_string = ";".join(allocation_parts)
     
     fmt_mem = "{:<20}{:>20}"
-    logger.info(fmt_mem.format("\n  v2 Expert String", allocation_string))
+    logger.info(fmt_mem.format("[MultiGPU_DisTorch2] Virtual VRAM Expert String", allocation_string))
 
     return allocation_string
 
