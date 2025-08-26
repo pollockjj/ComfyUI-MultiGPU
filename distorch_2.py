@@ -148,7 +148,7 @@ def analyze_safetensor_loading(model_patcher, allocations_str):
     elif "%" in distorch_alloc:
         mode = "ratio"
         distorch_alloc = calculate_fraction_from_ratio_expert_string(model_patcher, distorch_alloc)
-        
+
     eq_line = "=" * 50
     dash_line = "-" * 50
     fmt_assign = "{:<18}{:>7}{:>14}{:>10}"
@@ -176,15 +176,17 @@ def analyze_safetensor_loading(model_patcher, allocations_str):
     logger.info(fmt_rosetta.format("Device", "VRAM GB", "Dev %", "Model GB", "Dist %"))
     logger.info(dash_line)
 
-    sorted_devices = sorted(device_table.keys(), key=lambda d: (d == "cpu", d))
+    from .nodes import get_device_list
+    all_devices_list = get_device_list()
+    sorted_devices = sorted(all_devices_list, key=lambda d: (d == "cpu", d))
     
     # Calculate total allocated model size for ratio calculation
     total_allocated_model_bytes = sum(d["alloc_gb"] * (1024**3) for d in device_table.values())
 
     for dev in sorted_devices:
-        total_dev_gb = device_table[dev]["total_gb"]
-        alloc_fraction = device_table[dev]["fraction"]
-        alloc_gb = device_table[dev]["alloc_gb"]
+        total_dev_gb = mm.get_total_memory(torch.device(dev)) / (1024**3)
+        alloc_fraction = device_table.get(dev, {}).get("fraction", 0.0)
+        alloc_gb = device_table.get(dev, {}).get("alloc_gb", 0.0)
         
         # Calculate the distribution ratio percentage
         dist_ratio_percent = (alloc_gb * (1024**3) / total_allocated_model_bytes) * 100 if total_allocated_model_bytes > 0 else 0
@@ -245,21 +247,18 @@ def analyze_safetensor_loading(model_patcher, allocations_str):
     logger.info(dash_line)
 
     # Distribute blocks sequentially from the tail of the model
-    device_assignments = {device: [] for device in DEVICE_RATIOS_DISTORCH.keys()}
+    from .nodes import get_device_list
+    all_devices = get_device_list()
+    device_assignments = {dev: [] for dev in all_devices}
     block_assignments = {}
 
-    # Determine the primary compute device (first non-cpu device)
-    compute_device = "cuda:0" # Fallback
-    for dev in sorted_devices:
-        if dev != "cpu":
-            compute_device = dev
-            break
+    compute_device = str(current_device)
 
     # Create a memory quota for each donor device based on its calculated allocation.
-    donor_devices = [d for d in sorted_devices if d != compute_device]
+    donor_devices = [d for d in all_devices_list if d != compute_device]
     donor_quotas = {
-        dev: device_table[dev]["alloc_gb"] * (1024**3)
-        for dev in donor_devices
+        dev: device_table.get(dev, {}).get("alloc_gb", 0.0) * (1024**3)
+        for dev in all_devices_list
     }
 
     # Iterate from the TAIL of the model, assigning blocks to donors until their quotas are filled.
@@ -273,9 +272,10 @@ def analyze_safetensor_loading(model_patcher, allocations_str):
                 assigned_to_donor = True
                 break # Move to the next block
         
-        # If no donor had enough quota, assign it to the primary compute device.
+        # If no donor had enough quota, assign it to the CPU as a fallback.
         if not assigned_to_donor:
-            block_assignments[block_name] = compute_device
+            block_assignments[block_name] = "cpu"
+            logger.info(f"[MultiGPU_DisTorch2] WARNING: Unaccounted for block '{block_name}' fell back to CPU. This may indicate a malformed allocation string.")
 
     # Explicitly assign tiny blocks to the compute device
     if tiny_block_list:
