@@ -26,7 +26,7 @@ What is DisTorch? Standing for "distributed torch", the DisTorch nodes in this c
 - **Two Modes**:
   - **Normal Mode**: The standard `virtual_vram_gb` slider continues to let you select one donor device (like your system's RAM) to offload to. The more virtual VRAM you add, the more of the model is pushed to the donor device. Simple and effective.
   - **Expert Mode**: For connoisseurs of performance, with two Expert Modes `byte` and `ratio` that allow you to specify exactly how the *model itself* is split across all your available devices as well as the legacy `fraction` method for *your devices* to have exact allocations. These modes are all accomplished via a single, flexible text string:
-    - **Bytes (Recommended)**: The most direct way to slice up your model. Inspired by Huggingface's `device_map`, you can specify the exact number of gigabytes or megabytes for each device. The wildcard `*` assigns the remainder of the model to a device, making it easy to offload.
+    - **Bytes (Recommended)**: The most direct way to slice up your model. Inspired by Huggingface's `device_map`, you can specify the exact number of gigabytes or megabytes for each device. The wildcard `*` assigns the remainder of the model to a device, making it easy to offload. (The CPU acts as the default wildcard if none are specified.)
       - **Example**: `cuda:0,2.5gb;cpu,*` will load the first 2.50GB of the model onto `cuda:0` and the rest onto the `cpu`.
       - **Example**: `cuda:0,500mb;cuda:1,3.0g;cpu,5gb*` will put 0.50GB on `cuda:0`, 3.00GB on `cuda:1`, and 5.00GB (or the remainder) on `cpu`.
     - **Ratio**: Love the simplicity of `llama.cpp`'s `tensor_split`? This mode is for you. Specify a ratio to distribute the model across devices.
