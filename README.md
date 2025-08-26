@@ -11,6 +11,7 @@
 1.  **Universal .safetensors Support**: Native DisTorch2 distribution for all `.safetensors` models.
 2.  **Up to 10% Faster GGUF Inference versus DisTorch1**: The new DisTorch2 logic provides potential speedups for GGUF models versus the DisTorch V1 method.
 3.  **Bespoke WanVideoWrapper Integration**: Tightly integrated, stable support for WanVideoWrapper with eight bespoke MultiGPU nodes.
+4.  **New Model-Driven Allocation Options**: Two new inutuitive model-driven Expert Modes to facilitate exact placement on all available devices - 'bytes' and 'ratio'
 
 <h1 align="center">DisTorch: How It Works</h1>
 
@@ -22,14 +23,18 @@
 
 What is DisTorch? Standing for "distributed torch", the DisTorch nodes in this custom_node provide a way of moving the static parts of your main image generation model known as the `UNet` off your main compute card to somewhere slower, but one that is not taking up space that could be better used for longer videos or more concurrent images. By selecting one or more donor devices - main CPU DRAM or another cuda/xps device's VRAM - you can select how much of the model is loaded on that device instead of your main `compute` card. Just set how much VRAM you want to free up, and DisTorch handles the rest.
 
-- **Virtual VRAM**: Defaults to 4GB - just adjust it based on your needs
 - **Two Modes**:
-  - **Donor Device**: Offloads to device of your choice, defaults to system RAM
-  - **Expert Mode Allocation**: Arbitrarily assign parts of the Unet across *ALL* available devices - Fine-grained control on exactly where your models are loaded! Choose each device and what percent of that device is to be allocated for ComfyUI model loading and let ComfyUI-MultiGPU do the rest behind the scenes! 
-
- - Hint: Every run using the standard `virtual_vram_gb` allocation scheme creates its own v2 Expert String listed in the log.
-   - **Example**:v2 Expert String cuda:0,0.2126;cpu,0.0851 = 21.26% of cuda:0 memory and 8.51% of CPU memory are dedicated to a model in this case. 
-   - Play around and see how the expert string moves for your devices. You'll be custom tuning in no time!
+  - **Normal Mode**: The standard `virtual_vram_gb` slider continues to let you select one donor device (like your system's RAM) to offload to. The more virtual VRAM you add, the more of the model is pushed to the donor device. Simple and effective.
+  - **Expert Mode**: For connoisseurs of performance, with two Expert Modes `byte` and `ratio` that allow you to specify exactly how the *model itself* is split across all your available devices as well as the legacy `fraction` method for *your devices* to have exact allocations. These modes are all accomplished via a single, flexible text string:
+    - **Bytes (Recommended)**: The most direct way to slice up your model. Inspired by Huggingface's `device_map`, you can specify the exact number of gigabytes or megabytes for each device. The wildcard `*` assigns the remainder of the model to a device, making it easy to offload.
+      - **Example**: `cuda:0,2.5gb;cpu,*` will load the first 2.50GB of the model onto `cuda:0` and the rest onto the `cpu`.
+      - **Example**: `cuda:0,500mb;cuda:1,3.0g;cpu,5gb*` will put 0.50GB on `cuda:0`, 3.00GB on `cuda:1`, and 5.00GB (or the remainder) on `cpu`.
+    - **Ratio**: Love the simplicity of `llama.cpp`'s `tensor_split`? This mode is for you. Specify a ratio to distribute the model across devices.
+      - **Example**: `cuda:0,25%;cpu,75%` will split the model in a 1:3 ratio, loading 25% onto `cuda:0` and 75% onto the `cpu`.
+      - **Example**: `cuda:0,8%;cuda:1,8%;cpu,4%` uses an 8:8:4 ratio, putting 40% of the model on `cuda:0`, 40% on `cuda:1`, and 20% on `cpu`.
+    - **Fraction**: The original DisTorch expert mode. This mode splits the model based on the fraction of each device's *total VRAM* to be used.
+      - **Example**: `cuda:0,0.1;cpu,0.5` will use 10% of `cuda:0`'s VRAM and 50% of the `cpu`'s RAM to hold the model.
+      - **Example**: `cuda:0,0.0207;cuda:1,0.1273;cpu,0.0808` will use 2.1% of `cuda:0`'s VRAM, 12.7% of `cuda:1`'s VRAM, and 8.1% of the `cpu`'s RAM to hold the model.
 
 ## 🎯 Key Benefits
 - Free up GPU VRAM instantly without complex settings
