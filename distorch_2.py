@@ -162,8 +162,28 @@ def analyze_safetensor_loading(model_patcher, allocations_str):
 
     raw_block_list = model_patcher._load_list()
     total_memory = sum(module_size for module_size, _, _, _ in raw_block_list)
+
+    # Segregate tiny blocks and recalculate total memory for precision
+    block_summary = {}
+    memory_by_type = defaultdict(int)
+    MIN_BLOCK_THRESHOLD = total_memory * 0.0001
+    
+    all_blocks = []
+    for module_size, module_name, module_object, params in raw_block_list:
+        block_type = type(module_object).__name__
+        block_summary[block_type] = block_summary.get(block_type, 0) + 1
+        memory_by_type[block_type] += module_size
+        all_blocks.append((module_name, module_object, block_type, module_size))
+
+    block_list = [b for b in all_blocks if b[3] >= MIN_BLOCK_THRESHOLD]
+    tiny_block_list = [b for b in all_blocks if b[3] < MIN_BLOCK_THRESHOLD]
+    
+    tiny_block_memory = sum(b[3] for b in tiny_block_list)
+    distributable_memory = total_memory - tiny_block_memory
+    logger.debug(f"[MultiGPU_DisTorch2] Total Memory: {total_memory / (1024**2):.2f} MB, Tiny Block Memory: {tiny_block_memory / (1024**2):.2f} MB, Distributable Memory: {distributable_memory / (1024**2):.2f} MB")
     
     mode = "fraction"
+    remaining_mem = 0 # Initialize for delayed logging
     if any(c in distorch_alloc.lower() for c in ['g', 'm', 'k', 'b']):
         mode = "byte"
     elif "%" in distorch_alloc:
@@ -203,20 +223,19 @@ def analyze_safetensor_loading(model_patcher, allocations_str):
         total_requested = sum(raw_parsed.values())
         if mode == "ratio":
             for dev, val in raw_parsed.items():
-                parsed_allocations[dev] = (val / total_requested) * total_memory
+                parsed_allocations[dev] = (val / total_requested) * distributable_memory
         elif mode == "byte":
-            if total_requested > total_memory:
-                logger.info(f"[MultiGPU_DisTorch2] Over-allocation: Requested {total_requested/(1024**3):.2f}GB, but model is {total_memory/(1024**3):.2f}GB. Pro-rating allocations.")
+            if total_requested > distributable_memory:
+                logger.info(f"[MultiGPU_DisTorch2] Over-allocation: Requested {total_requested/(1024**3):.2f}GB, but model is {distributable_memory/(1024**3):.2f}GB. Pro-rating allocations.")
                 for dev, val in raw_parsed.items():
-                    parsed_allocations[dev] = (val / total_requested) * total_memory
+                    parsed_allocations[dev] = (val / total_requested) * distributable_memory
             else:
                 parsed_allocations = raw_parsed
                 if wildcard_device not in parsed_allocations:
                     parsed_allocations[wildcard_device] = 0
                 
-                remaining_mem = total_memory - total_requested
+                remaining_mem = distributable_memory - total_requested
                 if remaining_mem > 0:
-                    logger.info(f"[MultiGPU_DisTorch2] Under-allocation: {remaining_mem/(1024**2):.2f}MB of model unallocated. Assigning to wildcard device '{wildcard_device}'.")
                     parsed_allocations[wildcard_device] += remaining_mem
 
     if wildcard_device not in parsed_allocations:
@@ -279,6 +298,9 @@ def analyze_safetensor_loading(model_patcher, allocations_str):
                     wildcard_dev = original_wildcard_device if original_wildcard_device else "cpu"
                     logger.info(f"[MultiGPU_DisTorch2] Direct(byte) Mode - {distorch_alloc} -> '*' {wildcard_dev} = over/underflow device, put {put_part}")
             
+            if remaining_mem > 0:
+                logger.info(f"[MultiGPU_DisTorch2] Under-allocation: {remaining_mem/(1024**2):.2f}MB of model unallocated. Assigning to wildcard device '{wildcard_device}'.")
+
         elif mode == "ratio":
             total_requested_percent = sum(raw_parsed.values())
             if total_requested_percent > 0:
@@ -338,7 +360,7 @@ def analyze_safetensor_loading(model_patcher, allocations_str):
                 dist_ratio_values.append("0%")
     elif mode == "byte" or mode == "fraction":
         for dev in sorted_devices:
-            model_percent = (parsed_allocations[dev] / total_memory) * 100 if total_memory > 0 else 0
+            model_percent = (parsed_allocations[dev] / distributable_memory) * 100 if distributable_memory > 0 else 0
             dist_ratio_values.append(f"{model_percent:.1f}%")
 
     for i, dev in enumerate(sorted_devices):
@@ -351,28 +373,6 @@ def analyze_safetensor_loading(model_patcher, allocations_str):
         logger.info(fmt_rosetta.format(dev, f"{total_dev_gb:.2f}", f"{device_percent:.1f}%", f"{alloc_gb:.2f}", dist_ratio_str))
     
     logger.info(dash_line)
-
-    # Build block lists
-    block_summary = {}
-    memory_by_type = defaultdict(int)
-    
-    MIN_BLOCK_THRESHOLD = total_memory * 0.0001
-    logger.debug(f"[MultiGPU_DisTorch2] Total model memory: {total_memory / (1024**2):.2f} MB")
-    logger.debug(f"[MultiGPU_DisTorch2] Tiny block threshold (0.01%): {MIN_BLOCK_THRESHOLD} bytes")
-
-    all_blocks = []
-    for module_size, module_name, module_object, params in raw_block_list:
-        block_type = type(module_object).__name__
-        block_summary[block_type] = block_summary.get(block_type, 0) + 1
-        memory_by_type[block_type] += module_size
-        all_blocks.append((module_name, module_object, block_type, module_size))
-
-    block_list = [b for b in all_blocks if b[3] >= MIN_BLOCK_THRESHOLD]
-    tiny_block_list = [b for b in all_blocks if b[3] < MIN_BLOCK_THRESHOLD]
-    
-    logger.debug(f"[MultiGPU_DisTorch2] Total blocks: {len(all_blocks)}")
-    logger.debug(f"[MultiGPU_DisTorch2] Distributable blocks: {len(block_list)}")
-    logger.debug(f"[MultiGPU_DisTorch2] Tiny blocks (<0.01%): {len(tiny_block_list)}")
 
     # Log layer distribution
     logger.info("    DisTorch2 Model Layer Distribution")
@@ -398,11 +398,7 @@ def analyze_safetensor_loading(model_patcher, allocations_str):
             compute_device = dev
             break
 
-    # For byte mode with wildcard, exclude wildcard from devices_to_fill
-    if mode == 'gb' or (mode == 'byte' and wildcard_device in raw_parsed):
-        devices_to_fill = [d for d in sorted_devices if d != wildcard_device]
-    else:
-        devices_to_fill = sorted(device_quotas.keys(), key=lambda d: (d == "cpu", d))
+    devices_to_fill = sorted(device_quotas.keys(), key=lambda d: (d == "cpu", d))
 
     if mode == "ratio":
         total_requested_percent = sum(raw_parsed.values())
@@ -455,13 +451,17 @@ def analyze_safetensor_loading(model_patcher, allocations_str):
 
         unassigned_blocks = [b for b in block_list if b[0] not in block_assignments]
         if unassigned_blocks:
-            if mode == 'gb':
-                logger.info(f"[MultiGPU_DisTorch2-GB] Assigning {len(unassigned_blocks)} remaining blocks to wildcard device '{wildcard_device}'.")
+            # This logic branch should not be hit if quotas are calculated correctly and a wildcard is used.
+            # As a fallback, assign remaining blocks to the designated overflow device.
+            if wildcard_device:
+                unassigned_memory = sum(b[3] for b in unassigned_blocks)
+                logger.info(f"[MultiGPU_DisTorch2] Assigning {len(unassigned_blocks)} remaining blocks ({unassigned_memory / (1024**2):.2f} MB) to overflow device '{wildcard_device}'.")
                 for block_name, _, _, _ in unassigned_blocks:
                     block_assignments[block_name] = wildcard_device
             else:
+                # If no wildcard is set, this is a true warning condition.
                 unassigned_memory = sum(b[3] for b in unassigned_blocks)
-                logger.warning(f"[MultiGPU_DisTorch2] {unassigned_memory / (1024**2):.2f} MB of model did not fit into allocations. Assigning to compute device '{compute_device}'.")
+                logger.warning(f"[MultiGPU_DisTorch2] {unassigned_memory / (1024**2):.2f} MB of model did not fit into allocations and no overflow device was set. Assigning to compute device '{compute_device}'.")
                 for block_name, _, _, _ in unassigned_blocks:
                     block_assignments[block_name] = compute_device
 
