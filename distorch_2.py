@@ -142,6 +142,14 @@ def analyze_safetensor_loading(model_patcher, allocations_str):
         if not distorch_alloc:
             distorch_alloc = calculate_safetensor_vvram_allocation(model_patcher, virtual_vram_str)
 
+    # Determine the allocation mode
+    mode = "fraction"
+    if any(c in distorch_alloc.lower() for c in ['g', 'm', 'k', 'b']):
+        mode = "byte"
+    elif "%" in distorch_alloc:
+        mode = "ratio"
+    logger.info(f"[MultiGPU_DisTorch2] Detected allocation mode: {mode}")
+
     eq_line = "=" * 50
     dash_line = "-" * 50
     fmt_assign = "{:<18}{:>7}{:>14}{:>10}"
