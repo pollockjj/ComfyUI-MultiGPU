@@ -624,6 +624,8 @@ def override_class_with_distorch_safetensor_v2(cls):
             vram_string = ""
             if virtual_vram_gb > 0:
                 vram_string = f"{compute_device};{virtual_vram_gb};{donor_device}"
+            elif expert_mode_allocations:  # Only include compute device if there's an expert string
+                vram_string = compute_device
 
             full_allocation = f"{expert_mode_allocations}#{vram_string}" if expert_mode_allocations or vram_string else ""
             
