@@ -158,6 +158,10 @@ class WanVideoVAELoader:
             
             result = original_loader.loadmodel(model_name, precision, compile_args)
             
+            # Attach device info to VAE object for downstream nodes
+            if result and len(result) > 0:
+                result[0].load_device = selected_device
+            
             logging.info(f"[MultiGPU] WanVideo VAE loaded on {selected_device}")
             return result
         else:
@@ -382,6 +386,33 @@ class WanVideoSampler:
         from nodes import NODE_CLASS_MAPPINGS
         original_sampler = NODE_CLASS_MAPPINGS["WanVideoSampler"]()
         return original_sampler.process(model, **kwargs)
+
+class WanVideoVACEEncode:
+    @classmethod
+    def INPUT_TYPES(s):
+        from nodes import NODE_CLASS_MAPPINGS
+        original_types = NODE_CLASS_MAPPINGS["WanVideoVACEEncode"].INPUT_TYPES()
+        return original_types
+    
+    RETURN_TYPES = ("LATENT",)
+    RETURN_NAMES = ("latent",)
+    FUNCTION = "process"
+    CATEGORY = "WanVideoWrapper"
+    DESCRIPTION = "MultiGPU-aware VACE encoder that uses device from input VAE"
+    
+    def process(self, vae, **kwargs):
+        # Get device from VAE object
+        vae_device = vae.load_device
+        logging.info(f"[MultiGPU] WanVideoVACEEncode: Processing on device: {vae_device}")
+        
+        # Patch all WanVideo modules to use the VAE's device
+        for module_name in sys.modules.keys():
+            if 'WanVideoWrapper' in module_name and hasattr(sys.modules[module_name], 'device'):
+                sys.modules[module_name].device = vae_device
+        
+        from nodes import NODE_CLASS_MAPPINGS
+        original_encoder = NODE_CLASS_MAPPINGS["WanVideoVACEEncode"]()
+        return original_encoder.process(vae, **kwargs)
 
 class WanVideoBlockSwap:
     @classmethod
