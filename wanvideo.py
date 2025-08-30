@@ -36,9 +36,10 @@ class WanVideoModelLoader:
                 "block_swap_args": ("BLOCKSWAPARGS", ),
                 "lora": ("WANVIDLORA", {"default": None}),
                 "vram_management_args": ("VRAM_MANAGEMENTARGS", {"default": None, "tooltip": "Alternative offloading method from DiffSynth-Studio, more aggressive in reducing memory use than block swapping, but can be slower"}),
-                "vace_model": ("VACEPATH", {"default": None, "tooltip": "VACE model to use when not using model that has it included"}),
-                "fantasytalking_model": ("FANTASYTALKINGMODEL", {"default": None, "tooltip": "FantasyTalking model https://github.com/Fantasy-AMAP"}),
+                "extra_model": ("VACEPATH", {"default": None, "tooltip": "Extra model to add to the main model, ie. VACE or MTV Crafter"}),
+                "fantasytalking_model": ("FANTASYTALKMODEL", {"default": None, "tooltip": "FantasyTalking model https://github.com/Fantasy-AMAP"}),
                 "multitalk_model": ("MULTITALKMODEL", {"default": None, "tooltip": "Multitalk model"}),
+                "fantasyportrait_model": ("FANTASYPORTRAITMODEL", {"default": None, "tooltip": "FantasyPortrait model"}),
             }
         }
 
@@ -48,7 +49,7 @@ class WanVideoModelLoader:
     CATEGORY = "WanVideoWrapper"
 
     def loadmodel(self, model, base_precision, device, quantization,
-                  compile_args=None, attention_mode="sdpa", block_swap_args=None, lora=None, vram_management_args=None, vace_model=None, fantasytalking_model=None, multitalk_model=None):
+                  compile_args=None, attention_mode="sdpa", block_swap_args=None, lora=None, vram_management_args=None, extra_model=None, fantasytalking_model=None, multitalk_model=None, fantasyportrait_model=None):
         logging.debug(f"[MultiGPU] WanVideoModelLoader: User selected device: {device}")
         
         selected_device = torch.device(device)
@@ -89,7 +90,7 @@ class WanVideoModelLoader:
             
             logging.debug(f"[MultiGPU] Calling original WanVideo loader")
             result = original_loader.loadmodel(model, base_precision, load_device, quantization,
-                                              compile_args, attention_mode, block_swap_args, lora, vram_management_args, vace_model, fantasytalking_model, multitalk_model)
+                                              compile_args, attention_mode, block_swap_args, lora, vram_management_args, extra_model=extra_model, fantasytalking_model=fantasytalking_model, multitalk_model=multitalk_model, fantasyportrait_model=fantasyportrait_model)
             
             if result and len(result) > 0 and hasattr(result[0], 'model'):
                 model_obj = result[0]
@@ -107,7 +108,7 @@ class WanVideoModelLoader:
         else:
             logging.error(f"[MultiGPU] Could not patch WanVideo modules, falling back")
             return original_loader.loadmodel(model, base_precision, load_device, quantization,
-                                            compile_args, attention_mode, block_swap_args, lora, vram_management_args, vace_model, fantasytalking_model, multitalk_model)
+                                            compile_args, attention_mode, block_swap_args, lora, vram_management_args, extra_model=extra_model, fantasytalking_model=fantasytalking_model, multitalk_model=multitalk_model, fantasyportrait_model=fantasyportrait_model)
 
 
 class WanVideoVAELoader:
@@ -356,11 +357,11 @@ class WanVideoModelLoader_2:
     
     def loadmodel(self, model, base_precision, device, quantization,
                   compile_args=None, attention_mode="sdpa", block_swap_args=None, lora=None, 
-                  vram_management_args=None, vace_model=None, fantasytalking_model=None, multitalk_model=None):
+                  vram_management_args=None, vace_model=None, fantasytalking_model=None, multitalk_model=None, fantasyportrait_model=None):
         loader = WanVideoModelLoader()
         return loader.loadmodel(model, base_precision, device, quantization,
                               compile_args, attention_mode, block_swap_args, lora,
-                              vram_management_args, vace_model, fantasytalking_model, multitalk_model)
+                              vram_management_args, vace_model, fantasytalking_model, multitalk_model, fantasyportrait_model)
 
 class WanVideoSampler:
     @classmethod
@@ -436,6 +437,8 @@ class WanVideoBlockSwap:
                                                   "tooltip": "Use non-blocking memory transfer for offloading, reserves more RAM but is faster"}),
                 "vace_blocks_to_swap": ("INT", {"default": 0, "min": 0, "max": 15, "step": 1, 
                                                "tooltip": "Number of VACE blocks to swap, the VACE model has 15 blocks"}),
+                "prefetch_blocks": ("INT", {"default": 0, "min": 0, "max": 40, "step": 1, "tooltip": "Number of blocks to prefetch ahead, can speed up processing but increases memory usage. 1 is usually enough to offset speed loss from block swapping, use the debug option to confirm it for your system"}),
+                "block_swap_debug": ("BOOLEAN", {"default": False, "tooltip": "Enable debug logging for block swapping"}),
             },
         }
     
@@ -446,7 +449,7 @@ class WanVideoBlockSwap:
     DESCRIPTION = "Block swap settings with explicit device selection for memory management across GPUs"
     
     def setargs(self, blocks_to_swap, swap_device, model_offload_device, offload_img_emb, offload_txt_emb, 
-                use_non_blocking=False, vace_blocks_to_swap=0):
+                use_non_blocking=False, vace_blocks_to_swap=0, prefetch_blocks=0, block_swap_debug=False):
         logging.debug(f"[MultiGPU] WanVideoBlockSwap: swap_device={swap_device}, model_offload_device={model_offload_device}, blocks_to_swap={blocks_to_swap}")
         
         selected_swap_device = torch.device(swap_device)
@@ -472,6 +475,8 @@ class WanVideoBlockSwap:
             "offload_txt_emb": offload_txt_emb,
             "use_non_blocking": use_non_blocking,
             "vace_blocks_to_swap": vace_blocks_to_swap,
+            "prefetch_blocks": prefetch_blocks,
+            "block_swap_debug": block_swap_debug,
             "swap_device": swap_device,
             "model_offload_device": model_offload_device,
         }
