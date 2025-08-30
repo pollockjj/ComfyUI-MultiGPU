@@ -4,11 +4,11 @@ import sys
 import inspect
 import folder_paths
 import comfy.model_management as mm
+from .device_utils import get_device_list
 
 class WanVideoModelLoader:
     @classmethod
     def INPUT_TYPES(s):
-        from . import get_device_list
         devices = get_device_list()
         
         return {
@@ -114,7 +114,6 @@ class WanVideoModelLoader:
 class WanVideoVAELoader:
     @classmethod
     def INPUT_TYPES(s):
-        from . import get_device_list
         devices = get_device_list()
         
         return {
@@ -173,7 +172,6 @@ class WanVideoVAELoader:
 class LoadWanVideoT5TextEncoder:
     @classmethod
     def INPUT_TYPES(s):
-        from . import get_device_list
         devices = get_device_list()
         
         return {
@@ -233,7 +231,6 @@ class LoadWanVideoT5TextEncoder:
 class WanVideoTextEncode:
     @classmethod
     def INPUT_TYPES(s):
-        from . import get_device_list
         devices = get_device_list()
         
         return {"required": {
@@ -291,7 +288,6 @@ class WanVideoTextEncode:
 class LoadWanVideoClipTextEncoder:
     @classmethod
     def INPUT_TYPES(s):
-        from . import get_device_list
         devices = get_device_list()
         
         return {
@@ -418,7 +414,6 @@ class WanVideoVACEEncode:
 class WanVideoBlockSwap:
     @classmethod
     def INPUT_TYPES(s):
-        from . import get_device_list
         devices = get_device_list()
         
         return {

@@ -12,6 +12,7 @@ logger = logging.getLogger("MultiGPU")
 import copy
 from collections import defaultdict
 import comfy.model_management as mm
+from .device_utils import get_device_list
 
 # Global store for model allocations
 model_allocation_store = {}
@@ -292,7 +293,6 @@ def calculate_vvram_allocation_string(model, virtual_vram_str):
 
 def override_class_with_distorch_gguf(cls):
     """Legacy DisTorch wrapper for GGUF models for backward compatibility."""
-    from .nodes import get_device_list
     from . import current_device
     
     class NodeOverrideDisTorchGGUFLegacy(cls):
@@ -330,7 +330,7 @@ def override_class_with_distorch_gguf(cls):
             vram_string = ""
             if virtual_vram_gb > 0:
                 if use_other_vram:
-                    available_devices = [d for d in get_device_list() if d.startswith(("cuda", "xpu"))]
+                    available_devices = [d for d in get_device_list() if d != "cpu"]
                     other_devices = [d for d in available_devices if d != device]
                     other_devices.sort(key=lambda x: int(x.split(':')[1] if ':' in x else x[-1]), reverse=False)
                     device_string = ','.join(other_devices + ['cpu'])
@@ -354,7 +354,6 @@ def override_class_with_distorch_gguf(cls):
 
 def override_class_with_distorch_gguf_v2(cls):
     """DisTorch 2.0 wrapper for GGUF models."""
-    from .nodes import get_device_list
     from . import current_device
     
     class NodeOverrideDisTorchGGUFv2(cls):
@@ -406,7 +405,6 @@ def override_class_with_distorch_gguf_v2(cls):
 
 def override_class_with_distorch_clip(cls):
     """DisTorch wrapper for CLIP models with GGUF support"""
-    from .nodes import get_device_list
     from . import current_text_encoder_device
     
     class NodeOverrideDisTorch(cls):
@@ -441,7 +439,7 @@ def override_class_with_distorch_clip(cls):
             vram_string = ""
             if virtual_vram_gb > 0:
                 if use_other_vram:
-                    available_devices = [d for d in get_device_list() if d.startswith(("cuda", "xpu"))]
+                    available_devices = [d for d in get_device_list() if d != "cpu"]
                     other_devices = [d for d in available_devices if d != device]
                     other_devices.sort(key=lambda x: int(x.split(':')[1] if ':' in x else x[-1]), reverse=False)
                     device_string = ','.join(other_devices + ['cpu'])

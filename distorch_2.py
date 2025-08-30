@@ -16,7 +16,7 @@ from collections import defaultdict
 import comfy.model_management as mm
 import comfy.model_patcher
 from . import current_device
-from .nodes import get_device_list
+from .device_utils import get_device_list
 
 safetensor_allocation_store = {}
 safetensor_settings_store = {}
@@ -549,7 +549,6 @@ def calculate_safetensor_vvram_allocation(model_patcher, virtual_vram_str):
 
 def override_class_with_distorch_safetensor_v2(cls):
     """DisTorch 2.0 wrapper for safetensor models"""
-    from .nodes import get_device_list
     from . import current_device
     
     class NodeOverrideDisTorchSafetensorV2(cls):

@@ -2,26 +2,7 @@ import torch
 import folder_paths
 from pathlib import Path
 from nodes import NODE_CLASS_MAPPINGS
-
-def _has_xpu():
-    try:
-        return hasattr(torch, "xpu") and hasattr(torch.xpu, "is_available") and torch.xpu.is_available()
-    except Exception:
-        return False
-
-def get_device_list():
-    devs = ["cpu"]
-    try:
-        if hasattr(torch, "cuda") and hasattr(torch.cuda, "is_available") and torch.cuda.is_available():
-            devs += [f"cuda:{i}" for i in range(torch.cuda.device_count())]
-    except Exception:
-        pass
-    try:
-        if _has_xpu():
-            devs += [f"xpu:{i}" for i in range(torch.xpu.device_count())]
-    except Exception:
-        pass
-    return devs
+from .device_utils import get_device_list
 
 class DeviceSelectorMultiGPU:
     @classmethod

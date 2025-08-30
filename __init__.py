@@ -6,6 +6,7 @@ from pathlib import Path
 import folder_paths
 import comfy.model_management as mm
 from nodes import NODE_CLASS_MAPPINGS as GLOBAL_NODE_CLASS_MAPPINGS
+from .device_utils import get_device_list, is_accelerator_available
 
 # --- DisTorch V2 Logging Configuration ---
 # Set to "E" for Engineering (DEBUG) or "P" for Production (INFO)
@@ -28,31 +29,6 @@ if not logger.handlers:
 # Global device state management
 current_device = mm.get_torch_device()
 current_text_encoder_device = mm.text_encoder_device()
-
-def _has_xpu():
-    try:
-        return hasattr(torch, "xpu") and hasattr(torch.xpu, "is_available") and torch.xpu.is_available()
-    except Exception:
-        return False
-
-def get_device_list():
-    devs = ["cpu"]
-    try:
-        if hasattr(torch, "cuda") and hasattr(torch.cuda, "is_available") and torch.cuda.is_available():
-            devs += [f"cuda:{i}" for i in range(torch.cuda.device_count())]
-    except Exception:
-        pass
-    try:
-        if _has_xpu():
-            devs += [f"xpu:{i}" for i in range(torch.xpu.device_count())]
-    except Exception:
-        pass
-    try:
-        if torch.backends.mps.is_available():
-            devs += ["mps"]
-    except Exception:
-        pass
-    return devs
 
 def set_current_device(device):
     global current_device
@@ -119,7 +95,7 @@ def override_class_clip(cls):
 
 def get_torch_device_patched():
     device = None
-    if (not (torch.cuda.is_available() or _has_xpu()) or mm.cpu_state == mm.CPUState.CPU or "cpu" in str(current_device).lower()):
+    if (not is_accelerator_available() or mm.cpu_state == mm.CPUState.CPU or "cpu" in str(current_device).lower()):
         device = torch.device("cpu")
     else:
         devs = set(get_device_list())
@@ -129,7 +105,7 @@ def get_torch_device_patched():
 
 def text_encoder_device_patched():
     device = None
-    if (not (torch.cuda.is_available() or _has_xpu()) or mm.cpu_state == mm.CPUState.CPU or "cpu" in str(current_text_encoder_device).lower()):
+    if (not is_accelerator_available() or mm.cpu_state == mm.CPUState.CPU or "cpu" in str(current_text_encoder_device).lower()):
         device = torch.device("cpu")
     else:
         devs = set(get_device_list())
