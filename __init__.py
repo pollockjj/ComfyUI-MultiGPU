@@ -191,10 +191,18 @@ from .distorch_2 import (
     override_class_with_distorch_safetensor_v2
 )
 
+# Import advanced checkpoint loaders
+from .checkpoint_multigpu import (
+    CheckpointLoaderAdvancedMultiGPU,
+    CheckpointLoaderAdvancedDisTorch2MultiGPU
+)
+
 # Initialize NODE_CLASS_MAPPINGS
 NODE_CLASS_MAPPINGS = {
     "DeviceSelectorMultiGPU": DeviceSelectorMultiGPU,
     "HunyuanVideoEmbeddingsAdapter": HunyuanVideoEmbeddingsAdapter,
+    "CheckpointLoaderAdvancedMultiGPU": CheckpointLoaderAdvancedMultiGPU,
+    "CheckpointLoaderAdvancedDisTorch2MultiGPU": CheckpointLoaderAdvancedDisTorch2MultiGPU,
 }
 
 # Standard MultiGPU nodes
