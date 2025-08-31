@@ -17,11 +17,9 @@ from .distorch_2 import safetensor_allocation_store, safetensor_settings_store, 
 
 logger = logging.getLogger("MultiGPU")
 
-# --- Global Stores for Configuration ---
 checkpoint_device_config = {}
 checkpoint_distorch_config = {}
 
-# --- Original Function Store ---
 original_load_state_dict_guess_config = None
 
 def patch_load_state_dict_guess_config():
@@ -45,34 +43,29 @@ def patched_load_state_dict_guess_config(sd, output_vae=True, output_clip=True, 
     
     from . import set_current_device, set_current_text_encoder_device, current_device, current_text_encoder_device
     
-    # --- Check for custom configuration ---
     sd_size = sum(p.numel() for p in sd.values() if hasattr(p, 'numel'))
     config_hash = str(sd_size)
     device_config = checkpoint_device_config.get(config_hash)
     distorch_config = checkpoint_distorch_config.get(config_hash)
 
     if not device_config and not distorch_config:
-        # No config, fall back to original untouched function
         return original_load_state_dict_guess_config(sd, output_vae, output_clip, output_clipvision, embedding_directory, output_model, model_options, te_model_options, metadata)
 
     logger.info("--- [MultiGPU] ENTERING Patched Checkpoint Loader ---")
     logger.info(f"Received Device Config: {device_config}")
     logger.info(f"Received DisTorch2 Config: {distorch_config}")
 
-    # --- Start of Rewritten Logic ---
     clip = None
     clipvision = None
     vae = None
     model = None
     model_patcher = None
     
-    # Store original device contexts to restore later
     original_main_device = current_device
     original_clip_device = current_text_encoder_device
     logger.info(f"Saved original device contexts: UNet/VAE='{original_main_device}', CLIP='{original_clip_device}'")
 
     try:
-        # --- Model Configuration Detection (Replicated from original) ---
         diffusion_model_prefix = comfy.model_detection.unet_prefix_from_state_dict(sd)
         parameters = comfy.utils.calculate_parameters(sd, diffusion_model_prefix)
         weight_dtype = comfy.utils.weight_dtype(sd, diffusion_model_prefix)
@@ -94,31 +87,26 @@ def patched_load_state_dict_guess_config(sd, output_vae=True, output_clip=True, 
             weight_dtype = None
         
         model_config.custom_operations = model_options.get("custom_operations", None)
-        unet_dtype = model_options.get("dtype", model_options.get("weight_dtype", None)))
+        unet_dtype = model_options.get("dtype", model_options.get("weight_dtype", None))
         if unet_dtype is None:
             unet_dtype = mm.unet_dtype(model_params=parameters, supported_dtypes=unet_weight_dtype, weight_dtype=weight_dtype)
         
-        manual_cast_dtype = mm.unet_manual_cast(unet_dtype, torch.device(device_config.get('unet_device')), model_config.supported_inference_dtypes)
+        unet_compute_device = device_config.get('unet_device', original_main_device)
+        manual_cast_dtype = mm.unet_manual_cast(unet_dtype, torch.device(unet_compute_device), model_config.supported_inference_dtypes)
         model_config.set_inference_dtype(unet_dtype, manual_cast_dtype)
         logger.info(f"UNet DType: {unet_dtype}, Manual Cast: {manual_cast_dtype}")
 
-        # --- CLIP Vision Loading ---
-        if model_config.clip_vision_prefix is not None and output_clipvision:
-            logger.info("--- Loading CLIP Vision ---")
-            clipvision = comfy.clip_vision.load_clipvision_from_sd(sd, model_config.clip_vision_prefix, True)
-            logger.info("CLIP Vision Loaded.")
 
-        # --- UNet Loading Block ---
+        if model_config.clip_vision_prefix is not None and output_clipvision:
+            clipvision = comfy.clip_vision.load_clipvision_from_sd(sd, model_config.clip_vision_prefix, True)
+
         if output_model:
-            logger.info("--- Loading UNet ---")
             unet_compute_device = device_config.get('unet_device', original_main_device)
-            set_current_device(unet_compute_device)
-            logger.info(f"Set UNet context to: {unet_compute_device}")
-            
+            set_current_device(unet_compute_device)            
             inital_load_device = mm.unet_inital_load_device(parameters, unet_dtype)
-            logger.info(f"UNet initial load device: {inital_load_device}")
-            
+
             model = model_config.get_model(sd, diffusion_model_prefix, device=inital_load_device)
+
             model_patcher = comfy.model_patcher.ModelPatcher(model, load_device=unet_compute_device, offload_device=mm.unet_offload_device())
             
             if distorch_config and 'unet_allocation' in distorch_config:
@@ -131,28 +119,18 @@ def patched_load_state_dict_guess_config(sd, output_vae=True, output_clip=True, 
                 logger.info(f"Stored DisTorch2 config for UNet (hash {model_hash[:8]}): {distorch_config['unet_allocation']}")
 
             model.load_model_weights(sd, diffusion_model_prefix)
-            logger.info("UNet Loaded.")
 
-        # --- VAE Loading Block ---
         if output_vae:
-            logger.info("--- Loading VAE ---")
             vae_target_device = torch.device(device_config.get('vae_device', original_main_device))
             set_current_device(vae_target_device) # Use main device context for VAE
-            logger.info(f"Set VAE context to: {vae_target_device}")
             
             vae_sd = comfy.utils.state_dict_prefix_replace(sd, {k: "" for k in model_config.vae_key_prefix}, filter_keys=True)
             vae_sd = model_config.process_vae_state_dict(vae_sd)
-            
-            # The VAE class itself respects the mm.get_torch_device() patch
             vae = VAE(sd=vae_sd, metadata=metadata)
-            logger.info(f"VAE Loaded. Final device should be: {vae_target_device}")
 
-        # --- CLIP Loading Block ---
         if output_clip:
-            logger.info("--- Loading CLIP ---")
             clip_target_device = device_config.get('clip_device', original_clip_device)
             set_current_text_encoder_device(clip_target_device)
-            logger.info(f"Set CLIP context to: {clip_target_device}")
             
             clip_target = model_config.clip_target(state_dict=sd)
             if clip_target is not None:

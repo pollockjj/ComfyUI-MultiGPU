@@ -23,7 +23,7 @@ if not logger.handlers:
     handler.setFormatter(formatter)
     logger.addHandler(handler)
     logger.setLevel(log_level)
-    logger.info(f"[MultiGPU] Logger initialized with level: {logging.getLevelName(log_level)}")
+    logger.info(f"[MultiGPU Initialization] Logger initialized with level: {logging.getLevelName(log_level)}")
 
 
 # Global device state management
@@ -33,12 +33,13 @@ current_text_encoder_device = mm.text_encoder_device()
 def set_current_device(device):
     global current_device
     current_device = device
-    logger.info(f"[MultiGPU] current_device set to: {device}")
+    logger.info(f"[MultiGPU Initialization] current_device set to: {device}")
 
 def set_current_text_encoder_device(device):
     global current_text_encoder_device
     current_text_encoder_device = device
-    logger.info(f"[MultiGPU] current_text_encoder_device set to: {device}")
+    current_text_encoder_initial_device = device
+    logger.info(f"[MultiGPU Initialization] current_text_encoder_device and current_text_encoder_initial_device set to: {device}")
 
 def override_class(cls):
     class NodeOverride(cls):
@@ -55,15 +56,12 @@ def override_class(cls):
         FUNCTION = "override"
 
         def override(self, *args, device=None, **kwargs):
-            logger.debug(f"[MultiGPU] override_class called for {cls.__name__} with device={device}")
-            
+
             if device is not None:
                 set_current_device(device)
-            
             fn = getattr(super(), cls.FUNCTION)
             out = fn(*args, **kwargs)
-            logger.debug(f"[MultiGPU] override_class for {cls.__name__} completed successfully")
-            
+
             return out
 
     return NodeOverride
@@ -85,7 +83,7 @@ def override_class_clip(cls):
         def override(self, *args, device=None, **kwargs):
             if device is not None:
                 set_current_text_encoder_device(device)
-            
+            kwargs['device'] = 'default'
             fn = getattr(super(), cls.FUNCTION)
             out = fn(*args, **kwargs)
             
@@ -100,7 +98,7 @@ def get_torch_device_patched():
     else:
         devs = set(get_device_list())
         device = torch.device(current_device) if str(current_device) in devs else torch.device("cpu")
-    logger.debug(f"[MultiGPU] get_torch_device_patched returning device: {device} (current_device={current_device})")
+    logger.debug(f"[MultiGPU Core Patching] get_torch_device_patched returning device: {device} (current_device={current_device})")
     return device
 
 def text_encoder_device_patched():
@@ -110,16 +108,22 @@ def text_encoder_device_patched():
     else:
         devs = set(get_device_list())
         device = torch.device(current_text_encoder_device) if str(current_text_encoder_device) in devs else torch.device("cpu")
-    logger.debug(f"[MultiGPU] text_encoder_device_patched returning device: {device} (current_text_encoder_device={current_text_encoder_device})")
+    logger.debug(f"[MultiGPU Core Patching] text_encoder_device_patched returning device: {device} (current_text_encoder_device={current_text_encoder_device})")
     return device
 
-# Apply patches
-logger.info(f"[MultiGPU] Patching mm.get_torch_device and mm.text_encoder_device")
-logger.debug(f"[MultiGPU] Initial current_device: {current_device}")
-logger.debug(f"[MultiGPU] Initial current_text_encoder_device: {current_text_encoder_device}")
+def text_encoder_initial_device_patched(*args, **kwargs):
+    logger.debug(f"[MultiGPU Core Patching] text_encoder_initial_device_patched called with args={args}, kwargs={kwargs}")
+    # look at this later - I am not convinced that this isn't the better choice:
+    # return text_encoder_device_patched() 
+    return mm.text_encoder_device()
+
+
+logger.info(f"[MultiGPU Core Patching] Patching mm.get_torch_device, mm.text_encoder_device, and mm.text_encoder_initial_device")
+logger.debug(f"[MultiGPU DEBUG] Initial current_device: {current_device}")
+logger.debug(f"[MultiGPU DEBUG] Initial current_text_encoder_device: {current_text_encoder_device}")
 mm.get_torch_device = get_torch_device_patched
 mm.text_encoder_device = text_encoder_device_patched
-logger.debug(f"[MultiGPU] Patches applied successfully")
+mm.text_encoder_initial_device = text_encoder_initial_device_patched
 
 def check_module_exists(module_path):
     full_path = os.path.join(folder_paths.get_folder_paths("custom_nodes")[0], module_path)
