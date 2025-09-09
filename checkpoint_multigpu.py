@@ -12,7 +12,7 @@ import comfy.model_management as mm
 import comfy.model_detection
 import comfy.clip_vision
 from comfy.sd import VAE, CLIP
-from .device_utils import get_device_list
+from .device_utils import get_device_list, soft_empty_cache_multigpu
 from .distorch_2 import safetensor_allocation_store, safetensor_settings_store, create_safetensor_model_hash, register_patched_safetensor_modelpatcher
 
 logger = logging.getLogger("MultiGPU")
@@ -107,8 +107,9 @@ def patched_load_state_dict_guess_config(sd, output_vae=True, output_clip=True, 
 
             model = model_config.get_model(sd, diffusion_model_prefix, device=inital_load_device)
 
+            soft_empty_cache_multigpu(logger)
             model_patcher = comfy.model_patcher.ModelPatcher(model, load_device=unet_compute_device, offload_device=mm.unet_offload_device())
-            
+
             if distorch_config and 'unet_allocation' in distorch_config:
                 register_patched_safetensor_modelpatcher()
                 model_hash = create_safetensor_model_hash(model_patcher, "checkpoint_loader_unet")
@@ -136,6 +137,7 @@ def patched_load_state_dict_guess_config(sd, output_vae=True, output_clip=True, 
             if clip_target is not None:
                 clip_sd = model_config.process_clip_state_dict(sd)
                 if len(clip_sd) > 0:
+                    soft_empty_cache_multigpu(logger)
                     clip_params = comfy.utils.calculate_parameters(clip_sd)
                     clip = CLIP(clip_target, embedding_directory=embedding_directory, tokenizer_data=clip_sd, parameters=clip_params, model_options=te_model_options)
 

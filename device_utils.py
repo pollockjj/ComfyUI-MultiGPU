@@ -45,9 +45,9 @@ def get_device_list():
         if hasattr(torch, "cuda") and hasattr(torch.cuda, "is_available") and torch.cuda.is_available():
             device_count = torch.cuda.device_count()
             devs += [f"cuda:{i}" for i in range(device_count)]
-            logger.debug(f"[MultiGPU] Found {device_count} CUDA device(s)")
+            logger.debug(f"[MultiGPU_Device_Utils] Found {device_count} CUDA device(s)")
     except Exception as e:
-        logger.debug(f"[MultiGPU] CUDA detection failed: {e}")
+        logger.debug(f"[MultiGPU_Device_Utils] CUDA detection failed: {e}")
     
     # XPU devices (Intel GPUs)
     try:
@@ -59,9 +59,9 @@ def get_device_list():
         if hasattr(torch, "xpu") and hasattr(torch.xpu, "is_available") and torch.xpu.is_available():
             device_count = torch.xpu.device_count()
             devs += [f"xpu:{i}" for i in range(device_count)]
-            logger.debug(f"[MultiGPU] Found {device_count} XPU device(s)")
+            logger.debug(f"[MultiGPU_Device_Utils] Found {device_count} XPU device(s)")
     except Exception as e:
-        logger.debug(f"[MultiGPU] XPU detection failed: {e}")
+        logger.debug(f"[MultiGPU_Device_Utils] XPU detection failed: {e}")
     
     # NPU devices (Ascend NPUs from Huawei)
     try:
@@ -69,9 +69,9 @@ def get_device_list():
         if hasattr(torch, "npu") and hasattr(torch.npu, "is_available") and torch.npu.is_available():
             device_count = torch.npu.device_count()
             devs += [f"npu:{i}" for i in range(device_count)]
-            logger.debug(f"[MultiGPU] Found {device_count} NPU device(s)")
+            logger.debug(f"[MultiGPU_Device_Utils] Found {device_count} NPU device(s)")
     except Exception as e:
-        logger.debug(f"[MultiGPU] NPU detection failed: {e}")
+        logger.debug(f"[MultiGPU_Device_Utils] NPU detection failed: {e}")
     
     # MLU devices (Cambricon MLUs)
     try:
@@ -79,17 +79,17 @@ def get_device_list():
         if hasattr(torch, "mlu") and hasattr(torch.mlu, "is_available") and torch.mlu.is_available():
             device_count = torch.mlu.device_count()
             devs += [f"mlu:{i}" for i in range(device_count)]
-            logger.debug(f"[MultiGPU] Found {device_count} MLU device(s)")
+            logger.debug(f"[MultiGPU_Device_Utils] Found {device_count} MLU device(s)")
     except Exception as e:
-        logger.debug(f"[MultiGPU] MLU detection failed: {e}")
+        logger.debug(f"[MultiGPU_Device_Utils] MLU detection failed: {e}")
     
     # MPS device (Apple Metal - single device only)
     try:
         if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
             devs.append("mps")
-            logger.debug("[MultiGPU] Found MPS device")
+            logger.debug("[MultiGPU_Device_Utils] Found MPS device")
     except Exception as e:
-        logger.debug(f"[MultiGPU] MPS detection failed: {e}")
+        logger.debug(f"[MultiGPU_Device_Utils] MPS detection failed: {e}")
     
     # DirectML devices (Windows DirectML for AMD/Intel/NVIDIA)
     try:
@@ -97,9 +97,9 @@ def get_device_list():
         adapter_count = torch_directml.device_count()
         if adapter_count > 0:
             devs += [f"directml:{i}" for i in range(adapter_count)]
-            logger.debug(f"[MultiGPU] Found {adapter_count} DirectML adapter(s)")
+            logger.debug(f"[MultiGPU_Device_Utils] Found {adapter_count} DirectML adapter(s)")
     except Exception as e:
-        logger.debug(f"[MultiGPU] DirectML detection failed: {e}")
+        logger.debug(f"[MultiGPU_Device_Utils] DirectML detection failed: {e}")
     
     # IXUCA/CoreX devices (special accelerator)
     try:
@@ -108,18 +108,18 @@ def get_device_list():
             if hasattr(torch.corex, "device_count"):
                 device_count = torch.corex.device_count()
                 devs += [f"corex:{i}" for i in range(device_count)]
-                logger.debug(f"[MultiGPU] Found {device_count} CoreX device(s)")
+                logger.debug(f"[MultiGPU_Device_Utils] Found {device_count} CoreX device(s)")
             else:
                 devs.append("corex:0")
-                logger.debug("[MultiGPU] Found CoreX device")
+                logger.debug("[MultiGPU_Device_Utils] Found CoreX device")
     except Exception as e:
-        logger.debug(f"[MultiGPU] CoreX detection failed: {e}")
+        logger.debug(f"[MultiGPU_Device_Utils] CoreX detection failed: {e}")
     
     # Cache the result for future calls
     _DEVICE_LIST_CACHE = devs
     
     # Log only once when initially populated
-    logger.info(f"[MultiGPU] Device list initialized: {devs}")
+    logger.info(f"[MultiGPU_Device_Utils] Device list initialized: {devs}")
     
     return devs
 
@@ -218,10 +218,10 @@ def get_device_type(device_string):
 def parse_device_string(device_string):
     """
     Parse a device string into type and index.
-    
+
     Args:
         device_string: Device identifier like "cuda:0", "cpu", "xpu:1", etc.
-    
+
     Returns:
         Tuple of (device_type, device_index) where index is None for non-indexed devices
     """
@@ -229,3 +229,43 @@ def parse_device_string(device_string):
         parts = device_string.split(":")
         return parts[0], int(parts[1])
     return device_string, None
+
+
+def soft_empty_cache_multigpu(logger):
+    """
+    Replicate ComfyUI's cache clearing but for ALL devices in MultiGPU.
+    MultiGPU adaptation of ComfyUI's soft_empty_cache() functionality.
+    """
+    import gc
+
+    logger.info("[MultiGPU_Device_Utils] Preparing devices for optimized safetensor loading")
+
+    # Python GC (same as all implementations)
+    gc.collect()
+    logger.debug("[MultiGPU_Device_Utils] Performed garbage collection before safetensor loading")
+
+    # Clear cache for ALL devices (not just ComfyUI's single device)
+    all_devices = get_device_list()
+
+    for device_str in all_devices:
+        if device_str.startswith("cuda:"):
+            device_idx = int(device_str.split(":")[1])
+            torch.cuda.set_device(device_idx)
+            torch.cuda.empty_cache()
+            torch.cuda.ipc_collect()  # ComfyUI's CUDA optimization
+            logger.debug(f"[MultiGPU_Device_Utils] Cleared cache + IPC for {device_str}")
+        elif device_str == "mps":
+            torch.mps.empty_cache()
+            logger.debug("[MultiGPU_Device_Utils] Cleared cache for MPS")
+        elif device_str.startswith("xpu:"):
+            torch.xpu.empty_cache()
+            logger.debug("[MultiGPU_Device_Utils] Cleared cache for Intel XPU")
+        elif device_str.startswith("npu:"):
+            torch.npu.empty_cache()
+            logger.debug("[MultiGPU_Device_Utils] Cleared cache for Ascend NPU")
+        elif device_str.startswith("mlu:"):
+            torch.mlu.empty_cache()
+            logger.debug("[MultiGPU_Device_Utils] Cleared cache for Cambricon MLU")
+        elif device_str.startswith("corex:"):
+            torch.corex.empty_cache()  # Hypothetical based on ComfyUI's ixuca support
+            logger.debug("[MultiGPU_Device_Utils] Cleared cache for CoreX")

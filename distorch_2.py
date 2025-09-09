@@ -8,6 +8,7 @@ import torch
 import logging
 import hashlib
 import re
+import gc
 
 logger = logging.getLogger("MultiGPU")
 import copy
@@ -16,7 +17,7 @@ from collections import defaultdict
 import comfy.model_management as mm
 import comfy.model_patcher
 from . import current_device
-from .device_utils import get_device_list
+from .device_utils import get_device_list, soft_empty_cache_multigpu
 
 safetensor_allocation_store = {}
 safetensor_settings_store = {}
@@ -66,10 +67,11 @@ def register_patched_safetensor_modelpatcher():
             allocations = safetensor_allocation_store.get(debug_hash)
 
             if not hasattr(self.model, '_distorch_high_precision_loras') or not allocations:
-                result = original_partially_load(self, device_to, extra_memory, force_patch_weights) 
+                result = original_partially_load(self, device_to, extra_memory, force_patch_weights)
                 if hasattr(self, '_distorch_block_assignments'):
                     del self._distorch_block_assignments
                 return result
+            soft_empty_cache_multigpu(logger)
 
             mem_counter = 0
 
@@ -550,14 +552,14 @@ def calculate_safetensor_vvram_allocation(model_patcher, virtual_vram_str):
 def override_class_with_distorch_safetensor_v2(cls):
     """DisTorch 2.0 wrapper for safetensor models"""
     from . import current_device
-    
+
     class NodeOverrideDisTorchSafetensorV2(cls):
         @classmethod
         def INPUT_TYPES(s):
             inputs = copy.deepcopy(cls.INPUT_TYPES())
             devices = get_device_list()
             compute_device = devices[1] if len(devices) > 1 else devices[0]
-            
+
             inputs["optional"] = inputs.get("optional", {})
             inputs["optional"]["compute_device"] = (devices, {"default": compute_device})
             inputs["optional"]["virtual_vram_gb"] = ("FLOAT", {"default": 4.0, "min": 0.0, "max": 128.0, "step": 0.1})
@@ -571,7 +573,7 @@ def override_class_with_distorch_safetensor_v2(cls):
         TITLE = f"{cls.TITLE if hasattr(cls, 'TITLE') else cls.__name__} (DisTorch2)"
 
         @classmethod
-        def IS_CHANGED(s, *args, compute_device=None, virtual_vram_gb=4.0, 
+        def IS_CHANGED(s, *args, compute_device=None, virtual_vram_gb=4.0,
                        donor_device="cpu", expert_mode_allocations="", high_precision_loras=True, **kwargs):
             # Create a hash of our specific settings
             settings_str = f"{compute_device}{virtual_vram_gb}{donor_device}{expert_mode_allocations}{high_precision_loras}"
@@ -627,7 +629,7 @@ def override_class_with_distorch_safetensor_v2(cls):
                 vram_string = compute_device
 
             full_allocation = f"{expert_mode_allocations}#{vram_string}" if expert_mode_allocations or vram_string else ""
-            
+
             logger.info(f"[MultiGPU_DisTorch2] Full allocation string: {full_allocation}")
 
             if hasattr(out[0], 'model'):
@@ -635,10 +637,109 @@ def override_class_with_distorch_safetensor_v2(cls):
                 safetensor_allocation_store[model_hash] = full_allocation
                 safetensor_settings_store[model_hash] = settings_hash
             elif hasattr(out[0], 'patcher') and hasattr(out[0].patcher, 'model'):
-                model_hash = create_safetensor_model_hash(out[0].patcher, "override") 
+                model_hash = create_safetensor_model_hash(out[0].patcher, "override")
                 safetensor_allocation_store[model_hash] = full_allocation
                 safetensor_settings_store[model_hash] = settings_hash
 
             return out
 
     return NodeOverrideDisTorchSafetensorV2
+
+
+def override_class_with_distorch_safetensor_v2_clip(cls):
+    """DisTorch 2.0 wrapper for safetensor CLIP models"""
+    from . import current_device
+
+    class NodeOverrideDisTorchSafetensorV2Clip(cls):
+        @classmethod
+        def INPUT_TYPES(s):
+            inputs = copy.deepcopy(cls.INPUT_TYPES())
+            devices = get_device_list()
+            default_device = devices[1] if len(devices) > 1 else devices[0]
+
+            inputs["optional"] = inputs.get("optional", {})
+            inputs["optional"]["device"] = (devices, {"default": default_device})  # Changed from compute_device
+            inputs["optional"]["virtual_vram_gb"] = ("FLOAT", {"default": 4.0, "min": 0.0, "max": 128.0, "step": 0.1})
+            inputs["optional"]["donor_device"] = (devices, {"default": "cpu"})
+            inputs["optional"]["expert_mode_allocations"] = ("STRING", {"multiline": False, "default": ""})
+            inputs["optional"]["high_precision_loras"] = ("BOOLEAN", {"default": True})
+            return inputs
+
+        CATEGORY = "multigpu/distorch_2"
+        FUNCTION = "override"
+        TITLE = f"{cls.TITLE if hasattr(cls, 'TITLE') else cls.__name__} (DisTorch2)"
+
+        @classmethod
+        def IS_CHANGED(s, *args, device=None, virtual_vram_gb=4.0,  # Changed from compute_device
+                       donor_device="cpu", expert_mode_allocations="", high_precision_loras=True, **kwargs):
+            # Create a hash of our specific settings
+            settings_str = f"{device}{virtual_vram_gb}{donor_device}{expert_mode_allocations}{high_precision_loras}"  # Changed from compute_device
+            return hashlib.sha256(settings_str.encode()).hexdigest()
+
+        def override(self, *args, device=None, virtual_vram_gb=4.0,  # Changed from compute_device
+                     donor_device="cpu", expert_mode_allocations="", high_precision_loras=True, **kwargs):
+
+            from . import set_current_text_encoder_device  # Use text encoder device setter
+            if device is not None:
+                set_current_text_encoder_device(device)
+
+            kwargs['device'] = 'default'  # Hardcode device setting like in standard clip wrapper
+
+            # Register our patched ModelPatcher
+            register_patched_safetensor_modelpatcher()
+
+            # Call original function
+            fn = getattr(super(), cls.FUNCTION)
+
+            # --- Check if we need to unload the model due to settings change ---
+            # This logic is a bit redundant with IS_CHANGED, but provides clear logging
+            settings_str = f"{device}{virtual_vram_gb}{donor_device}{expert_mode_allocations}"  # Changed from compute_device
+            settings_hash = hashlib.sha256(settings_str.encode()).hexdigest()
+
+            # Temporarily load to get hash without applying our patch
+            temp_out = fn(*args, **kwargs)
+            model_to_check = None
+            if hasattr(temp_out[0], 'model'):
+                model_to_check = temp_out[0]
+            elif hasattr(temp_out[0], 'patcher') and hasattr(temp_out[0].patcher, 'model'):
+                model_to_check = temp_out[0].patcher
+
+            if model_to_check:
+                model_hash = create_safetensor_model_hash(model_to_check, "override_check")
+                last_settings_hash = safetensor_settings_store.get(model_hash)
+
+                if last_settings_hash != settings_hash:
+                    logger.info(f"[MultiGPU_DisTorch2] Settings changed for model {model_hash[:8]}. Previous settings hash: {last_settings_hash}, New settings hash: {settings_hash}. Forcing reload.")
+                else:
+                    logger.info(f"[MultiGPU_DisTorch2] Settings unchanged for model {model_hash[:8]}. Using cached model.")
+
+            out = fn(*args, **kwargs)
+
+            # Store high_precision_loras in the model for later retrieval
+            if hasattr(out[0], 'model'):
+                out[0].model._distorch_high_precision_loras = high_precision_loras
+            elif hasattr(out[0], 'patcher') and hasattr(out[0].patcher, 'model'):
+                out[0].patcher.model._distorch_high_precision_loras = high_precision_loras
+
+            vram_string = ""
+            if virtual_vram_gb > 0:
+                vram_string = f"{device};{virtual_vram_gb};{donor_device}"  # Changed from compute_device
+            elif expert_mode_allocations:  # Only include device if there's an expert string
+                vram_string = device  # Changed from compute_device
+
+            full_allocation = f"{expert_mode_allocations}#{vram_string}" if expert_mode_allocations or vram_string else ""
+
+            logger.info(f"[MultiGPU_DisTorch2] Full allocation string: {full_allocation}")
+
+            if hasattr(out[0], 'model'):
+                model_hash = create_safetensor_model_hash(out[0], "override")
+                safetensor_allocation_store[model_hash] = full_allocation
+                safetensor_settings_store[model_hash] = settings_hash
+            elif hasattr(out[0], 'patcher') and hasattr(out[0].patcher, 'model'):
+                model_hash = create_safetensor_model_hash(out[0].patcher, "override")
+                safetensor_allocation_store[model_hash] = full_allocation
+                safetensor_settings_store[model_hash] = settings_hash
+
+            return out
+
+    return NodeOverrideDisTorchSafetensorV2Clip

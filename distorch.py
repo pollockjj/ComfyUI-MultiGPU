@@ -12,7 +12,7 @@ logger = logging.getLogger("MultiGPU")
 import copy
 from collections import defaultdict
 import comfy.model_management as mm
-from .device_utils import get_device_list
+from .device_utils import get_device_list, soft_empty_cache_multigpu
 
 # Global store for model allocations
 model_allocation_store = {}
@@ -62,6 +62,7 @@ def register_patched_ggufmodelpatcher():
                 debug_hash = create_model_hash(self, "patcher")
                 debug_allocations = model_allocation_store.get(debug_hash)
                 if debug_allocations:
+                    soft_empty_cache_multigpu(logger)
                     device_assignments = analyze_ggml_loading(self.model, debug_allocations)['device_assignments']
                     for device, layers in device_assignments.items():
                         target_device = torch.device(device)
