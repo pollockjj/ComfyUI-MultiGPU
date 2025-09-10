@@ -26,10 +26,17 @@ if not logger.handlers:
     logger.info(f"[MultiGPU Initialization] Logger initialized with level: {logging.getLevelName(log_level)}")
 
 
+original_get_torch_device = mm.get_torch_device
+original_text_encoder_device = mm.text_encoder_device
+original_text_encoder_initial_device = mm.text_encoder_initial_device
+
+
 # Global device state management
-current_device = mm.get_torch_device()
-current_text_encoder_device = mm.text_encoder_device()
-current_text_encoder_initial_device = mm.text_encoder_device()
+current_device = original_get_torch_device()
+current_text_encoder_device = original_text_encoder_device()
+
+# Override flag for initial device placement (used by DisTorch2)
+current_text_encoder_initial_device_override = None
 
 def set_current_device(device):
     global current_device
@@ -37,10 +44,14 @@ def set_current_device(device):
     logger.info(f"[MultiGPU Initialization] current_device set to: {device}")
 
 def set_current_text_encoder_device(device):
-    global current_text_encoder_device, current_text_encoder_initial_device
+    global current_text_encoder_device
     current_text_encoder_device = device
-    current_text_encoder_initial_device = device
-    logger.info(f"[MultiGPU Initialization] current_text_encoder_device and current_text_encoder_initial_device set to: {device}")
+    logger.info(f"[MultiGPU Initialization] current_text_encoder_device set to: {device}")
+
+def set_text_encoder_initial_device_override(device):
+    global current_text_encoder_initial_device_override
+    current_text_encoder_initial_device_override = device
+    logger.info(f"[MultiGPU Initialization] current_text_encoder_initial_device_override set to: {device}")
 
 def override_class(cls):
     class NodeOverride(cls):
@@ -113,10 +124,15 @@ def text_encoder_device_patched():
     return device
 
 def text_encoder_initial_device_patched(*args, **kwargs):
-    logger.debug(f"[MultiGPU Core Patching] text_encoder_initial_device_patched called with args={args}, kwargs={kwargs}")
-    # look at this later - I am not convinced that this isn't the better choice:
-    # return text_encoder_device_patched() 
-    return mm.text_encoder_device()
+    logger.debug(f"[MultiGPU Core Patching] text_encoder_initial_device_patched called.")
+
+    if current_text_encoder_initial_device_override is not None:
+        device = torch.device(current_text_encoder_initial_device_override)
+        logger.debug(f"[MultiGPU Core Patching] Returning override device: {device}")
+        return device
+
+    # Fallback to the original ComfyUI implementation if no override is set
+    return original_text_encoder_initial_device(*args, **kwargs)
 
 
 logger.info(f"[MultiGPU Core Patching] Patching mm.get_torch_device, mm.text_encoder_device, and mm.text_encoder_initial_device")

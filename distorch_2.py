@@ -16,7 +16,9 @@ import inspect
 from collections import defaultdict
 import comfy.model_management as mm
 import comfy.model_patcher
-from . import current_device
+import comfy.utils # Required for weight_dtype
+import comfy.float # Required for stochastic_rounding
+# Removed unused import: from . import current_device
 from .device_utils import get_device_list, soft_empty_cache_multigpu
 
 safetensor_allocation_store = {}
@@ -24,31 +26,47 @@ safetensor_settings_store = {}
 
 
 def create_safetensor_model_hash(model, caller):
-    """Create a unique hash for a safetensor model to track allocations"""
-    if hasattr(model, 'model'):
-        # For ModelPatcher objects
+    """Create a unique hash using the underlying model properties for stability across clones/patches."""
+
+    # Identify the underlying torch.nn.Module
+    if hasattr(model, 'model') and isinstance(model, comfy.model_patcher.ModelPatcher):
         actual_model = model.model
-        model_type = type(actual_model).__name__
-        # Use ComfyUI's model_size if available
-        if hasattr(model, 'model_size'):
-            model_size = model.model_size()
-        else:
-            model_size = sum(p.numel() * p.element_size() for p in actual_model.parameters())
-        if hasattr(model, 'model_state_dict'):
-            first_layers = str(list(model.model_state_dict().keys())[:3])
-        else:
-            first_layers = str(list(actual_model.state_dict().keys())[:3])
+    elif hasattr(model, 'patcher') and hasattr(model.patcher, 'model'):
+         # For CLIP objects (which wrap a patcher)
+        actual_model = model.patcher.model
     else:
-        # Direct model
-        model_type = type(model).__name__
-        model_size = sum(p.numel() * p.element_size() for p in model.parameters())
-        first_layers = str(list(model.state_dict().keys())[:3])
-    
+        actual_model = model
+
+    # Keep digging to the base nn.Module if nested patchers exist
+    while hasattr(actual_model, 'model') and isinstance(actual_model, comfy.model_patcher.ModelPatcher):
+        actual_model = actual_model.model
+
+    if not isinstance(actual_model, torch.nn.Module) or actual_model is None:
+        # Fallback for non-standard structures
+        logger.warning(f"[MultiGPU_DisTorch2] HashingFallback: Cannot determine underlying torch module for {type(model).__name__}.")
+        identifier = f"{type(model).__name__}_{id(model)}"
+        return hashlib.sha256(identifier.encode()).hexdigest()
+
+    model_type = type(actual_model).__name__
+
+    # Calculate size based on underlying model parameters (Stable)
+    try:
+        model_size = sum(p.numel() * p.element_size() for p in actual_model.parameters() if p is not None)
+    except Exception:
+        model_size = 0
+
+    # Get first layers from underlying model state dict (Stable)
+    try:
+        # Increased lookahead slightly for better uniqueness
+        first_layers = str(list(actual_model.state_dict().keys())[:5])
+    except Exception as e:
+        logger.warning(f"[MultiGPU_DisTorch2] Could not get state_dict keys for hashing: {e}. Using fallback.")
+        first_layers = "fallback"
+
     identifier = f"{model_type}_{model_size}_{first_layers}"
     final_hash = hashlib.sha256(identifier.encode()).hexdigest()
-    
-    # DEBUG STATEMENT - ALWAYS LOG THE HASH
-    logger.debug(f"[MultiGPU_DisTorch2] Created hash for {caller}: {final_hash[:8]}...")
+
+    logger.debug(f"[MultiGPU_DisTorch2] Created stable hash for {caller} (Type: {model_type}, Size: {model_size}): {final_hash[:8]}...")
     return final_hash
 
 
@@ -586,9 +604,17 @@ def override_class_with_distorch_safetensor_v2(cls):
         def override(self, *args, compute_device=None, virtual_vram_gb=4.0,
                      donor_device="cpu", expert_mode_allocations="", high_precision_loras=True, **kwargs):
 
-            from . import set_current_device
+            from . import set_current_device, set_text_encoder_initial_device_override
+
             if compute_device is not None:
                 set_current_device(compute_device)
+
+            # Force CPU initialization if supported and distribution is active
+            is_distribution_active = virtual_vram_gb > 0 or expert_mode_allocations
+            
+            if set_text_encoder_initial_device_override and is_distribution_active:
+                logger.info(f"[MultiGPU_DisTorch2] Activating CPU initialization override for model loading.")
+                set_text_encoder_initial_device_override("cpu")
 
             # Register our patched ModelPatcher
             register_patched_safetensor_modelpatcher()
@@ -601,30 +627,20 @@ def override_class_with_distorch_safetensor_v2(cls):
             settings_str = f"{compute_device}{virtual_vram_gb}{donor_device}{expert_mode_allocations}"
             settings_hash = hashlib.sha256(settings_str.encode()).hexdigest()
 
-            # Temporarily load to get hash without applying our patch
-            temp_out = fn(*args, **kwargs)
-            model_to_check = None
-            if hasattr(temp_out[0], 'model'):
-                model_to_check = temp_out[0]
-            elif hasattr(temp_out[0], 'patcher') and hasattr(temp_out[0].patcher, 'model'):
-                model_to_check = temp_out[0].patcher
-
-            if model_to_check:
-                model_hash = create_safetensor_model_hash(model_to_check, "override_check")
-                last_settings_hash = safetensor_settings_store.get(model_hash)
-
-                if last_settings_hash != settings_hash:
-                    logger.info(f"[MultiGPU_DisTorch2] Settings changed for model {model_hash[:8]}. Previous settings hash: {last_settings_hash}, New settings hash: {settings_hash}. Forcing reload.")
-                else:
-                    logger.info(f"[MultiGPU_DisTorch2] Settings unchanged for model {model_hash[:8]}. Using cached model.")
-
-            out = fn(*args, **kwargs)
+            try:
+                # The model is loaded here.
+                out = fn(*args, **kwargs)
+            finally:
+                 # Reset the override after loading is complete or failed
+                if set_text_encoder_initial_device_override and is_distribution_active:
+                    set_text_encoder_initial_device_override(None)
+                    logger.info(f"[MultiGPU_DisTorch2] Resetting initial device override.")
 
             # Store high_precision_loras in the model for later retrieval
-            if hasattr(out[0], 'model'):
-                out[0].model._distorch_high_precision_loras = high_precision_loras
-            elif hasattr(out[0], 'patcher') and hasattr(out[0].patcher, 'model'):
-                out[0].patcher.model._distorch_high_precision_loras = high_precision_loras
+            if hasattr(out, 'model'):
+                out.model._distorch_high_precision_loras = high_precision_loras
+            elif hasattr(out, 'patcher') and hasattr(out.patcher, 'model'):
+                out.patcher.model._distorch_high_precision_loras = high_precision_loras
 
             vram_string = ""
             if virtual_vram_gb > 0:
@@ -683,11 +699,19 @@ def override_class_with_distorch_safetensor_v2_clip(cls):
         def override(self, *args, device=None, virtual_vram_gb=4.0,  # Changed from compute_device
                      donor_device="cpu", expert_mode_allocations="", high_precision_loras=True, **kwargs):
 
-            from . import set_current_text_encoder_device  # Use text encoder device setter
+            from . import set_current_text_encoder_device, set_text_encoder_initial_device_override
+
             if device is not None:
                 set_current_text_encoder_device(device)
 
             kwargs['device'] = 'default'  # Hardcode device setting like in standard clip wrapper
+
+            # Force CPU initialization if supported and distribution is active (Critical for CLIP)
+            is_distribution_active = virtual_vram_gb > 0 or expert_mode_allocations
+
+            if set_text_encoder_initial_device_override and is_distribution_active:
+                logger.info(f"[MultiGPU_DisTorch2] Forcing CPU initialization for CLIP model.")
+                set_text_encoder_initial_device_override("cpu")
 
             # Register our patched ModelPatcher
             register_patched_safetensor_modelpatcher()
@@ -700,24 +724,13 @@ def override_class_with_distorch_safetensor_v2_clip(cls):
             settings_str = f"{device}{virtual_vram_gb}{donor_device}{expert_mode_allocations}"  # Changed from compute_device
             settings_hash = hashlib.sha256(settings_str.encode()).hexdigest()
 
-            # Temporarily load to get hash without applying our patch
-            temp_out = fn(*args, **kwargs)
-            model_to_check = None
-            if hasattr(temp_out[0], 'model'):
-                model_to_check = temp_out[0]
-            elif hasattr(temp_out[0], 'patcher') and hasattr(temp_out[0].patcher, 'model'):
-                model_to_check = temp_out[0].patcher
-
-            if model_to_check:
-                model_hash = create_safetensor_model_hash(model_to_check, "override_check")
-                last_settings_hash = safetensor_settings_store.get(model_hash)
-
-                if last_settings_hash != settings_hash:
-                    logger.info(f"[MultiGPU_DisTorch2] Settings changed for model {model_hash[:8]}. Previous settings hash: {last_settings_hash}, New settings hash: {settings_hash}. Forcing reload.")
-                else:
-                    logger.info(f"[MultiGPU_DisTorch2] Settings unchanged for model {model_hash[:8]}. Using cached model.")
-
-            out = fn(*args, **kwargs)
+            try:
+                # The model is loaded here.
+                out = fn(*args, **kwargs)
+            finally:
+                # Reset the override after loading is complete or failed
+                if set_text_encoder_initial_device_override and is_distribution_active:
+                    set_text_encoder_initial_device_override(None)
 
             # Store high_precision_loras in the model for later retrieval
             if hasattr(out[0], 'model'):
