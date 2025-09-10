@@ -73,7 +73,18 @@ def register_patched_safetensor_modelpatcher():
                 if hasattr(self, '_distorch_block_assignments'):
                     del self._distorch_block_assignments
                 return result
-            
+
+            if not hasattr(self.model, 'current_weight_patches_uuid'):
+                self.model.current_weight_patches_uuid = None
+
+            unpatch_weights = self.model.current_weight_patches_uuid is not None and (self.model.current_weight_patches_uuid != self.patches_uuid or force_patch_weights)
+
+            if unpatch_weights:
+                logger.info(f"[MultiGPU_DisTorch2] Patches changed or forced. Unpatching model.")
+                self.unpatch_model(self.offload_device, unpatch_weights=True)
+
+            self.patch_model(load_weights=False)
+
             mm.unload_all_models()
             soft_empty_cache_multigpu(logger)
 
@@ -86,6 +97,22 @@ def register_patched_safetensor_modelpatcher():
             loading = self._load_list()
             loading.sort(reverse=True)
             for module_size, module_name, module_object, params in loading:
+                if not unpatch_weights and hasattr(module_object, "comfy_patched_weights") and module_object.comfy_patched_weights == True:
+                    block_target_device = device_assignments['block_assignments'].get(module_name, device_to)
+                    current_module_device = None
+                    try:
+                        if any(p.numel() > 0 for p in module_object.parameters(recurse=False)):
+                           current_module_device = next(module_object.parameters(recurse=False)).device
+                    except StopIteration:
+                        pass
+
+                    if current_module_device is not None and str(current_module_device) != str(block_target_device):
+                        logger.debug(f"[MultiGPU_DisTorch2] Moving already patched {module_name} to {block_target_device}")
+                        module_object.to(block_target_device)
+
+                    mem_counter += module_size
+                    continue
+
                 # Step 1: Write block/tensor to compute device first
                 module_object.to(device_to)
 
@@ -125,6 +152,8 @@ def register_patched_safetensor_modelpatcher():
                 # Mark as patched and update memory counter
                 module_object.comfy_patched_weights = True
                 mem_counter += module_size
+
+            self.model.current_weight_patches_uuid = self.patches_uuid
 
             logger.info(f"[MultiGPU_DisTorch2] DisTorch loading completed. Total memory: {mem_counter / (1024 * 1024):.2f}MB")
 
