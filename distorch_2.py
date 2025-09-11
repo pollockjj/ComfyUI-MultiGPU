@@ -67,8 +67,7 @@ def register_patched_safetensor_modelpatcher():
             allocations = safetensor_allocation_store.get(debug_hash)
 
             if not hasattr(self.model, '_distorch_high_precision_loras') or not allocations:
-                mm.unload_all_models()
-                soft_empty_cache_multigpu(logger)
+
                 result = original_partially_load(self, device_to, extra_memory, force_patch_weights)
                 if hasattr(self, '_distorch_block_assignments'):
                     del self._distorch_block_assignments
@@ -84,9 +83,6 @@ def register_patched_safetensor_modelpatcher():
                 self.unpatch_model(self.offload_device, unpatch_weights=True)
 
             self.patch_model(load_weights=False)
-
-            mm.unload_all_models()
-            soft_empty_cache_multigpu(logger)
 
             mem_counter = 0
 
