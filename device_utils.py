@@ -231,41 +231,109 @@ def parse_device_string(device_string):
     return device_string, None
 
 
+def get_device_type(device_string):
+    """
+    Extract the device type from a device string.
+    """
+    if ":" in device_string:
+        return device_string.split(":")[0]
+    return device_string
+
 def soft_empty_cache_multigpu(logger):
     """
     Replicate ComfyUI's cache clearing but for ALL devices in MultiGPU.
     MultiGPU adaptation of ComfyUI's soft_empty_cache() functionality.
     """
+
     import gc
 
-    logger.info("[MultiGPU_Device_Utils] Preparing devices for optimized safetensor loading")
+    logger.info("[MultiGPU_Device_Utils] Initiating cache clearing across all available devices (Patched mm.soft_empty_cache).")
 
-    # Python GC (same as all implementations)
+    # Python GC
     gc.collect()
-    logger.debug("[MultiGPU_Device_Utils] Performed garbage collection before safetensor loading")
+    logger.debug("[MultiGPU_Device_Utils] Performed Python garbage collection.")
 
-    # Clear cache for ALL devices (not just ComfyUI's single device)
+    # Store the current active devices for architectures that require context switching, to restore later
+    original_devices = {}
+
+    # Helper to get current device safely
+    def get_current_device(device_type_module):
+        try:
+            if device_type_module.is_available() and hasattr(device_type_module, "current_device"):
+                return device_type_module.current_device()
+        except Exception as e:
+            logger.debug(f"[MultiGPU_Device_Utils] Could not get current device for module {getattr(device_type_module, '__name__', 'unknown')}: {e}")
+        return None
+
+    if hasattr(torch, "cuda"):
+        original_devices["cuda"] = get_current_device(torch.cuda)
+    if hasattr(torch, "xpu"):
+        original_devices["xpu"] = get_current_device(torch.xpu)
+    if hasattr(torch, "npu"):
+        original_devices["npu"] = get_current_device(torch.npu)
+    if hasattr(torch, "mlu"):
+        original_devices["mlu"] = get_current_device(torch.mlu)
+
     all_devices = get_device_list()
 
     for device_str in all_devices:
-        if device_str.startswith("cuda:"):
-            device_idx = int(device_str.split(":")[1])
-            torch.cuda.set_device(device_idx)
-            torch.cuda.empty_cache()
-            torch.cuda.ipc_collect()  # ComfyUI's CUDA optimization
-            logger.debug(f"[MultiGPU_Device_Utils] Cleared cache + IPC for {device_str}")
-        elif device_str == "mps":
-            torch.mps.empty_cache()
-            logger.debug("[MultiGPU_Device_Utils] Cleared cache for MPS")
-        elif device_str.startswith("xpu:"):
-            torch.xpu.empty_cache()
-            logger.debug("[MultiGPU_Device_Utils] Cleared cache for Intel XPU")
-        elif device_str.startswith("npu:"):
-            torch.npu.empty_cache()
-            logger.debug("[MultiGPU_Device_Utils] Cleared cache for Ascend NPU")
-        elif device_str.startswith("mlu:"):
-            torch.mlu.empty_cache()
-            logger.debug("[MultiGPU_Device_Utils] Cleared cache for Cambricon MLU")
-        elif device_str.startswith("corex:"):
-            torch.corex.empty_cache()  # Hypothetical based on ComfyUI's ixuca support
-            logger.debug("[MultiGPU_Device_Utils] Cleared cache for CoreX")
+        try:
+            device_type = get_device_type(device_str)
+
+            if device_type == "cuda" and hasattr(torch, "cuda"):
+                device_idx = int(device_str.split(":")[1])
+                torch.cuda.set_device(device_idx)
+                torch.cuda.empty_cache()
+                torch.cuda.ipc_collect()
+                logger.debug(f"[MultiGPU_Device_Utils] Cleared cache + IPC for {device_str}")
+
+            elif device_type == "xpu" and hasattr(torch, "xpu"):
+                device_idx = int(device_str.split(":")[1])
+                torch.xpu.set_device(device_idx)
+                torch.xpu.empty_cache()
+                logger.debug(f"[MultiGPU_Device_Utils] Cleared cache for {device_str}")
+
+            elif device_type == "npu" and hasattr(torch, "npu"):
+                device_idx = int(device_str.split(":")[1])
+                torch.npu.set_device(device_idx)
+                torch.npu.empty_cache()
+                logger.debug(f"[MultiGPU_Device_Utils] Cleared cache for {device_str}")
+
+            elif device_type == "mlu" and hasattr(torch, "mlu"):
+                device_idx = int(device_str.split(":")[1])
+                torch.mlu.set_device(device_idx)
+                torch.mlu.empty_cache()
+                logger.debug(f"[MultiGPU_Device_Utils] Cleared cache for {device_str}")
+
+            elif device_type == "mps":
+                if hasattr(torch, "mps") and hasattr(torch.mps, "empty_cache"):
+                    torch.mps.empty_cache()
+                    logger.debug("[MultiGPU_Device_Utils] Cleared cache for MPS")
+
+            elif device_type == "corex":
+                 if hasattr(torch, "corex") and hasattr(torch.corex, "empty_cache"):
+                    torch.corex.empty_cache()
+                    logger.debug(f"[MultiGPU_Device_Utils] Cleared cache for {device_str}")
+
+        except Exception as e:
+            logger.warning(f"[MultiGPU_Device_Utils] Failed to clear cache for {device_str}. Error: {e}")
+
+    # Restore the original active devices
+    # Helper to restore device safely
+    def restore_device(device_type_str, device_type_module, original_device_idx):
+        if original_device_idx is not None:
+            try:
+                if device_type_module.current_device() != original_device_idx:
+                    device_type_module.set_device(original_device_idx)
+                    logger.debug(f"[MultiGPU_Device_Utils] Restored active {device_type_str} device to index {original_device_idx}")
+            except Exception as e:
+                logger.warning(f"[MultiGPU_Device_Utils] Failed to restore original {device_type_str} device index {original_device_idx}. Error: {e}")
+
+    if hasattr(torch, "cuda"):
+        restore_device("cuda", torch.cuda, original_devices.get("cuda"))
+    if hasattr(torch, "xpu"):
+        restore_device("xpu", torch.xpu, original_devices.get("xpu"))
+    if hasattr(torch, "npu"):
+        restore_device("npu", torch.npu, original_devices.get("npu"))
+    if hasattr(torch, "mlu"):
+        restore_device("mlu", torch.mlu, original_devices.get("mlu"))

@@ -5,6 +5,8 @@ import inspect
 import folder_paths
 import comfy.model_management as mm
 from .device_utils import get_device_list
+from . import set_current_device, set_current_text_encoder_device
+
 
 class WanVideoModelLoader:
     @classmethod
@@ -52,6 +54,8 @@ class WanVideoModelLoader:
                   compile_args=None, attention_mode="sdpa", block_swap_args=None, lora=None, vram_management_args=None, extra_model=None, fantasytalking_model=None, multitalk_model=None, fantasyportrait_model=None):
         logging.debug(f"[MultiGPU] WanVideoModelLoader: User selected device: {device}")
         
+        set_current_device(device)
+
         selected_device = torch.device(device)
         
         load_device = "offload_device" if device == "cpu" else "main_device"
@@ -137,7 +141,9 @@ class WanVideoVAELoader:
 
     def loadmodel(self, model_name, device, precision="bf16", compile_args=None):
         logging.debug(f"[MultiGPU] WanVideoVAELoader: User selected device: {device}")
-        
+
+        set_current_device(device)
+
         from nodes import NODE_CLASS_MAPPINGS
         original_loader = NODE_CLASS_MAPPINGS["WanVideoVAELoader"]()
         
@@ -196,7 +202,9 @@ class LoadWanVideoT5TextEncoder:
 
     def loadmodel(self, model_name, precision, device, quantization="disabled"):
         logging.debug(f"[MultiGPU] LoadWanVideoT5TextEncoder: User selected device: {device}")
-        
+
+        set_current_text_encoder_device(device)
+
         selected_device = torch.device(device)
         load_device = "offload_device" if device == "cpu" else "main_device"
         
@@ -253,10 +261,12 @@ class WanVideoTextEncode:
     CATEGORY = "WanVideoWrapper"
     DESCRIPTION = "Encodes text prompts with explicit device selection"
     
-    def process(self, positive_prompt, negative_prompt, device, t5=None, force_offload=True, 
+    def process(self, positive_prompt, negative_prompt, device, t5=None, force_offload=True,
                 model_to_offload=None, use_disk_cache=False):
         logging.debug(f"[MultiGPU] WanVideoTextEncode: User selected device: {device}")
-        
+
+        set_current_text_encoder_device(device)
+
         original_device = "gpu" if device != "cpu" else "cpu"
         
         from nodes import NODE_CLASS_MAPPINGS
@@ -308,7 +318,9 @@ class LoadWanVideoClipTextEncoder:
 
     def loadmodel(self, model_name, precision, device):
         logging.debug(f"[MultiGPU] LoadWanVideoClipTextEncoder: User selected device: {device}")
-        
+
+        set_current_text_encoder_device(device)
+
         selected_device = torch.device(device)
         load_device = "offload_device" if device == "cpu" else "main_device"
         
@@ -375,7 +387,9 @@ class WanVideoSampler:
     def process(self, model, **kwargs):
         model_device = model.load_device
         logging.info(f"[MultiGPU] WanVideoSampler: Processing on device: {model_device}")
-        
+
+        set_current_device(str(model_device))
+
         for module_name in sys.modules.keys():
             if 'WanVideoWrapper' in module_name and hasattr(sys.modules[module_name], 'device'):
                 sys.modules[module_name].device = model_device
@@ -401,7 +415,9 @@ class WanVideoVACEEncode:
         # Get device from VAE object
         vae_device = vae.load_device
         logging.info(f"[MultiGPU] WanVideoVACEEncode: Processing on device: {vae_device}")
-        
+
+        set_current_device(str(vae_device))
+
         # Patch all WanVideo modules to use the VAE's device
         for module_name in sys.modules.keys():
             if 'WanVideoWrapper' in module_name and hasattr(sys.modules[module_name], 'device'):

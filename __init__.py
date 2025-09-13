@@ -6,7 +6,7 @@ from pathlib import Path
 import folder_paths
 import comfy.model_management as mm
 from nodes import NODE_CLASS_MAPPINGS as GLOBAL_NODE_CLASS_MAPPINGS
-from .device_utils import get_device_list, is_accelerator_available
+from .device_utils import get_device_list, is_accelerator_available, soft_empty_cache_multigpu
 
 # --- DisTorch V2 Logging Configuration ---
 # Set to "E" for Engineering (DEBUG) or "P" for Production (INFO)
@@ -119,12 +119,21 @@ def text_encoder_initial_device_patched(*args, **kwargs):
     return mm.text_encoder_device()
 
 
-logger.info(f"[MultiGPU Core Patching] Patching mm.get_torch_device, mm.text_encoder_device, and mm.text_encoder_initial_device")
+# Define the new patch for soft_empty_cache
+def soft_empty_cache_patched():
+    logger.debug("[MultiGPU Core Patching] mm.soft_empty_cache called. Redirecting to soft_empty_cache_multigpu.")
+    # Call the utility function to handle the clearing across all devices.
+    soft_empty_cache_multigpu(logger)
+
+
+logger.info(f"[MultiGPU Core Patching] Patching mm.get_torch_device, mm.text_encoder_device, mm.text_encoder_initial_device, and mm.soft_empty_cache")
 logger.debug(f"[MultiGPU DEBUG] Initial current_device: {current_device}")
 logger.debug(f"[MultiGPU DEBUG] Initial current_text_encoder_device: {current_text_encoder_device}")
 mm.get_torch_device = get_torch_device_patched
 mm.text_encoder_device = text_encoder_device_patched
 mm.text_encoder_initial_device = text_encoder_initial_device_patched
+# Apply the new patch:
+mm.soft_empty_cache = soft_empty_cache_patched
 
 def check_module_exists(module_path):
     full_path = os.path.join(folder_paths.get_folder_paths("custom_nodes")[0], module_path)
