@@ -163,7 +163,7 @@ class TripleCLIPLoaderGGUF(CLIPLoaderGGUF):
 
     TITLE = "TripleCLIPLoader (GGUF)"
 
-    def load_clip(self, clip_name1, clip_name2, clip_name3, type="sd3", device=None):
+    def load_clip(self, clip_name1, clip_name2, clip_name3, type="sd3"):
         original_loader = NODE_CLASS_MAPPINGS["TripleCLIPLoaderGGUF"]()
         return original_loader.load_clip(clip_name1, clip_name2, clip_name3, type)
 
@@ -182,7 +182,7 @@ class QuadrupleCLIPLoaderGGUF(CLIPLoaderGGUF):
 
     TITLE = "QuadrupleCLIPLoader (GGUF)"
 
-    def load_clip(self, clip_name1, clip_name2, clip_name3, clip_name4, type="stable_diffusion", device=None):
+    def load_clip(self, clip_name1, clip_name2, clip_name3, clip_name4, type="stable_diffusion"):
         original_loader = NODE_CLASS_MAPPINGS["QuadrupleCLIPLoaderGGUF"]()
         return original_loader.load_clip(clip_name1, clip_name2, clip_name3, clip_name4, type)
 
