@@ -29,7 +29,6 @@ if not logger.handlers:
 # Global device state management
 current_device = mm.get_torch_device()
 current_text_encoder_device = mm.text_encoder_device()
-current_text_encoder_initial_device = mm.text_encoder_device()
 
 def set_current_device(device):
     global current_device
@@ -37,10 +36,9 @@ def set_current_device(device):
     logger.info(f"[MultiGPU Initialization] current_device set to: {device}")
 
 def set_current_text_encoder_device(device):
-    global current_text_encoder_device, current_text_encoder_initial_device
+    global current_text_encoder_device
     current_text_encoder_device = device
-    current_text_encoder_initial_device = device
-    logger.info(f"[MultiGPU Initialization] current_text_encoder_device and current_text_encoder_initial_device set to: {device}")
+    logger.info(f"[MultiGPU Initialization] current_text_encoder_device set to: {device}")
 
 def override_class(cls):
     class NodeOverride(cls):
@@ -137,19 +135,12 @@ def text_encoder_device_patched():
     logger.debug(f"[MultiGPU Core Patching] text_encoder_device_patched returning device: {device} (current_text_encoder_device={current_text_encoder_device})")
     return device
 
-def text_encoder_initial_device_patched(*args, **kwargs):
-    logger.debug(f"[MultiGPU Core Patching] text_encoder_initial_device_patched called with args={args}, kwargs={kwargs}")
-    # look at this later - I am not convinced that this isn't the better choice:
-    # return text_encoder_device_patched() 
-    return mm.text_encoder_device()
-
 
 logger.info(f"[MultiGPU Core Patching] Patching mm.get_torch_device, mm.text_encoder_device, and mm.text_encoder_initial_device")
 logger.debug(f"[MultiGPU DEBUG] Initial current_device: {current_device}")
 logger.debug(f"[MultiGPU DEBUG] Initial current_text_encoder_device: {current_text_encoder_device}")
 mm.get_torch_device = get_torch_device_patched
 mm.text_encoder_device = text_encoder_device_patched
-mm.text_encoder_initial_device = text_encoder_initial_device_patched
 
 def check_module_exists(module_path):
     full_path = os.path.join(folder_paths.get_folder_paths("custom_nodes")[0], module_path)
