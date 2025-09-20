@@ -4,7 +4,7 @@ import sys
 import inspect
 import folder_paths
 import comfy.model_management as mm
-from .device_utils import get_device_list
+from .device_utils import get_device_list, comfyui_memory_load
 
 class WanVideoModelLoader:
     @classmethod
@@ -89,8 +89,16 @@ class WanVideoModelLoader:
                 logging.debug(f"[MultiGPU] Both WanVideo modules patched successfully")
             
             logging.debug(f"[MultiGPU] Calling original WanVideo loader")
+            try:
+                logging.info(comfyui_memory_load(f"pre-model-load:wan-model:{model}"))
+            except Exception:
+                pass
             result = original_loader.loadmodel(model, base_precision, load_device, quantization,
                                               compile_args, attention_mode, block_swap_args, lora, vram_management_args, extra_model=extra_model, fantasytalking_model=fantasytalking_model, multitalk_model=multitalk_model, fantasyportrait_model=fantasyportrait_model)
+            try:
+                logging.info(comfyui_memory_load(f"post-model-load:wan-model:{model}"))
+            except Exception:
+                pass
             
             if result and len(result) > 0 and hasattr(result[0], 'model'):
                 model_obj = result[0]
@@ -156,7 +164,15 @@ class WanVideoVAELoader:
                 setattr(nodes_module, 'device', selected_device)
                 setattr(nodes_module, 'offload_device', selected_device)
             
+            try:
+                logging.info(comfyui_memory_load(f"pre-model-load:wan-vae:{model_name}"))
+            except Exception:
+                pass
             result = original_loader.loadmodel(model_name, precision, compile_args)
+            try:
+                logging.info(comfyui_memory_load(f"post-model-load:wan-vae:{model_name}"))
+            except Exception:
+                pass
             
             # Attach device info to VAE object for downstream nodes
             if result and len(result) > 0:
@@ -219,7 +235,15 @@ class LoadWanVideoT5TextEncoder:
                 if device == "cpu":
                     setattr(nodes_module, 'offload_device', selected_device)
             
+            try:
+                logging.info(comfyui_memory_load(f"pre-model-load:wan-textenc:{model_name}"))
+            except Exception:
+                pass
             result = original_loader.loadmodel(model_name, precision, load_device, quantization)
+            try:
+                logging.info(comfyui_memory_load(f"post-model-load:wan-textenc:{model_name}"))
+            except Exception:
+                pass
             
             logging.info(f"[MultiGPU] WanVideo T5 Text encoder loaded on {selected_device}")
             
@@ -331,7 +355,15 @@ class LoadWanVideoClipTextEncoder:
                 if device == "cpu":
                     setattr(nodes_module, 'offload_device', selected_device)
             
+            try:
+                logging.info(comfyui_memory_load(f"pre-model-load:wan-clip:{model_name}"))
+            except Exception:
+                pass
             result = original_loader.loadmodel(model_name, precision, load_device)
+            try:
+                logging.info(comfyui_memory_load(f"post-model-load:wan-clip:{model_name}"))
+            except Exception:
+                pass
             
             logging.info(f"[MultiGPU] WanVideo CLIP encoder loaded on {selected_device}")
             

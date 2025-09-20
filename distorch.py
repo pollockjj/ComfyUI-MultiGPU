@@ -12,7 +12,7 @@ logger = logging.getLogger("MultiGPU")
 import copy
 from collections import defaultdict
 import comfy.model_management as mm
-from .device_utils import get_device_list, soft_empty_cache_multigpu
+from .device_utils import get_device_list, soft_empty_cache_multigpu, comfyui_memory_load
 
 # Global store for model allocations
 model_allocation_store = {}
@@ -41,8 +41,16 @@ def register_patched_ggufmodelpatcher():
     def new_load(self, *args, force_patch_weights=False, **kwargs):
         global model_allocation_store
 
+        try:
+            logger.info(comfyui_memory_load("pre-model-load:gguf"))
+        except Exception:
+            pass
         super(module.GGUFModelPatcher, self).load(*args, force_patch_weights=True, **kwargs)
         debug_hash = create_model_hash(self, "patcher")
+        try:
+            logger.info(comfyui_memory_load(f"post-model-load:gguf:{debug_hash[:8]}"))
+        except Exception:
+            pass
         linked = []
         module_count = 0
         for n, m in self.model.named_modules():

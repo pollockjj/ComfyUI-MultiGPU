@@ -12,7 +12,7 @@ import comfy.model_management as mm
 import comfy.model_detection
 import comfy.clip_vision
 from comfy.sd import VAE, CLIP
-from .device_utils import get_device_list, soft_empty_cache_multigpu
+from .device_utils import get_device_list, soft_empty_cache_multigpu, comfyui_memory_load, create_model_identifier
 from .distorch_2 import safetensor_allocation_store, safetensor_settings_store, create_safetensor_model_hash, register_patched_safetensor_modelpatcher
 
 logger = logging.getLogger("MultiGPU")
@@ -105,11 +105,21 @@ def patched_load_state_dict_guess_config(sd, output_vae=True, output_clip=True, 
             set_current_device(unet_compute_device)            
             inital_load_device = mm.unet_inital_load_device(parameters, unet_dtype)
 
+            try:
+                logger.info(comfyui_memory_load(f"pre-model-load:unet:{config_hash[:8]}"))
+            except Exception:
+                pass
+
             model = model_config.get_model(sd, diffusion_model_prefix, device=inital_load_device)
 
             logger.info("[MultiGPU Checkpoint] Invoking soft_empty_cache_multigpu before UNet ModelPatcher setup")
             soft_empty_cache_multigpu()
             model_patcher = comfy.model_patcher.ModelPatcher(model, load_device=unet_compute_device, offload_device=mm.unet_offload_device())
+            try:
+                ident = create_model_identifier(model_patcher)
+                logger.info(comfyui_memory_load(f"post-model-load:unet:{ident}"))
+            except Exception:
+                pass
 
             if distorch_config and 'unet_allocation' in distorch_config:
                 register_patched_safetensor_modelpatcher()
@@ -121,14 +131,27 @@ def patched_load_state_dict_guess_config(sd, output_vae=True, output_clip=True, 
                 logger.info(f"Stored DisTorch2 config for UNet (hash {model_hash[:8]}): {distorch_config['unet_allocation']}")
 
             model.load_model_weights(sd, diffusion_model_prefix)
+            try:
+                ident = create_model_identifier(model_patcher)
+                logger.info(comfyui_memory_load(f"post-weights-load:unet:{ident}"))
+            except Exception:
+                pass
 
         if output_vae:
             vae_target_device = torch.device(device_config.get('vae_device', original_main_device))
             set_current_device(vae_target_device) # Use main device context for VAE
+            try:
+                logger.info(comfyui_memory_load(f"pre-model-load:vae:{config_hash[:8]}"))
+            except Exception:
+                pass
             
             vae_sd = comfy.utils.state_dict_prefix_replace(sd, {k: "" for k in model_config.vae_key_prefix}, filter_keys=True)
             vae_sd = model_config.process_vae_state_dict(vae_sd)
             vae = VAE(sd=vae_sd, metadata=metadata)
+            try:
+                logger.info(comfyui_memory_load(f"post-model-load:vae:{config_hash[:8]}"))
+            except Exception:
+                pass
 
         if output_clip:
             clip_target_device = device_config.get('clip_device', original_clip_device)
@@ -139,6 +162,10 @@ def patched_load_state_dict_guess_config(sd, output_vae=True, output_clip=True, 
                 clip_sd = model_config.process_clip_state_dict(sd)
                 if len(clip_sd) > 0:
                     logger.info("[MultiGPU Checkpoint] Invoking soft_empty_cache_multigpu before CLIP construction")
+                    try:
+                        logger.info(comfyui_memory_load(f"pre-model-load:clip:{config_hash[:8]}"))
+                    except Exception:
+                        pass
                     soft_empty_cache_multigpu()
                     clip_params = comfy.utils.calculate_parameters(clip_sd)
                     clip = CLIP(clip_target, embedding_directory=embedding_directory, tokenizer_data=clip_sd, parameters=clip_params, model_options=te_model_options)
@@ -157,6 +184,11 @@ def patched_load_state_dict_guess_config(sd, output_vae=True, output_clip=True, 
                     if len(m) > 0: logger.warning(f"CLIP missing keys: {m}")
                     if len(u) > 0: logger.debug(f"CLIP unexpected keys: {u}")
                     logger.info("CLIP Loaded.")
+                    try:
+                        ident = create_model_identifier(clip.patcher) if hasattr(clip, 'patcher') else f"clip:{config_hash[:8]}"
+                        logger.info(comfyui_memory_load(f"post-model-load:clip:{ident}"))
+                    except Exception:
+                        pass
                 else:
                     logger.warning("No CLIP/text encoder weights in checkpoint.")
             else:

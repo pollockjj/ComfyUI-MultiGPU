@@ -243,9 +243,19 @@ def soft_empty_cache_multigpu():
     import gc
 
     logger.info("[MultiGPU_Device_Utils] soft_empty_cache_multigpu: starting GC and multi-device cache clear")
+    # Memory snapshot before GC and soft-empty
+    try:
+        logger.info(comfyui_memory_load("pre-soft-empty"))
+        logger.info(comfyui_memory_load("pre-gc"))
+    except Exception:
+        pass
 
     # Python GC (same as all implementations)
     gc.collect()
+    try:
+        logger.info(comfyui_memory_load("post-gc"))
+    except Exception:
+        pass
     logger.info("[MultiGPU_Device_Utils] soft_empty_cache_multigpu: garbage collection complete")
 
     # Clear cache for ALL devices (not just ComfyUI's single device)
@@ -261,41 +271,147 @@ def soft_empty_cache_multigpu():
                 device_idx = int(device_str.split(":")[1])
                 # Use context manager for safe switching and automatic restoration
                 logger.info(f"[MultiGPU_Device_Utils] Clearing CUDA cache on {device_str} (idx={device_idx})")
+                try:
+                    logger.info(comfyui_memory_load(f"pre-empty:{device_str}"))
+                except Exception:
+                    pass
                 with torch.cuda.device(device_idx):
                     torch.cuda.empty_cache()
                     if hasattr(torch.cuda, "ipc_collect"):
                         torch.cuda.ipc_collect()  # ComfyUI's CUDA optimization
                 logger.info(f"[MultiGPU_Device_Utils] Cleared CUDA cache (and IPC if available) on {device_str}")
+                try:
+                    logger.info(comfyui_memory_load(f"post-empty:{device_str}"))
+                except Exception:
+                    pass
 
         elif device_str == "mps":
             if hasattr(torch, "mps") and hasattr(torch.mps, "empty_cache"):
                 logger.info("[MultiGPU_Device_Utils] Clearing MPS cache")
+                try:
+                    logger.info(comfyui_memory_load(f"pre-empty:{device_str}"))
+                except Exception:
+                    pass
                 torch.mps.empty_cache()
                 logger.info("[MultiGPU_Device_Utils] Cleared MPS cache")
+                try:
+                    logger.info(comfyui_memory_load(f"post-empty:{device_str}"))
+                except Exception:
+                    pass
 
         elif device_str.startswith("xpu:"):
             if hasattr(torch, "xpu") and hasattr(torch.xpu, "empty_cache"):
                 logger.info(f"[MultiGPU_Device_Utils] Clearing XPU cache on {device_str}")
+                try:
+                    logger.info(comfyui_memory_load(f"pre-empty:{device_str}"))
+                except Exception:
+                    pass
                 torch.xpu.empty_cache()
                 logger.info(f"[MultiGPU_Device_Utils] Cleared XPU cache on {device_str}")
+                try:
+                    logger.info(comfyui_memory_load(f"post-empty:{device_str}"))
+                except Exception:
+                    pass
 
         elif device_str.startswith("npu:"):
             if hasattr(torch, "npu") and hasattr(torch.npu, "empty_cache"):
                 logger.info(f"[MultiGPU_Device_Utils] Clearing NPU cache on {device_str}")
+                try:
+                    logger.info(comfyui_memory_load(f"pre-empty:{device_str}"))
+                except Exception:
+                    pass
                 torch.npu.empty_cache()
                 logger.info(f"[MultiGPU_Device_Utils] Cleared NPU cache on {device_str}")
+                try:
+                    logger.info(comfyui_memory_load(f"post-empty:{device_str}"))
+                except Exception:
+                    pass
 
         elif device_str.startswith("mlu:"):
             if hasattr(torch, "mlu") and hasattr(torch.mlu, "empty_cache"):
                 logger.info(f"[MultiGPU_Device_Utils] Clearing MLU cache on {device_str}")
+                try:
+                    logger.info(comfyui_memory_load(f"pre-empty:{device_str}"))
+                except Exception:
+                    pass
                 torch.mlu.empty_cache()
                 logger.info(f"[MultiGPU_Device_Utils] Cleared MLU cache on {device_str}")
+                try:
+                    logger.info(comfyui_memory_load(f"post-empty:{device_str}"))
+                except Exception:
+                    pass
 
         elif device_str.startswith("corex:"):
             if hasattr(torch, "corex") and hasattr(torch.corex, "empty_cache"):
                 logger.info(f"[MultiGPU_Device_Utils] Clearing CoreX cache on {device_str}")
+                try:
+                    logger.info(comfyui_memory_load(f"pre-empty:{device_str}"))
+                except Exception:
+                    pass
                 torch.corex.empty_cache()
                 logger.info(f"[MultiGPU_Device_Utils] Cleared CoreX cache on {device_str}")
+                try:
+                    logger.info(comfyui_memory_load(f"post-empty:{device_str}"))
+                except Exception:
+                    pass
+
+    # Final memory snapshot after completing soft empty across all devices
+    try:
+        logger.info(comfyui_memory_load("post-soft-empty"))
+    except Exception:
+        pass
+
+
+def _bytes_to_gib(b: int) -> float:
+    """Convert bytes to GiB as a float."""
+    try:
+        return float(b) / (1024.0 ** 3)
+    except Exception:
+        return 0.0
+
+
+def comfyui_memory_load(tag: str) -> str:
+    """
+    Returns a single-line, pipe-delimited snapshot of system and device memory usage.
+
+    Format: "tag=<TAG>|cpu=<used_GiB>/<total_GiB>|<device>=<used_GiB>/<total_GiB>|..."
+    - CPU values represent system RAM via psutil.
+    - Device values represent VRAM via comfy.model_management across all non-CPU devices.
+    - Device identifiers use the torch device string from get_device_list() (e.g., 'cuda:0', 'xpu:0', 'mps').
+    - Values are in GiB with 2 decimals.
+    """
+    # CPU RAM
+    vm = psutil.virtual_memory()
+    cpu_used_gib = _bytes_to_gib(vm.used)
+    cpu_total_gib = _bytes_to_gib(vm.total)
+
+    segments = [f"tag={tag}", f"cpu={cpu_used_gib:.2f}/{cpu_total_gib:.2f}"]
+
+    # Enumerate non-CPU devices
+    devices = [d for d in get_device_list() if d != "cpu"]
+
+    # Append per-device VRAM used/total
+    for dev_str in devices:
+        try:
+            device = torch.device(dev_str)
+            total = mm.get_total_memory(device)
+            free_info = mm.get_free_memory(device, torch_free_too=True)
+            # free_info may be a tuple (system_free, torch_cache_free) or a single value
+            if isinstance(free_info, tuple):
+                system_free = free_info[0]
+            else:
+                system_free = free_info
+            used = max(0, (total or 0) - (system_free or 0))
+
+            used_gib = _bytes_to_gib(used)
+            total_gib = _bytes_to_gib(total or 0)
+            if total_gib > 0:
+                segments.append(f"{dev_str}={used_gib:.2f}/{total_gib:.2f}")
+        except Exception:
+            # Skip devices that error out (backend not initialized, etc.)
+            continue
+
+    return "|".join(segments)
 
 
 # ==========================================================================================
