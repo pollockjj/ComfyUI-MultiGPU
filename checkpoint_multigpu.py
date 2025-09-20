@@ -107,7 +107,8 @@ def patched_load_state_dict_guess_config(sd, output_vae=True, output_clip=True, 
 
             model = model_config.get_model(sd, diffusion_model_prefix, device=inital_load_device)
 
-            soft_empty_cache_multigpu(logger)
+            logger.info("[MultiGPU Checkpoint] Invoking soft_empty_cache_multigpu before UNet ModelPatcher setup")
+            soft_empty_cache_multigpu()
             model_patcher = comfy.model_patcher.ModelPatcher(model, load_device=unet_compute_device, offload_device=mm.unet_offload_device())
 
             if distorch_config and 'unet_allocation' in distorch_config:
@@ -137,7 +138,8 @@ def patched_load_state_dict_guess_config(sd, output_vae=True, output_clip=True, 
             if clip_target is not None:
                 clip_sd = model_config.process_clip_state_dict(sd)
                 if len(clip_sd) > 0:
-                    soft_empty_cache_multigpu(logger)
+                    logger.info("[MultiGPU Checkpoint] Invoking soft_empty_cache_multigpu before CLIP construction")
+                    soft_empty_cache_multigpu()
                     clip_params = comfy.utils.calculate_parameters(clip_sd)
                     clip = CLIP(clip_target, embedding_directory=embedding_directory, tokenizer_data=clip_sd, parameters=clip_params, model_options=te_model_options)
 

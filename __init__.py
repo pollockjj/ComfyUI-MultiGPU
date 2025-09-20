@@ -6,7 +6,7 @@ from pathlib import Path
 import folder_paths
 import comfy.model_management as mm
 from nodes import NODE_CLASS_MAPPINGS as GLOBAL_NODE_CLASS_MAPPINGS
-from .device_utils import get_device_list, is_accelerator_available
+from .device_utils import get_device_list, is_accelerator_available, soft_empty_cache_multigpu
 
 # --- DisTorch V2 Logging Configuration ---
 # Set to "E" for Engineering (DEBUG) or "P" for Production (INFO)
@@ -214,6 +214,170 @@ from .distorch_2 import (
     override_class_with_distorch_safetensor_v2_clip,
     override_class_with_distorch_safetensor_v2_clip_no_device
 )
+
+# ==========================================================================================
+# Core Patching: soft_empty_cache harmonization for DisTorch2
+# ==========================================================================================
+logger.info("[MultiGPU Core Patching] Patching mm.soft_empty_cache for DisTorch2 harmonization")
+
+# Store the original function for fallback behavior
+original_soft_empty_cache = mm.soft_empty_cache
+
+def soft_empty_cache_distorch2_patched(force=False):
+    """
+    Patched mm.soft_empty_cache. If DisTorch2 models are active, clear cache on ALL devices.
+    Otherwise, execute original ComfyUI behavior.
+    """
+    is_distorch_active = False
+
+    # Check if any loaded model is managed by DisTorch2 using the allocation store
+    for lm in mm.current_loaded_models:
+        mp = lm.model  # weakref call to ModelPatcher
+        if mp is not None:
+            model_hash = create_safetensor_model_hash(mp, "cache_patch_check")
+            if model_hash in safetensor_allocation_store and safetensor_allocation_store[model_hash]:
+                is_distorch_active = True
+                break
+
+    if is_distorch_active:
+        logger.info("[MultiGPU Core Patching] DisTorch2 active: clearing caches on all devices")
+        soft_empty_cache_multigpu()
+    else:
+        logger.info("[MultiGPU Core Patching] DisTorch2 not active: delegating to original mm.soft_empty_cache")
+        original_soft_empty_cache(force)
+
+# Apply the patch
+mm.soft_empty_cache = soft_empty_cache_distorch2_patched
+
+# ==========================================================================================
+# Core Patching: load_models_gpu Proactive Unloading (NEW FIX for UNet OOM)
+# Prevents OOM on offload/donor devices when swapping large DisTorch2 models.
+# ==========================================================================================
+
+LARGE_MODEL_THRESHOLD = 2 * (1024**3)  # 2 GB threshold for "large" models
+
+# Patch only once (handles reloads)
+if hasattr(mm, 'load_models_gpu') and not hasattr(mm.load_models_gpu, "_distorch2_proactive_patched"):
+    logger.info("[MultiGPU Core Patching] Patching mm.load_models_gpu for DisTorch2 proactive unloading")
+
+    original_load_models_gpu = mm.load_models_gpu
+
+    def patched_load_models_gpu(models, memory_required=0, force_patch_weights=False, minimum_memory_required=None, force_full_load=False):
+        """
+        Proactively unload large models that are not needed when loading a large DisTorch2 model.
+        This frees both compute and donor device memory ahead of ComfyUI's compute-only check.
+        """
+        # Validate models argument loudly
+        if not isinstance(models, (list, tuple, set)):
+            logger.error("[MultiGPU Core Patching] CRITICAL: mm.load_models_gpu 'models' is not a list/tuple/set. Bypassing proactive patch.")
+            return original_load_models_gpu(models, memory_required, force_patch_weights, minimum_memory_required, force_full_load)
+
+        # Detect incoming large DisTorch2 request
+        incoming_is_distorch = False
+        incoming_is_large = False
+        incoming_patchers = set()
+        incoming_loaded_names = []
+
+        for lm in models:
+            # Expect LoadedModel instances; gather ModelPatcher if alive
+            mp = getattr(lm, 'model', None)
+            if mp is not None:
+                incoming_patchers.add(mp)
+                # Determine size (prefer LoadedModel.model_memory if available)
+                size_bytes = 0
+                if hasattr(lm, 'model_memory'):
+                    try:
+                        size_bytes = lm.model_memory()
+                    except Exception:
+                        size_bytes = 0
+                if size_bytes <= 0 and hasattr(mp, 'model_size'):
+                    size_bytes = mp.model_size()
+
+                if size_bytes > LARGE_MODEL_THRESHOLD:
+                    incoming_is_large = True
+
+                # Check DisTorch2 management via allocation store
+                model_hash = create_safetensor_model_hash(mp, "load_patch_check")
+                if model_hash in safetensor_allocation_store and safetensor_allocation_store.get(model_hash):
+                    incoming_is_distorch = True
+
+                # Log informational context
+                incoming_loaded_names.append(f"{type(getattr(mp, 'model', mp)).__name__}:{size_bytes/(1024**3):.2f}GB")
+
+        logger.info(f"[MultiGPU Core Patching] load_models_gpu incoming set: large={incoming_is_large} distorch2={incoming_is_distorch} count={len(incoming_patchers)}")
+        if incoming_loaded_names:
+            logger.info(f"[MultiGPU Core Patching] Incoming models summary: {', '.join(incoming_loaded_names)}")
+
+        # Proactive unload if both conditions are met
+        if incoming_is_distorch and incoming_is_large:
+            if not hasattr(mm, 'current_loaded_models'):
+                raise AttributeError("comfy.model_management is missing 'current_loaded_models'. Proactive unload check failed.")
+
+            to_unload_indices = []
+            unload_summaries = []
+            needed_patchers = incoming_patchers
+            logger.info("[MultiGPU Core Patching] Incoming large DisTorch2 model detected. Initiating proactive unload of other large models.")
+
+            # Iterate backwards to safely pop from list
+            for i in range(len(mm.current_loaded_models) - 1, -1, -1):
+                lm_cur = mm.current_loaded_models[i]
+                mp_cur = getattr(lm_cur, 'model', None)
+                if mp_cur is None:
+                    continue  # already dead or cleaned up
+
+                # Skip models needed for this load call
+                if mp_cur in needed_patchers:
+                    continue
+
+                # Determine size (prefer LoadedModel.model_memory)
+                size_cur = 0
+                if hasattr(lm_cur, 'model_memory'):
+                    try:
+                        size_cur = lm_cur.model_memory()
+                    except Exception:
+                        size_cur = 0
+                if size_cur <= 0 and hasattr(mp_cur, 'model_size'):
+                    size_cur = mp_cur.model_size()
+
+                # Only unload large models
+                if size_cur > LARGE_MODEL_THRESHOLD:
+                    model_name = type(getattr(mp_cur, 'model', mp_cur)).__name__
+                    logger.info(f"[MultiGPU Core Patching] Unloading large model: {model_name} (~{size_cur/(1024**3):.2f}GB)")
+                    # Attempt full unload; unpatch_weights=True to release distributed allocations
+                    success = False
+                    if hasattr(lm_cur, 'model_unload'):
+                        success = lm_cur.model_unload(memory_to_free=None, unpatch_weights=True)
+                    if success:
+                        to_unload_indices.append(i)
+                        unload_summaries.append(f"{model_name}:{size_cur/(1024**3):.2f}GB")
+                    else:
+                        logger.warning(f"[MultiGPU Core Patching] Failed to fully unload model {model_name} (~{size_cur/(1024**3):.2f}GB)")
+
+            # Remove from management list and clear caches
+            unloaded_count = 0
+            for idx in to_unload_indices:  # already in reverse order
+                mm.current_loaded_models.pop(idx)
+                unloaded_count += 1
+
+            if unloaded_count > 0:
+                logger.info(f"[MultiGPU Core Patching] Proactively unloaded {unloaded_count} large model(s): {', '.join(unload_summaries)}")
+                logger.info("[MultiGPU Core Patching] Performing multi-device cache clear after proactive unload")
+                # Force multi-device cache clear via patched soft_empty_cache (which detects DisTorch2)
+                mm.soft_empty_cache(force=True)
+            else:
+                logger.info("[MultiGPU Core Patching] No unload candidates matched the criteria (either none large or all required)")
+
+        # Continue with original behavior
+        return original_load_models_gpu(models, memory_required, force_patch_weights, minimum_memory_required, force_full_load)
+
+    # Mark and apply the patch
+    patched_load_models_gpu._distorch2_proactive_patched = True
+    mm.load_models_gpu = patched_load_models_gpu
+else:
+    if not hasattr(mm, 'load_models_gpu'):
+        raise AttributeError("comfy.model_management is missing 'load_models_gpu'. Core patching failed.")
+    else:
+        logger.debug("[MultiGPU Core Patching] mm.load_models_gpu already patched; skipping")
 
 # Import advanced checkpoint loaders
 from .checkpoint_multigpu import (

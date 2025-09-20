@@ -62,7 +62,8 @@ def register_patched_ggufmodelpatcher():
                 debug_hash = create_model_hash(self, "patcher")
                 debug_allocations = model_allocation_store.get(debug_hash)
                 if debug_allocations:
-                    soft_empty_cache_multigpu(logger)
+                    logger.info("[MultiGPU DisTorch GGUF] Invoking soft_empty_cache_multigpu before GGUF device assignment")
+                    soft_empty_cache_multigpu()
                     device_assignments = analyze_ggml_loading(self.model, debug_allocations)['device_assignments']
                     for device, layers in device_assignments.items():
                         target_device = torch.device(device)

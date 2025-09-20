@@ -234,44 +234,68 @@ def parse_device_string(device_string):
     return device_string, None
 
 
-def soft_empty_cache_multigpu(logger):
+def soft_empty_cache_multigpu():
     """
     Replicate ComfyUI's cache clearing but for ALL devices in MultiGPU.
     MultiGPU adaptation of ComfyUI's soft_empty_cache() functionality.
+    Uses context managers to ensure the calling thread's device context is restored.
     """
     import gc
 
-    logger.info("[MultiGPU_Device_Utils] Preparing devices for optimized safetensor loading")
+    logger.info("[MultiGPU_Device_Utils] soft_empty_cache_multigpu: starting GC and multi-device cache clear")
 
     # Python GC (same as all implementations)
     gc.collect()
-    logger.debug("[MultiGPU_Device_Utils] Performed garbage collection before safetensor loading")
+    logger.info("[MultiGPU_Device_Utils] soft_empty_cache_multigpu: garbage collection complete")
 
     # Clear cache for ALL devices (not just ComfyUI's single device)
     all_devices = get_device_list()
+    logger.info(f"[MultiGPU_Device_Utils] soft_empty_cache_multigpu: devices to clear = {all_devices}")
+    
+    # Check global availability first to avoid unnecessary iteration if backend is missing
+    is_cuda_available = hasattr(torch, "cuda") and hasattr(torch.cuda, "is_available") and torch.cuda.is_available()
 
     for device_str in all_devices:
         if device_str.startswith("cuda:"):
-            device_idx = int(device_str.split(":")[1])
-            torch.cuda.set_device(device_idx)
-            torch.cuda.empty_cache()
-            torch.cuda.ipc_collect()  # ComfyUI's CUDA optimization
-            logger.debug(f"[MultiGPU_Device_Utils] Cleared cache + IPC for {device_str}")
+            if is_cuda_available:
+                device_idx = int(device_str.split(":")[1])
+                # Use context manager for safe switching and automatic restoration
+                logger.info(f"[MultiGPU_Device_Utils] Clearing CUDA cache on {device_str} (idx={device_idx})")
+                with torch.cuda.device(device_idx):
+                    torch.cuda.empty_cache()
+                    if hasattr(torch.cuda, "ipc_collect"):
+                        torch.cuda.ipc_collect()  # ComfyUI's CUDA optimization
+                logger.info(f"[MultiGPU_Device_Utils] Cleared CUDA cache (and IPC if available) on {device_str}")
+
         elif device_str == "mps":
-            torch.mps.empty_cache()
-            logger.debug("[MultiGPU_Device_Utils] Cleared cache for MPS")
+            if hasattr(torch, "mps") and hasattr(torch.mps, "empty_cache"):
+                logger.info("[MultiGPU_Device_Utils] Clearing MPS cache")
+                torch.mps.empty_cache()
+                logger.info("[MultiGPU_Device_Utils] Cleared MPS cache")
+
         elif device_str.startswith("xpu:"):
-            torch.xpu.empty_cache()
-            logger.debug("[MultiGPU_Device_Utils] Cleared cache for Intel XPU")
+            if hasattr(torch, "xpu") and hasattr(torch.xpu, "empty_cache"):
+                logger.info(f"[MultiGPU_Device_Utils] Clearing XPU cache on {device_str}")
+                torch.xpu.empty_cache()
+                logger.info(f"[MultiGPU_Device_Utils] Cleared XPU cache on {device_str}")
+
         elif device_str.startswith("npu:"):
-            torch.npu.empty_cache()
-            logger.debug("[MultiGPU_Device_Utils] Cleared cache for Ascend NPU")
+            if hasattr(torch, "npu") and hasattr(torch.npu, "empty_cache"):
+                logger.info(f"[MultiGPU_Device_Utils] Clearing NPU cache on {device_str}")
+                torch.npu.empty_cache()
+                logger.info(f"[MultiGPU_Device_Utils] Cleared NPU cache on {device_str}")
+
         elif device_str.startswith("mlu:"):
-            torch.mlu.empty_cache()
-            logger.debug("[MultiGPU_Device_Utils] Cleared cache for Cambricon MLU")
+            if hasattr(torch, "mlu") and hasattr(torch.mlu, "empty_cache"):
+                logger.info(f"[MultiGPU_Device_Utils] Clearing MLU cache on {device_str}")
+                torch.mlu.empty_cache()
+                logger.info(f"[MultiGPU_Device_Utils] Cleared MLU cache on {device_str}")
+
         elif device_str.startswith("corex:"):
-            torch.corex.empty_cache()  # Hypothetical based on ComfyUI's ixuca support
-            logger.debug("[MultiGPU_Device_Utils] Cleared cache for CoreX")
+            if hasattr(torch, "corex") and hasattr(torch.corex, "empty_cache"):
+                logger.info(f"[MultiGPU_Device_Utils] Clearing CoreX cache on {device_str}")
+                torch.corex.empty_cache()
+                logger.info(f"[MultiGPU_Device_Utils] Cleared CoreX cache on {device_str}")
 
 
 # ==========================================================================================
