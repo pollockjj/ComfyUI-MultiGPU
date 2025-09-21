@@ -17,7 +17,7 @@ from collections import defaultdict
 import comfy.model_management as mm
 import comfy.model_patcher
 from . import current_device
-from .device_utils import get_device_list, soft_empty_cache_multigpu, comfyui_memory_load
+from .device_utils import get_device_list, soft_empty_cache_multigpu, multigpu_memory_log
 
 safetensor_allocation_store = {}
 safetensor_settings_store = {}
@@ -64,19 +64,13 @@ def register_patched_safetensor_modelpatcher():
             global safetensor_allocation_store
 
             debug_hash = create_safetensor_model_hash(self, "partial_load")
-            try:
-                logger.info(comfyui_memory_load(f"pre-model-load:safetensor:{debug_hash[:8]}"))
-            except Exception:
-                pass
+            multigpu_memory_log(f"safetensor:{debug_hash[:8]}", "pre-load")
             allocations = safetensor_allocation_store.get(debug_hash)
 
             if not hasattr(self.model, '_distorch_high_precision_loras') or not allocations:
 
                 result = original_partially_load(self, device_to, extra_memory, force_patch_weights)
-                try:
-                    logger.info(comfyui_memory_load(f"post-model-load:safetensor:{debug_hash[:8]}"))
-                except Exception:
-                    pass
+                multigpu_memory_log(f"safetensor:{debug_hash[:8]}", "post-load")
                 if hasattr(self, '_distorch_block_assignments'):
                     del self._distorch_block_assignments
                 return result
@@ -88,15 +82,7 @@ def register_patched_safetensor_modelpatcher():
 
             if unpatch_weights:
                 logger.info(f"[MultiGPU_DisTorch2] Patches changed or forced. Unpatching model.")
-                try:
-                    logger.info(comfyui_memory_load(f"pre-model-unload:safetensor:{debug_hash[:8]}"))
-                except Exception:
-                    pass
                 self.unpatch_model(self.offload_device, unpatch_weights=True)
-                try:
-                    logger.info(comfyui_memory_load(f"post-model-unload:safetensor:{debug_hash[:8]}"))
-                except Exception:
-                    pass
 
             self.patch_model(load_weights=False)
 
@@ -174,10 +160,7 @@ def register_patched_safetensor_modelpatcher():
             self.model.current_weight_patches_uuid = self.patches_uuid
 
             logger.info(f"[MultiGPU_DisTorch2] DisTorch loading completed. Total memory: {mem_counter / (1024 * 1024):.2f}MB")
-            try:
-                logger.info(comfyui_memory_load(f"post-model-load:safetensor:{debug_hash[:8]}"))
-            except Exception:
-                pass
+            multigpu_memory_log(f"safetensor:{debug_hash[:8]}", "post-load")
 
             return 0
 
