@@ -48,7 +48,7 @@ def create_safetensor_model_hash(model, caller):
     final_hash = hashlib.sha256(identifier.encode()).hexdigest()
     
     # DEBUG STATEMENT - ALWAYS LOG THE HASH
-    logger.debug(f"[MultiGPU_DisTorch2] Created hash for {caller}: {final_hash[:8]}...")
+    logger.debug(f"[MultiGPU DisTorch V2] Created hash for {caller}: {final_hash[:8]}...")
     return final_hash
 
 
@@ -81,7 +81,7 @@ def register_patched_safetensor_modelpatcher():
             unpatch_weights = self.model.current_weight_patches_uuid is not None and (self.model.current_weight_patches_uuid != self.patches_uuid or force_patch_weights)
 
             if unpatch_weights:
-                logger.info(f"[MultiGPU_DisTorch2] Patches changed or forced. Unpatching model.")
+                logger.debug(f"[MultiGPU DisTorch V2] Patches changed or forced. Unpatching model.")
                 self.unpatch_model(self.offload_device, unpatch_weights=True)
 
             self.patch_model(load_weights=False)
@@ -90,10 +90,10 @@ def register_patched_safetensor_modelpatcher():
 
             is_clip_model = getattr(self, 'is_clip', False)
             if is_clip_model:
-                logger.info(f"[MultiGPU_DisTorch2] Using CLIP-specific allocation for model {debug_hash[:8]} (HEAD PRESERVATION ENABLED)")
+                logger.debug(f"[MultiGPU DisTorch V2] Using CLIP-specific allocation for model {debug_hash[:8]} (HEAD PRESERVATION ENABLED)")
                 device_assignments = analyze_safetensor_loading_clip(self, allocations)
             else:
-                logger.debug(f"[MultiGPU_DisTorch2] Using standard allocation for model {debug_hash[:8]} (UNET/VAE - UNTOUCHED)")
+                logger.debug(f"[MultiGPU DisTorch V2] Using standard allocation for model {debug_hash[:8]} (UNET/VAE - UNTOUCHED)")
                 device_assignments = analyze_safetensor_loading(self, allocations)
             
             model_original_dtype = comfy.utils.weight_dtype(self.model.state_dict())
@@ -111,7 +111,7 @@ def register_patched_safetensor_modelpatcher():
                         pass
 
                     if current_module_device is not None and str(current_module_device) != str(block_target_device):
-                        logger.debug(f"[MultiGPU_DisTorch2] Moving already patched {module_name} to {block_target_device}")
+                        logger.debug(f"[MultiGPU DisTorch V2] Moving already patched {module_name} to {block_target_device}")
                         module_object.to(block_target_device)
 
                     mem_counter += module_size
@@ -145,11 +145,11 @@ def register_patched_safetensor_modelpatcher():
                             new_param = torch.nn.Parameter(cast_data.to(torch.float8_e4m3fn))
                             new_param.requires_grad = param.requires_grad
                             setattr(module_object, param_name, new_param)
-                            logger.debug(f"[MultiGPU_DisTorch2] Cast {module_name}.{param_name} to FP8 for CPU storage")
+                            logger.debug(f"[MultiGPU DisTorch V2] Cast {module_name}.{param_name} to FP8 for CPU storage")
 
                 # Step 4: Move to ultimate destination based on DisTorch assignment
                 if block_target_device != device_to:
-                    logger.debug(f"[MultiGPU_DisTorch2] Moving {module_name} from {device_to} to {block_target_device}")
+                    logger.debug(f"[MultiGPU DisTorch V2] Moving {module_name} from {device_to} to {block_target_device}")
                     module_object.to(block_target_device)
                     module_object.comfy_cast_weights = True
 
@@ -159,7 +159,8 @@ def register_patched_safetensor_modelpatcher():
 
             self.model.current_weight_patches_uuid = self.patches_uuid
 
-            logger.info(f"[MultiGPU_DisTorch2] DisTorch loading completed. Total memory: {mem_counter / (1024 * 1024):.2f}MB")
+            logger.info("[MultiGPU DisTorch V2] DisTorch loading completed.")
+            logger.info(f"[MultiGPU DisTorch V2] Total memory: {mem_counter / (1024 * 1024):.2f}MB")
             multigpu_memory_log(f"safetensor:{debug_hash[:8]}", "post-load")
 
             return 0
@@ -167,7 +168,7 @@ def register_patched_safetensor_modelpatcher():
         
         comfy.model_patcher.ModelPatcher.partially_load = new_partially_load
         comfy.model_patcher.ModelPatcher._distorch_patched = True
-        logger.info("[MultiGPU_DisTorch2] Successfully patched ModelPatcher.partially_load")
+        logger.info("[MultiGPU Core Patching] Successfully patched ModelPatcher.partially_load")
 
 
 def analyze_safetensor_loading(model_patcher, allocations_string):
@@ -183,13 +184,10 @@ def analyze_safetensor_loading(model_patcher, allocations_string):
     distorch_alloc, virtual_vram_str = allocations_string.split('#')
 
     compute_device = virtual_vram_str.split(';')[0]
-    logger.info(f"[MultiGPU_DisTorch2] Compute Device: {compute_device}")
+    logger.debug(f"[MultiGPU DisTorch V2] Compute Device: {compute_device}")
 
     if not distorch_alloc:
         mode = "fraction"
-        logger.info("[MultiGPU_DisTorch2] Expert String Examples:")
-        logger.info("  Direct(byte) Mode - cuda:0,500mb;cuda:1,3.0g;cpu,5gb* -> '*' cpu = over/underflow device, put 0.50gb on cuda0, 3.00gb on cuda1, and 5.00gb (or the rest) on cpu")
-        logger.info("  Ratio(%) Mode - cuda:0,8%;cuda:1,8%;cpu,4% -> 8:8:4 ratio, put 40% on cuda0, 40% on cuda1, and 20% on cpu")
         distorch_alloc = calculate_safetensor_vvram_allocation(model_patcher, virtual_vram_str)
 
     elif any(c in distorch_alloc.lower() for c in ['g', 'm', 'k', 'b']):
@@ -205,11 +203,12 @@ def analyze_safetensor_loading(model_patcher, allocations_string):
         if device not in present_devices:
             distorch_alloc += f";{device},0.0"
 
-    logger.info(f"[MultiGPU_DisTorch2] Final Allocation String: {distorch_alloc}")
-
     eq_line = "=" * 50
     dash_line = "-" * 50
     fmt_assign = "{:<18}{:>7}{:>14}{:>10}"
+
+    logger.info(eq_line)
+    logger.info(f"[MultiGPU DisTorch V2] Final Allocation String:\n{distorch_alloc}")
 
     for allocation in distorch_alloc.split(';'):
         if ',' not in allocation:
@@ -264,8 +263,8 @@ def analyze_safetensor_loading(model_patcher, allocations_string):
     total_memory = sum(module_size for module_size, _, _, _ in raw_block_list)
 
     MIN_BLOCK_THRESHOLD = total_memory * 0.0001
-    logger.debug(f"[MultiGPU_DisTorch2] Total model memory: {total_memory} bytes")
-    logger.debug(f"[MultiGPU_DisTorch2] Tiny block threshold (0.01%): {MIN_BLOCK_THRESHOLD} bytes")
+    logger.debug(f"[MultiGPU DisTorch V2] Total model memory: {total_memory} bytes")
+    logger.debug(f"[MultiGPU DisTorch V2] Tiny block threshold (0.01%): {MIN_BLOCK_THRESHOLD} bytes")
 
     all_blocks = []
     for module_size, module_name, module_object, params in raw_block_list:
@@ -278,9 +277,9 @@ def analyze_safetensor_loading(model_patcher, allocations_string):
     block_list = [b for b in all_blocks if b[3] >= MIN_BLOCK_THRESHOLD]
     tiny_block_list = [b for b in all_blocks if b[3] < MIN_BLOCK_THRESHOLD]
     
-    logger.debug(f"[MultiGPU_DisTorch2] Total blocks: {len(all_blocks)}")
-    logger.debug(f"[MultiGPU_DisTorch2] Distributable blocks: {len(block_list)}")
-    logger.debug(f"[MultiGPU_DisTorch2] Tiny blocks (<0.01%): {len(tiny_block_list)}")
+    logger.debug(f"[MultiGPU DisTorch V2] Total blocks: {len(all_blocks)}")
+    logger.debug(f"[MultiGPU DisTorch V2] Distributable blocks: {len(block_list)}")
+    logger.debug(f"[MultiGPU DisTorch V2] Tiny blocks (<0.01%): {len(tiny_block_list)}")
 
     logger.info("    DisTorch2 Model Layer Distribution")
     logger.info(dash_line)
@@ -343,7 +342,7 @@ def analyze_safetensor_loading(model_patcher, allocations_string):
         tiny_mem_percent = (tiny_block_memory / total_memory) * 100 if total_memory > 0 else 0
         device_label = f"{compute_device} (<0.01%)"
         logger.info(fmt_assign.format(device_label, str(len(tiny_block_list)), f"{tiny_mem_mb:.2f}", f"{tiny_mem_percent:.1f}%"))
-        logger.debug(f"[MultiGPU_DisTorch2] Tiny block memory breakdown: {tiny_block_memory} bytes ({tiny_mem_mb:.2f} MB), which is {tiny_mem_percent:.4f}% of total model memory.")
+        logger.debug(f"[MultiGPU DisTorch V2] Tiny block memory breakdown: {tiny_block_memory} bytes ({tiny_mem_mb:.2f} MB), which is {tiny_mem_percent:.4f}% of total model memory.")
 
     total_assigned_memory = 0
     device_memories = {}
@@ -415,7 +414,7 @@ def analyze_safetensor_loading_clip(model_patcher, allocations_string):
         if device not in present_devices:
             distorch_alloc += f";{device},0.0"
 
-    logger.info(f"[MultiGPU_DisTorch2_CLIP] Final CLIP Allocation String: {distorch_alloc}")
+    logger.info(f"[MultiGPU_DisTorch2_CLIP] Final CLIP Allocation String:\n{distorch_alloc}")
 
     eq_line = "=" * 50
     dash_line = "-" * 50
@@ -640,16 +639,16 @@ def calculate_fraction_from_byte_expert_string(model_patcher, byte_str):
         if bytes_to_assign > 0:
             final_byte_allocations[dev] = bytes_to_assign
             remaining_model_bytes -= bytes_to_assign
-            logger.info(f"[MultiGPU_DisTorch2] Assigning {bytes_to_assign / (1024**2):.2f}MB of model to {dev} (requested {requested_bytes / (1024**2):.2f}MB).")
+            logger.info(f"[MultiGPU DisTorch V2] Assigning {bytes_to_assign / (1024**2):.2f}MB of model to {dev} (requested {requested_bytes / (1024**2):.2f}MB).")
         
         if remaining_model_bytes <= 0:
-            logger.info("[MultiGPU_DisTorch2] All model blocks have been allocated. Subsequent devices in the string will receive no assignment.")
+            logger.info("[MultiGPU DisTorch V2] All model blocks have been allocated. Subsequent devices in the string will receive no assignment.")
             break
 
     # Assign any leftover model bytes to the wildcard device
     if remaining_model_bytes > 0:
         final_byte_allocations[wildcard_device] += remaining_model_bytes
-        logger.info(f"[MultiGPU_DisTorch2] Assigning remaining {remaining_model_bytes / (1024**2):.2f}MB of model to wildcard device '{wildcard_device}'.")
+        logger.info(f"[MultiGPU DisTorch V2] Assigning remaining {remaining_model_bytes / (1024**2):.2f}MB of model to wildcard device '{wildcard_device}'.")
 
     # Convert the final byte allocations to VRAM fractions
     allocation_parts = []
@@ -707,7 +706,7 @@ def calculate_fraction_from_ratio_expert_string(model_patcher, ratio_str):
     else:
         put_part = ", ".join(put_parts[:-1]) + f", and {put_parts[-1]}"
     
-    logger.info(f"[MultiGPU_DisTorch2] Ratio(%) Mode - {ratio_str} -> {ratio_string} ratio, put {put_part}")
+    logger.info(f"[MultiGPU DisTorch V2] Ratio(%) Mode - {ratio_str} -> {ratio_string} ratio, put {put_part}")
 
     allocations_string = ";".join(allocation_parts)
 
@@ -775,8 +774,8 @@ def calculate_safetensor_vvram_allocation(model_patcher, virtual_vram_str):
     # Warning if model too large
     if model_size_gb > (recipient_vram * 0.9):
         required_offload_gb = model_size_gb - (recipient_vram * 0.9)
-        logger.warning(f"[MultiGPU] WARNING: Model size ({model_size_gb:.2f}GB) is larger than 90% of available VRAM on {recipient_device} ({recipient_vram * 0.9:.2f}GB).")
-        logger.warning(f"[MultiGPU] To prevent an OOM error, set 'virtual_vram_gb' to at least {required_offload_gb:.2f}.")
+        logger.warning(f"\n\n[MultiGPU DisTorch V2] Model size ({model_size_gb:.2f}GB) is larger than 90% of available VRAM on: {recipient_device} ({recipient_vram * 0.9:.2f}GB).")
+        logger.warning(f"[MultiGPU DisTorch V2] To prevent an OOM error, set 'virtual_vram_gb' to at least {required_offload_gb:.2f}.\n\n")
 
     new_on_recipient = max(0, model_size_gb - virtual_vram_gb)
 
@@ -854,9 +853,9 @@ def override_class_with_distorch_safetensor_v2(cls):
                 last_settings_hash = safetensor_settings_store.get(model_hash)
 
                 if last_settings_hash != settings_hash:
-                    logger.info(f"[MultiGPU_DisTorch2] Settings changed for model {model_hash[:8]}. Previous settings hash: {last_settings_hash}, New settings hash: {settings_hash}. Forcing reload.")
+                    logger.mgpu_mm_log(f"Settings changed for model {model_hash[:8]}. Previous settings hash: {last_settings_hash}, New settings hash: {settings_hash}. Forcing reload.")
                 else:
-                    logger.info(f"[MultiGPU_DisTorch2] Settings unchanged for model {model_hash[:8]}. Using cached model.")
+                    logger.mgpu_mm_log(f"Settings unchanged for model {model_hash[:8]}. Using cached model.")
 
             out = fn(*args, **kwargs)
 
@@ -874,7 +873,7 @@ def override_class_with_distorch_safetensor_v2(cls):
 
             full_allocation = f"{expert_mode_allocations}#{vram_string}" if expert_mode_allocations or vram_string else ""
 
-            logger.info(f"[MultiGPU_DisTorch2] Full allocation string: {full_allocation}")
+            logger.info(f"[MultiGPU DisTorch V2] Full allocation string: {full_allocation}")
 
             if hasattr(out[0], 'model'):
                 model_hash = create_safetensor_model_hash(out[0], "override")
@@ -953,9 +952,9 @@ def override_class_with_distorch_safetensor_v2_clip(cls):
                 last_settings_hash = safetensor_settings_store.get(model_hash)
 
                 if last_settings_hash != settings_hash:
-                    logger.info(f"[MultiGPU_DisTorch2] Settings changed for model {model_hash[:8]}. Previous settings hash: {last_settings_hash}, New settings hash: {settings_hash}. Forcing reload.")
+                    logger.mgpu_mm_log(f"Settings changed for model {model_hash[:8]}. Previous settings hash: {last_settings_hash}, New settings hash: {settings_hash}. Forcing reload.")
                 else:
-                    logger.info(f"[MultiGPU_DisTorch2] Settings unchanged for model {model_hash[:8]}. Using cached model.")
+                    logger.mgpu_mm_log(f"Settings unchanged for model {model_hash[:8]}. Using cached model.")
 
             out = fn(*args, **kwargs)
 
@@ -973,7 +972,7 @@ def override_class_with_distorch_safetensor_v2_clip(cls):
 
             full_allocation = f"{expert_mode_allocations}#{vram_string}" if expert_mode_allocations or vram_string else ""
 
-            logger.info(f"[MultiGPU_DisTorch2] Full allocation string: {full_allocation}")
+            logger.info(f"[MultiGPU DisTorch V2] Full allocation string: {full_allocation}")
 
             if hasattr(out[0], 'model'):
                 model_hash = create_safetensor_model_hash(out[0], "override")
@@ -1049,9 +1048,9 @@ def override_class_with_distorch_safetensor_v2_clip_no_device(cls):
                 last_settings_hash = safetensor_settings_store.get(model_hash)
 
                 if last_settings_hash != settings_hash:
-                    logger.info(f"[MultiGPU_DisTorch2] Settings changed for model {model_hash[:8]}. Previous settings hash: {last_settings_hash}, New settings hash: {settings_hash}. Forcing reload.")
+                    logger.info(f"[MultiGPU DisTorch V2] Settings changed for model {model_hash[:8]}. Previous settings hash: {last_settings_hash}, New settings hash: {settings_hash}. Forcing reload.")
                 else:
-                    logger.info(f"[MultiGPU_DisTorch2] Settings unchanged for model {model_hash[:8]}. Using cached model.")
+                    logger.info(f"[MultiGPU DisTorch V2] Settings unchanged for model {model_hash[:8]}. Using cached model.")
 
             out = fn(*args, **kwargs)
 
@@ -1069,7 +1068,7 @@ def override_class_with_distorch_safetensor_v2_clip_no_device(cls):
 
             full_allocation = f"{expert_mode_allocations}#{vram_string}" if expert_mode_allocations or vram_string else ""
 
-            logger.info(f"[MultiGPU_DisTorch2] Full allocation string: {full_allocation}")
+            logger.info(f"[MultiGPU DisTorch V2] Full allocation string: {full_allocation}")
 
             if hasattr(out[0], 'model'):
                 model_hash = create_safetensor_model_hash(out[0], "override")

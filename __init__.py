@@ -24,12 +24,12 @@ if not logger.handlers:
     logger.addHandler(handler)
     logger.setLevel(log_level)
 
-MEMORY_LOG = True
+MGPU_MM_LOG = False
 
-def memory_method(self, msg):
-    if MEMORY_LOG:
-        self.info(msg)
-logger.memory = memory_method.__get__(logger, type(logger))
+def mgpu_mm_log_method(self, msg):
+    if MGPU_MM_LOG:
+        self.info(f"[MultiGPU Model Management] {msg}")
+logger.mgpu_mm_log = mgpu_mm_log_method.__get__(logger, type(logger))
 
 
 # Global device state management
@@ -242,10 +242,10 @@ def soft_empty_cache_distorch2_patched(force=False):
                 break
 
     if is_distorch_active:
-        logger.info("[MultiGPU Core Patching] DisTorch2 active: clearing caches on all devices")
+        logger.mgpu_mm_log("DisTorch2 active: clearing caches on all devices")
         soft_empty_cache_multigpu()
     else:
-        logger.info("[MultiGPU Core Patching] DisTorch2 not active: delegating to original mm.soft_empty_cache")
+        logger.mgpu_mm_log("DisTorch2 not active: delegating to original mm.soft_empty_cache")
         original_soft_empty_cache(force)
 
 mm.soft_empty_cache = soft_empty_cache_distorch2_patched
@@ -268,13 +268,15 @@ if hasattr(mm, 'load_models_gpu') and not hasattr(mm.load_models_gpu, "_distorch
             logger.error("[MultiGPU Core Patching] CRITICAL: mm.load_models_gpu 'models' is not a list/tuple/set. Bypassing proactive patch.")
             return original_load_models_gpu(models, memory_required, force_patch_weights, minimum_memory_required, force_full_load)
 
-        # Detect incoming large DisTorch2 request
+        # Detect incoming DisTorch2 request
         incoming_is_distorch = False
         incoming_distorch_nonzero = False
-        incoming_is_large = False
         incoming_patchers = set()
         incoming_loaded_names = []
         incoming_allowed_devices = None
+        incoming_compute_device = None
+        incoming_required_bytes = 0
+        incoming_compute_planned_bytes = 0
 
         for lm in models:
             # Identify ModelPatcher (prefer direct; fall back to .patcher)
@@ -297,8 +299,6 @@ if hasattr(mm, 'load_models_gpu') and not hasattr(mm.load_models_gpu, "_distorch
                 else:
                     required_bytes = patcher.model_size()
 
-                if required_bytes > LARGE_MODEL_THRESHOLD:
-                    incoming_is_large = True
             else:
                 device_str = "n/a"
                 required_bytes = 0
@@ -339,6 +339,44 @@ if hasattr(mm, 'load_models_gpu') and not hasattr(mm.load_models_gpu, "_distorch
                         if not allowed:
                             allowed = {str(patcher.load_device), "cpu"}
                         incoming_allowed_devices = allowed
+                        # Determine compute device and planned bytes from allocation string
+                        alloc = safetensor_allocation_store.get(model_hash, "")
+                        if "#" in alloc:
+                            vram = alloc.split("#", 1)[1]
+                            segs = vram.split(";")
+                            if len(segs) >= 2 and segs[0]:
+                                incoming_compute_device = segs[0].strip()
+                                try:
+                                    vvram_gb = float(segs[1])
+                                    incoming_compute_planned_bytes = int(vvram_gb * (1024**3))
+                                except Exception:
+                                    incoming_compute_planned_bytes = 0
+                        else:
+                            # Expert fractions: "dev,fraction;dev2,fraction2;..."
+                            tokens = [t for t in alloc.split(";") if "," in t]
+                            frac_map = {}
+                            for t in tokens:
+                                dev, frac = t.split(",", 1)
+                                try:
+                                    frac_val = float(frac.strip())
+                                except Exception:
+                                    continue
+                                frac_map[dev.strip()] = frac_val
+                            if frac_map:
+                                ld = str(patcher.load_device)
+                                # Prefer the explicit load_device if present and > 0
+                                target_dev = ld if (ld in frac_map and frac_map[ld] > 0.0) else None
+                                if target_dev is None:
+                                    # Otherwise pick highest positive fraction
+                                    target_dev = max((d for d,v in frac_map.items() if v > 0.0), key=lambda d: frac_map[d], default=None)
+                                if target_dev is not None:
+                                    incoming_compute_device = target_dev
+                                    total = mm.get_total_memory(torch.device(target_dev))
+                                    incoming_compute_planned_bytes = int(frac_map[target_dev] * (total or 0))
+                        if incoming_compute_device is None:
+                            incoming_compute_device = str(patcher.load_device)
+                        if incoming_compute_planned_bytes <= 0:
+                            incoming_compute_planned_bytes = required_bytes
 
             # Log informational context with required bytes and device
             try:
@@ -347,68 +385,74 @@ if hasattr(mm, 'load_models_gpu') and not hasattr(mm.load_models_gpu, "_distorch
                 model_name = "UnknownModel"
             incoming_loaded_names.append(f"{model_name}:{required_bytes/(1024**3):.2f}GB req on {device_str}")
 
-        logger.info(f"[MultiGPU Core Patching] load_models_gpu incoming set: large={incoming_is_large} distorch2={incoming_is_distorch} count={len(incoming_patchers)}")
         if incoming_loaded_names:
-            logger.info(f"[MultiGPU Core Patching] Incoming models summary: {', '.join(incoming_loaded_names)}")
+            logger.mgpu_mm_log(f"Incoming models summary: {', '.join(incoming_loaded_names)}")
 
         if incoming_distorch_nonzero:
-            logger.info("[MultiGPU Core Patching] Non-Zero incoming DisTorch2 model detected. Initiating proactive unload.")
+            logger.mgpu_mm_log("Non-Zero incoming DisTorch2 model detected. Initiating proactive unload.")
             if not hasattr(mm, 'current_loaded_models'):
                 raise AttributeError("comfy.model_management is missing 'current_loaded_models'. Proactive unload check failed.")
 
+            needed_patchers = incoming_patchers
+            # Need-based free on compute device only (scale-aware; core-aligned)
+            dev_str = incoming_compute_device or (next(iter(incoming_allowed_devices)) if incoming_allowed_devices else None)
+            freed_bytes = 0
             to_unload_indices = []
             unload_summaries = []
-            needed_patchers = incoming_patchers
-            logger.info("[MultiGPU Core Patching] Incoming large DisTorch2 model detected. Initiating proactive unload of other large models.")
-
-            # Iterate backwards to safely pop from list
-            for i in range(len(mm.current_loaded_models) - 1, -1, -1):
-                lm_cur = mm.current_loaded_models[i]
-                mp_cur = getattr(lm_cur, 'model', None)
-                if mp_cur is None:
-                    continue  # already dead or cleaned up
-
-                # Skip models needed for this load call
-                if mp_cur in needed_patchers:
-                    continue
-
-                # Only consider models on compute/donor devices for this DisTorch2 load
-                if incoming_allowed_devices is not None:
-                    cur_dev_str = str(getattr(lm_cur, "device", ""))
-                    if cur_dev_str not in incoming_allowed_devices:
-                        continue
-
-                # Determine size (prefer LoadedModel.model_memory)
-                size_cur = 0
-                if hasattr(lm_cur, 'model_memory'):
-                    try:
-                        size_cur = lm_cur.model_memory()
-                    except Exception:
+            if dev_str is not None:
+                dev_obj = torch.device(dev_str)
+                free_now = mm.get_free_memory(dev_obj)
+                try:
+                    free_now_val = free_now[0] if isinstance(free_now, tuple) else free_now
+                except Exception:
+                    free_now_val = free_now
+                # Use core-aligned immediate needs: planned vs. memory_required vs. minimum_memory_required
+                effective_needed = max(incoming_compute_planned_bytes or 0, memory_required or 0, minimum_memory_required or 0)
+                need_bytes = max(0, effective_needed - (free_now_val or 0))
+                logger.mgpu_mm_log(f"Need calc on {dev_str}: effective_needed={effective_needed/(1024**3):.2f}GB, free_now={((free_now_val or 0)/(1024**3)):.2f}GB, need_bytes={need_bytes/(1024**3):.2f}GB")
+                if need_bytes > 0:
+                    logger.mgpu_mm_log(f"Need-based unload on {dev_str}: need ~{need_bytes/(1024**3):.2f}GB")
+                    # Build candidates on this device only, excluding needed patchers
+                    candidates = []
+                    for idx, lm_cur in enumerate(mm.current_loaded_models):
+                        mp_cur = getattr(lm_cur, 'model', None)
+                        if mp_cur is None or mp_cur in needed_patchers:
+                            continue
+                        if str(getattr(lm_cur, "device", "")) != dev_str:
+                            continue
                         size_cur = 0
-                if size_cur <= 0 and hasattr(mp_cur, 'model_size'):
-                    size_cur = mp_cur.model_size()
-
-                model_name = type(getattr(mp_cur, 'model', mp_cur)).__name__
-                logger.info(f"[MultiGPU Core Patching] Unloading large model: {model_name} (~{size_cur/(1024**3):.2f}GB)")
-                # Attempt full unload; unpatch_weights=True to release distributed allocations
-                success = False
-                if hasattr(lm_cur, 'model_unload'):
-                    success = lm_cur.model_unload(memory_to_free=None, unpatch_weights=True)
-                if success:
-                    to_unload_indices.append(i)
-                    unload_summaries.append(f"{model_name}:{size_cur/(1024**3):.2f}GB")
-                else:
-                    logger.warning(f"[MultiGPU Core Patching] Failed to fully unload model {model_name} (~{size_cur/(1024**3):.2f}GB)")
+                        if hasattr(lm_cur, 'model_memory'):
+                            try:
+                                size_cur = lm_cur.model_memory()
+                            except Exception:
+                                size_cur = 0
+                        if size_cur <= 0 and hasattr(mp_cur, 'model_size'):
+                            size_cur = mp_cur.model_size()
+                        candidates.append((size_cur, idx, lm_cur, mp_cur))
+                    # Sort by size descending
+                    candidates.sort(key=lambda x: x[0], reverse=True)
+                    for size_cur, idx, lm_cur, mp_cur in candidates:
+                        model_name = type(getattr(mp_cur, 'model', mp_cur)).__name__
+                        logger.mgpu_mm_log(f"Unloading model on {dev_str}: {model_name} (~{size_cur/(1024**3):.2f}GB)")
+                        success = False
+                        if hasattr(lm_cur, 'model_unload'):
+                            success = lm_cur.model_unload(memory_to_free=None, unpatch_weights=True)
+                        if success:
+                            to_unload_indices.append(idx)
+                            unload_summaries.append(f"{model_name}:{size_cur/(1024**3):.2f}GB")
+                            freed_bytes += size_cur
+                            if freed_bytes >= need_bytes:
+                                break
 
             # Remove from management list and clear caches
             unloaded_count = 0
-            for idx in to_unload_indices:  # already in reverse order
+            for idx in sorted(to_unload_indices, reverse=True):
                 mm.current_loaded_models.pop(idx)
                 unloaded_count += 1
 
             if unloaded_count > 0:
-                logger.info(f"[MultiGPU Core Patching] Proactively unloaded {unloaded_count} large model(s): {', '.join(unload_summaries)}")
-                logger.info("[MultiGPU Core Patching] Performing multi-device cache clear after proactive unload")
+                logger.mgpu_mm_log(f"Proactively unloaded {unloaded_count} large model(s): {', '.join(unload_summaries)}")
+                logger.mgpu_mm_log("Performing multi-device cache clear after proactive unload")
                 # Force multi-device cache clear via patched soft_empty_cache (which detects DisTorch2)
                 mm.soft_empty_cache(force=True)
             else:
@@ -425,14 +469,14 @@ if hasattr(mm, 'load_models_gpu') and not hasattr(mm.load_models_gpu, "_distorch
                         if free_torch > free_total * 0.25:
                             triggered.append(dev_str)
                     if triggered:
-                        logger.info(f"[MultiGPU Core Patching] No unloads; 25% torch-cache rule triggered on: {', '.join(triggered)}. Calling soft_empty_cache()")
+                        logger.mgpu_mm_log(f"No unloads; 25% torch-cache rule triggered on: {', '.join(triggered)}. Calling soft_empty_cache()")
                         mm.soft_empty_cache(force=True)
                     else:
-                        logger.info("[MultiGPU Core Patching] No unloads; 25% torch-cache rule not met on DisTorch devices; skipping cache clear")
+                        logger.mgpu_mm_log("No unloads; 25% torch-cache rule not met on DisTorch devices; skipping cache clear")
                 else:
-                    logger.info("[MultiGPU Core Patching] No unload candidates matched criteria and either HIGH_VRAM or no DisTorch devices; skipping cache clear")
+                    logger.mgpu_mm_log("No unload candidates matched criteria and either HIGH_VRAM or no DisTorch devices; skipping cache clear")
         elif incoming_is_distorch:
-            logger.info("[MultiGPU Core Patching] Incoming DisTorch2 model requires 0.00GB; skipping proactive unload")
+            logger.mgpu_mm_log("Incoming DisTorch2 model requires 0.00GB; skipping proactive unload")
 
         # Continue with original behavior
         return original_load_models_gpu(models, memory_required, force_patch_weights, minimum_memory_required, force_full_load)

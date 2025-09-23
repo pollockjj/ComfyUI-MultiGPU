@@ -122,7 +122,7 @@ def get_device_list():
     _DEVICE_LIST_CACHE = devs
     
     # Log only once when initially populated
-    logger.info(f"[MultiGPU_Device_Utils] Device list initialized: {devs}")
+    logger.debug(f"[MultiGPU_Device_Utils] Device list initialized: {devs}")
     
     return devs
 
@@ -242,17 +242,17 @@ def soft_empty_cache_multigpu():
     """
     import gc
 
-    logger.info("[MultiGPU_Device_Utils] soft_empty_cache_multigpu: starting GC and multi-device cache clear")
+    logger.mgpu_mm_log("soft_empty_cache_multigpu: starting GC and multi-device cache clear")
     # Record pre-GC snapshot for general system view
     multigpu_memory_log("general", "pre-soft-empty")
 
     # Python GC (same as all implementations)
     gc.collect()
-    logger.info("[MultiGPU_Device_Utils] soft_empty_cache_multigpu: garbage collection complete")
+    logger.mgpu_mm_log("soft_empty_cache_multigpu: garbage collection complete")
 
     # Clear cache for ALL devices (not just ComfyUI's single device)
     all_devices = get_device_list()
-    logger.info(f"[MultiGPU_Device_Utils] soft_empty_cache_multigpu: devices to clear = {all_devices}")
+    logger.mgpu_mm_log(f"soft_empty_cache_multigpu: devices to clear = {all_devices}")
     
     # Check global availability first to avoid unnecessary iteration if backend is missing
     is_cuda_available = hasattr(torch, "cuda") and hasattr(torch.cuda, "is_available") and torch.cuda.is_available()
@@ -262,42 +262,42 @@ def soft_empty_cache_multigpu():
             if is_cuda_available:
                 device_idx = int(device_str.split(":")[1])
                 # Use context manager for safe switching and automatic restoration
-                logger.info(f"[MultiGPU_Device_Utils] Clearing CUDA cache on {device_str} (idx={device_idx})")
+                logger.mgpu_mm_log(f"Clearing CUDA cache on {device_str} (idx={device_idx})")
                 with torch.cuda.device(device_idx):
                     torch.cuda.empty_cache()
                     if hasattr(torch.cuda, "ipc_collect"):
                         torch.cuda.ipc_collect()  # ComfyUI's CUDA optimization
-                logger.info(f"[MultiGPU_Device_Utils] Cleared CUDA cache (and IPC if available) on {device_str}")
+                logger.mgpu_mm_log(f"Cleared CUDA cache (and IPC if available) on {device_str}")
 
         elif device_str == "mps":
             if hasattr(torch, "mps") and hasattr(torch.mps, "empty_cache"):
-                logger.info("[MultiGPU_Device_Utils] Clearing MPS cache")
+                logger.mgpu_mm_log("Clearing MPS cache")
                 torch.mps.empty_cache()
-                logger.info("[MultiGPU_Device_Utils] Cleared MPS cache")
+                logger.mgpu_mm_log("Cleared MPS cache")
 
         elif device_str.startswith("xpu:"):
             if hasattr(torch, "xpu") and hasattr(torch.xpu, "empty_cache"):
-                logger.info(f"[MultiGPU_Device_Utils] Clearing XPU cache on {device_str}")
+                logger.mgpu_mm_log(f"Clearing XPU cache on {device_str}")
                 torch.xpu.empty_cache()
-                logger.info(f"[MultiGPU_Device_Utils] Cleared XPU cache on {device_str}")
+                logger.mgpu_mm_log(f"Cleared XPU cache on {device_str}")
 
         elif device_str.startswith("npu:"):
             if hasattr(torch, "npu") and hasattr(torch.npu, "empty_cache"):
-                logger.info(f"[MultiGPU_Device_Utils] Clearing NPU cache on {device_str}")
+                logger.mgpu_mm_log(f"Clearing NPU cache on {device_str}")
                 torch.npu.empty_cache()
-                logger.info(f"[MultiGPU_Device_Utils] Cleared NPU cache on {device_str}")
+                logger.mgpu_mm_log(f"Cleared NPU cache on {device_str}")
 
         elif device_str.startswith("mlu:"):
             if hasattr(torch, "mlu") and hasattr(torch.mlu, "empty_cache"):
-                logger.info(f"[MultiGPU_Device_Utils] Clearing MLU cache on {device_str}")
+                logger.mgpu_mm_log(f"Clearing MLU cache on {device_str}")
                 torch.mlu.empty_cache()
-                logger.info(f"[MultiGPU_Device_Utils] Cleared MLU cache on {device_str}")
+                logger.mgpu_mm_log(f"Cleared MLU cache on {device_str}")
 
         elif device_str.startswith("corex:"):
             if hasattr(torch, "corex") and hasattr(torch.corex, "empty_cache"):
-                logger.info(f"[MultiGPU_Device_Utils] Clearing CoreX cache on {device_str}")
+                logger.mgpu_mm_log(f"Clearing CoreX cache on {device_str}")
                 torch.corex.empty_cache()
-                logger.info(f"[MultiGPU_Device_Utils] Cleared CoreX cache on {device_str}")
+                logger.mgpu_mm_log(f"Cleared CoreX cache on {device_str}")
 
     # Record post-GC snapshot for general system view
     multigpu_memory_log("general", "post-soft-empty")
@@ -402,14 +402,14 @@ def memory_print_summary(log: logging.Logger = logger):
       YYYY-MM-DDTHH:MM:SS.mmmZ identifier tag | cpu=U/T | cuda:0=U/T | ...
       (GiB values, two decimals)
     """
-    from . import logger as mgpu_logger
+    from . import logger
     
     # Stable identifier order for readability
     for identifier in sorted(_MEM_SNAPSHOT_SERIES.keys()):
         series = _MEM_SNAPSHOT_SERIES[identifier]
         if not series:
             continue
-        mgpu_logger.memory(f"=== memory summary: {identifier} ===")
+        logger.mgpu_mm_log(f"=== memory summary: {identifier} ===")
         for ts, tag, snap in series:
             # Build device list (cpu first, then sorted devices)
             parts = []
@@ -422,7 +422,7 @@ def memory_print_summary(log: logging.Logger = logger):
                 used, total = snap[dev]
                 parts.append(f"{dev}={_bytes_to_gib(used):.2f}/{_bytes_to_gib(total):.2f}")
             ts_str = ts.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
-            mgpu_logger.memory(f"{ts_str} {identifier} {tag} | " + " | ".join(parts))
+            logger.mgpu_mm_log(f"{ts_str} {identifier} {tag} | " + " | ".join(parts))
 
 
 def multigpu_memory_log(identifier: str, tag: str, log: logging.Logger = logger):
@@ -462,7 +462,7 @@ def multigpu_memory_log(identifier: str, tag: str, log: logging.Logger = logger)
             c_used, _c_tot = curr.get(k, (0, prev.get(k, (0, 0))[1]))
             delta = c_used - p_used
             parts.append(f"{k}={_format_delta_gib(delta)}")
-        mgpu_logger.memory(f"{identifier} {tag} - {prev_tag}: " + " | ".join(parts))
+        logger.mgpu_mm_log(f"{identifier} {tag} - {prev_tag}: " + " | ".join(parts))
     else:
         # Baseline vs zero
         keys = set(curr.keys())
@@ -471,10 +471,7 @@ def multigpu_memory_log(identifier: str, tag: str, log: logging.Logger = logger)
         for k in ordered:
             c_used, _c_tot = curr.get(k, (0, 0))
             parts.append(f"{k}=+{_bytes_to_gib(c_used):.2f}")
-        mgpu_logger.memory(f"{identifier} {tag} - <baseline>: " + " | ".join(parts))
-
-    # DEBUG absolute
-    mgpu_logger.memory(f"{identifier}, {comfyui_memory_load(tag)}")
+        logger.mgpu_mm_log(f"{identifier} {tag} - <baseline>: " + " | ".join(parts))
 
     # Update last snapshot
     _MEM_SNAPSHOT_LAST[identifier] = (tag, curr)

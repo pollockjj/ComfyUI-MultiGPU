@@ -30,10 +30,10 @@ def patch_load_state_dict_guess_config():
     global original_load_state_dict_guess_config
     
     if original_load_state_dict_guess_config is not None:
-        logger.info("[MultiGPU] load_state_dict_guess_config is already patched.")
+        logger.debug("[MultiGPU Checkpoint] load_state_dict_guess_config is already patched.")
         return
     
-    logger.info("[MultiGPU] Patching comfy.sd.load_state_dict_guess_config for advanced MultiGPU loading.")
+    logger.info("[MultiGPU Core Patching] Patching comfy.sd.load_state_dict_guess_config for advanced MultiGPU loading.")
     original_load_state_dict_guess_config = comfy.sd.load_state_dict_guess_config
     comfy.sd.load_state_dict_guess_config = patched_load_state_dict_guess_config
 
@@ -51,9 +51,9 @@ def patched_load_state_dict_guess_config(sd, output_vae=True, output_clip=True, 
     if not device_config and not distorch_config:
         return original_load_state_dict_guess_config(sd, output_vae, output_clip, output_clipvision, embedding_directory, output_model, model_options, te_model_options, metadata)
 
-    logger.info("--- [MultiGPU] ENTERING Patched Checkpoint Loader ---")
-    logger.info(f"Received Device Config: {device_config}")
-    logger.info(f"Received DisTorch2 Config: {distorch_config}")
+    logger.debug("[MultiGPU Checkpoint] ENTERING Patched Checkpoint Loader")
+    logger.debug(f"[MultiGPU Checkpoint] Received Device Config: {device_config}")
+    logger.debug(f"[MultiGPU Checkpoint] Received DisTorch2 Config: {distorch_config}")
 
     clip = None
     clipvision = None
@@ -63,7 +63,6 @@ def patched_load_state_dict_guess_config(sd, output_vae=True, output_clip=True, 
     
     original_main_device = current_device
     original_clip_device = current_text_encoder_device
-    logger.info(f"Saved original device contexts: UNet/VAE='{original_main_device}', CLIP='{original_clip_device}'")
 
     try:
         diffusion_model_prefix = comfy.model_detection.unet_prefix_from_state_dict(sd)
@@ -80,7 +79,7 @@ def patched_load_state_dict_guess_config(sd, output_vae=True, output_clip=True, 
                 return None
             return (diffusion_model, None, VAE(sd={}), None)
 
-        logger.info(f"[MultiGPU] Detected Model Config: {type(model_config).__name__}, Parameters: {parameters/10**9:.2f}B")
+        logger.debug(f"[MultiGPU] Detected Model Config: {type(model_config).__name__}, Parameters: {parameters/10**9:.2f}B")
 
         unet_weight_dtype = list(model_config.supported_inference_dtypes)
         if model_config.scaled_fp8 is not None:
@@ -109,7 +108,7 @@ def patched_load_state_dict_guess_config(sd, output_vae=True, output_clip=True, 
 
             model = model_config.get_model(sd, diffusion_model_prefix, device=inital_load_device)
 
-            logger.info("[MultiGPU Checkpoint] Invoking soft_empty_cache_multigpu before UNet ModelPatcher setup")
+            logger.mgpu_mm_log("Invoking soft_empty_cache_multigpu before UNet ModelPatcher setup")
             soft_empty_cache_multigpu()
             model_patcher = comfy.model_patcher.ModelPatcher(model, load_device=unet_compute_device, offload_device=mm.unet_offload_device())
             multigpu_memory_log(f"unet:{config_hash[:8]}", "post-model")
@@ -121,7 +120,7 @@ def patched_load_state_dict_guess_config(sd, output_vae=True, output_clip=True, 
                 safetensor_settings_store[model_hash] = distorch_config.get('unet_settings','')
                 model.is_distorch = True
                 model._distorch_high_precision_loras = distorch_config.get('high_precision_loras', True)
-                logger.info(f"Stored DisTorch2 config for UNet (hash {model_hash[:8]}): {distorch_config['unet_allocation']}")
+                logger.mgpu_mm_log(f"Stored DisTorch2 config for UNet (hash {model_hash[:8]}): {distorch_config['unet_allocation']}")
 
             model.load_model_weights(sd, diffusion_model_prefix)
             multigpu_memory_log(f"unet:{config_hash[:8]}", "post-weights")
@@ -144,7 +143,7 @@ def patched_load_state_dict_guess_config(sd, output_vae=True, output_clip=True, 
             if clip_target is not None:
                 clip_sd = model_config.process_clip_state_dict(sd)
                 if len(clip_sd) > 0:
-                    logger.info("[MultiGPU Checkpoint] Invoking soft_empty_cache_multigpu before CLIP construction")
+                    logger.debug("[MultiGPU Checkpoint] Invoking soft_empty_cache_multigpu before CLIP construction")
                     multigpu_memory_log(f"clip:{config_hash[:8]}", "pre-load")
                     soft_empty_cache_multigpu()
                     clip_params = comfy.utils.calculate_parameters(clip_sd)
@@ -171,16 +170,12 @@ def patched_load_state_dict_guess_config(sd, output_vae=True, output_clip=True, 
                 logger.warning("CLIP target not found in model config.")
         
     finally:
-        # --- Restore original device contexts and clean up ---
         set_current_device(original_main_device)
         set_current_text_encoder_device(original_clip_device)
         if config_hash in checkpoint_device_config:
             del checkpoint_device_config[config_hash]
         if config_hash in checkpoint_distorch_config:
             del checkpoint_distorch_config[config_hash]
-        logger.info(f"Restored original device contexts. UNet/VAE='{original_main_device}', CLIP='{original_clip_device}'")
-        logger.info("--- [MultiGPU] EXITING Patched Checkpoint Loader ---")
-
     return (model_patcher, clip, vae, clipvision)
 
 class CheckpointLoaderAdvancedMultiGPU:
