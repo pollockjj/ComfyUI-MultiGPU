@@ -1,0 +1,103 @@
+# ComfyUI-MultiGPU Development Rules
+
+## Project Context
+This is ComfyUI-MultiGPU: a production-grade multi-device AI inference platform that transforms ComfyUI from single-GPU to universal multi-device support. The project enables previously impossible AI workflows across diverse hardware configurations.
+
+## Memory Bank System
+**CRITICAL**: Always read ALL files in the `memory-bank/` folder at the start of every session. The Memory Bank contains complete project context:
+
+### Core Documentation (Read These First)
+1. `memory-bank/projectbrief.md` - Project identity, mission, evolution timeline
+2. `memory-bank/productContext.md` - Problem space, user goals, success metrics
+3. `memory-bank/activeContext.md` - Current work focus and priorities
+4. `memory-bank/progress.md` - Production status, roadmap, lessons learned
+
+### Technical Deep Dive
+5. `memory-bank/systemPatterns.md` - Architecture patterns and design decisions
+6. `memory-bank/techContext.md` - Technology stack and development environment
+7. `memory-bank/performance-benchmarks.md` - Quantified performance across hardware configurations
+8. `memory-bank/comfyui-lineage.md` - Integration analysis with ComfyUI core
+
+## Development Philosophy
+- **Extend, Don't Replace**: Build upon ComfyUI's existing patterns
+- **Fail Loudly**: Immediate detection of API changes prevents silent failures
+- **User Agency**: Let users specify device placement explicitly  
+- **Production Quality**: Stability and reliability over experimental features
+- **Community First**: Solutions should benefit the entire ComfyUI ecosystem
+
+## Key Technical Patterns
+- **City96's Dynamic Class Override**: Elegant inheritance pattern for node creation
+- **Load-Patch-Distribute Pipeline**: Quality-preserving LoRA application workflow
+- **ComfyCore Alignment**: Work WITH existing ComfyUI patterns, not against them
+- **Multi-Device Native**: Treat all devices as equal citizens
+
+## Current Status (v2.4.7)
+- Production Grade: 300+ commits, 90 resolved issues, active community
+- Performance Validated: NVLink near-native (5-7% slowdown), PCIe 4.0 excellent (40-50%)
+- Ecosystem Integration: 10+ custom nodes with dynamic detection
+- Hardware Support: Universal compatibility across CUDA, CPU, MPS, XPU, NPU, DirectML
+
+When working on this project, always reference the Memory Bank for context and maintain the established patterns and philosophy.
+
+## CRITICAL ACTIVE ISSUE: CPU Memory Leak Investigation
+
+### Problem Description
+**SEVERE**: Monotonic CPU DRAM increase across successive model swaps. VRAM management stable, but CPU memory allocated and never reclaimed, leading to eventual OOM failure of ComfyUI process.
+
+**Pattern**: Stepwise increases (4GB → 13GB → 33GB → 57GB → 73GB) corresponding to model loading events. Large objects (tensors, model structures, intermediates) retained in Python/CPU memory across executions.
+
+### The Benchmark (Known Working Solution)
+**ONLY** successful CPU memory reclamation: ComfyUI "Free model and node cache" button
+- Sets `"free_memory": True` → PromptExecutor.reset() → drops execution caches
+- Sets `"unload_models": True` → comfy.model_management.unload_all_models()
+
+### Investigation History (All Failed)
+
+**Phase 1: Missing Executor Reset Hypothesis** ❌
+- Theory: MultiGPU cleared VRAM but failed PromptExecutor.reset()
+- Action: Implemented trigger_executor_cache_reset utilities
+- Result: FAILED - e.reset() occurred but CPU memory not reclaimed
+
+**Phase 2: Implementation Fixes** ❌  
+- Theory: Flawed implementation or insufficient visibility
+- Action: Fixed bugs, added extensive memory logging
+- Result: FAILED - Logs confirmed resets occurring, CPU usage still rising
+
+**Phase 3: Aggressive Reclamation** ❌
+- Theory: References outside execution cache or allocator fragmentation
+- Actions: malloc_trim(0), store pruning, reference cycle patching, deep diagnostics
+- Result: FAILED - OOM persisted, diagnostics showed "Tracked ModelPatchers=0"
+
+**CRITICAL DIAGNOSTIC FAILURE**: Deep diagnostics completely failed due to patching `partially_load` (conditional) instead of `__init__` (universal) - zero visibility into actual leak.
+
+### Root Cause Analysis
+- Execution cache and allocator fragmentation ruled out
+- Live Python references held to large data structures
+- References NOT cleared by gc.collect() or e.reset()
+- Benchmark button works = "unload_models": True is the critical difference
+- unload_all_models() successfully breaks reference chains holding CPU memory
+
+### Mandated Plan Forward
+**Strategy Reset**: Surgical approaches failed. Implement known working solution, then work backward.
+
+**P1 (Critical)**: Implement force_full_system_cleanup() 
+- 100% replicate benchmark button: both "unload_models": True AND "free_memory": True
+- Provides known-good cleanup mechanism (albeit disruptive)
+
+**P4 (Required)**: Fix diagnostics
+- Patch comfy.model_patcher.ModelPatcher.__init__ for universal tracking
+- Repair ModelPatcher lifecycle tracking for visibility
+
+**P2/P3 (Investigation)**: Analyze and refine
+- Use functional diagnostics to analyze memory state before cleanup
+- Identify exact objects holding references  
+- Work backward to develop less disruptive targeted solution
+- Goal: Eliminate need for full unload_all_models()
+
+### Implementation Priority
+1. **force_full_system_cleanup()** - Immediate stability
+2. **Fixed ModelPatcher tracking** - Investigation capability  
+3. **Root cause identification** - Long-term solution
+4. **Targeted reference cleanup** - Performance optimization
+
+This represents the current **highest priority technical debt** requiring resolution.
