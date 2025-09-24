@@ -2,7 +2,8 @@ import torch
 import folder_paths
 from pathlib import Path
 from nodes import NODE_CLASS_MAPPINGS
-from .device_utils import get_device_list, force_full_system_cleanup
+from .device_utils import get_device_list
+from .model_management_mgpu import force_full_system_cleanup
 
 class DeviceSelectorMultiGPU:
     @classmethod

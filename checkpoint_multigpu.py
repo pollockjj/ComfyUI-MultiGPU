@@ -12,7 +12,8 @@ import comfy.model_management as mm
 import comfy.model_detection
 import comfy.clip_vision
 from comfy.sd import VAE, CLIP
-from .device_utils import get_device_list, soft_empty_cache_multigpu, multigpu_memory_log
+from .device_utils import get_device_list, soft_empty_cache_multigpu
+from .model_management_mgpu import multigpu_memory_log
 from .distorch_2 import safetensor_allocation_store, safetensor_settings_store, create_safetensor_model_hash, register_patched_safetensor_modelpatcher
 
 logger = logging.getLogger("MultiGPU")

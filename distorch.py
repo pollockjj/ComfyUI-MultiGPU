@@ -12,7 +12,8 @@ logger = logging.getLogger("MultiGPU")
 import copy
 from collections import defaultdict
 import comfy.model_management as mm
-from .device_utils import get_device_list, soft_empty_cache_multigpu, multigpu_memory_log
+from .device_utils import get_device_list, soft_empty_cache_multigpu
+from .model_management_mgpu import multigpu_memory_log
 
 # Global store for model allocations
 model_allocation_store = {}

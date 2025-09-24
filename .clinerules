@@ -101,3 +101,36 @@ When working on this project, always reference the Memory Bank for context and m
 4. **Targeted reference cleanup** - Performance optimization
 
 This represents the current **highest priority technical debt** requiring resolution.
+
+## Module Architecture Rules
+
+### Module Boundary Principles
+- **Single Responsibility**: Each module should have ONE clear purpose
+- **Dependency Direction**: Dependencies should flow in ONE direction only
+- **Import Hierarchy**: Lower-level modules (device_utils) should NOT import from higher-level modules (distorch_2)
+
+### Module Hierarchy (Dependency Order)
+1. `device_utils.py` - **BASE**: Device detection, VRAM management only
+2. `model_management_mgpu.py` - **CORE**: Model lifecycle, memory logging, cleanup functions
+3. `distorch_2.py`, `distorch.py` - **FEATURES**: DisTorch distribution logic
+4. `nodes.py`, `checkpoint_multigpu.py` - **UI**: Node implementations
+5. `__init__.py` - **ASSEMBLY**: Final integration and registration
+
+### Mandatory Architecture Checks
+**BEFORE adding ANY import statement:**
+1. **Check Direction**: Does this create upward dependency? (FORBIDDEN)
+2. **Check Purpose**: Does the function belong in this module per Single Responsibility?
+3. **Check Cycles**: Run `python -c "import sys; sys.path.append('.'); import <module>"` to detect circular imports
+
+### Function Placement Rules
+- **device_utils.py**: ONLY device detection, VRAM cache management  
+- **model_management_mgpu.py**: Model tracking, memory logging, cleanup utilities
+- **Feature modules**: Import from CORE/BASE only, never each other
+- **UI modules**: Import from any lower level, implement user interfaces only
+
+### Violation Detection
+If import fails with "circular import" or "cannot import name":
+1. STOP immediately - do not work around
+2. Identify which module boundary was violated  
+3. Move misplaced function to correct architectural layer
+4. Update ALL imports consistently

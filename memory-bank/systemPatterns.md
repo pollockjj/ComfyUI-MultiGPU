@@ -322,3 +322,72 @@ def benchmark_allocation_performance(model, hardware_config, allocation_configs)
         performance_ratio = distributed_time / baseline_time
         assert performance_ratio < expected_slowdown_threshold(hardware_config)
 ```
+
+## Module Architecture (Post-Refactoring)
+
+### Core Module Separation
+**Problem Solved**: Eliminated circular import `device_utils.py` ↔ `distorch_2.py`
+
+**Solution**: Created `model_management_mgpu.py` as central model lifecycle hub
+
+### Module Responsibilities
+
+**device_utils.py** (Base Layer):
+- Device enumeration and detection
+- VRAM cache management (`soft_empty_cache_multigpu`)
+- Pure hardware abstraction - NO model tracking
+
+**model_management_mgpu.py** (Core Layer): 
+- Model lifecycle tracking (`track_modelpatcher`)
+- Memory logging (`multigpu_memory_log`) 
+- System cleanup (`force_full_system_cleanup`, `trigger_executor_cache_reset`)
+- Store pruning (`prune_distorch_stores`)
+
+**distorch_2.py/distorch.py** (Feature Layer):
+- DisTorch distribution algorithms
+- SafeTensor/GGUF specific logic
+- Imports FROM core/base layers ONLY
+
+### Import Flow Architecture
+```
+    ┌─────────────────┐
+    │    __init__.py  │ ← Assembly Layer
+    └─────────────────┘
+           ↑
+    ┌─────────────────┐
+    │  UI Layer       │ ← nodes.py, checkpoint_multigpu.py
+    │  (User Interface)│ 
+    └─────────────────┘
+           ↑
+    ┌─────────────────┐
+    │ Feature Layer   │ ← distorch_2.py, distorch.py
+    │ (DisTorch Logic)│
+    └─────────────────┘
+           ↑
+    ┌─────────────────┐
+    │ Core Layer      │ ← model_management_mgpu.py
+    │ (Model Lifecycle)│
+    └─────────────────┘
+           ↑
+    ┌─────────────────┐
+    │ Base Layer      │ ← device_utils.py  
+    │ (Hardware)      │
+    └─────────────────┘
+```
+
+### Architectural Validation
+**Rule**: Dependencies only flow UPWARD. Violations create circular imports.
+
+**Prevention**: Before any import, ask "Does this violate the layer hierarchy?"
+
+### Function Migration Record
+**Moved from device_utils.py to model_management_mgpu.py:**
+- `multigpu_memory_log` - Memory state logging
+- `track_modelpatcher` - ModelPatcher lifecycle tracking  
+- `trigger_executor_cache_reset` - CPU memory management
+- `check_cpu_memory_threshold` - Adaptive cleanup triggers
+- `prune_distorch_stores` - Store cleanup utilities
+- `try_malloc_trim` - System memory reclamation
+- `force_full_system_cleanup` - Full system reset
+
+**Rationale**: These functions manage model lifecycle and memory state, not hardware detection. Separation prevents circular dependencies while maintaining clean responsibilities.

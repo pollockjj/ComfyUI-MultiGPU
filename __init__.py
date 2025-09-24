@@ -12,6 +12,8 @@ from .device_utils import (
     get_device_list,
     is_accelerator_available,
     soft_empty_cache_multigpu,
+)
+from .model_management_mgpu import (
     trigger_executor_cache_reset,
     check_cpu_memory_threshold,
     multigpu_memory_log,
