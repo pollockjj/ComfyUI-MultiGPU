@@ -1,12 +1,24 @@
 import torch
 import logging
+import weakref
 import os
 import copy
 from pathlib import Path
 import folder_paths
 import comfy.model_management as mm
+import comfy.model_patcher
 from nodes import NODE_CLASS_MAPPINGS as GLOBAL_NODE_CLASS_MAPPINGS
-from .device_utils import get_device_list, is_accelerator_available, soft_empty_cache_multigpu
+from .device_utils import (
+    get_device_list,
+    is_accelerator_available,
+    soft_empty_cache_multigpu,
+    trigger_executor_cache_reset,
+    check_cpu_memory_threshold,
+    multigpu_memory_log,
+    prune_distorch_stores,
+    try_malloc_trim,
+    track_modelpatcher,
+)
 
 # --- DisTorch V2 Logging Configuration ---
 # Set to "E" for Engineering (DEBUG) or "P" for Production (INFO)
@@ -24,7 +36,7 @@ if not logger.handlers:
     logger.addHandler(handler)
     logger.setLevel(log_level)
 
-MGPU_MM_LOG = False
+MGPU_MM_LOG = True
 
 def mgpu_mm_log_method(self, msg):
     if MGPU_MM_LOG:
@@ -148,6 +160,111 @@ logger.debug(f"[MultiGPU DEBUG] Initial current_text_encoder_device: {current_te
 mm.get_torch_device = get_torch_device_patched
 mm.text_encoder_device = text_encoder_device_patched
 
+
+# ==========================================================================================
+# Core Patching: ModelPatcher Lifecycle Tracking (__init__)
+# ==========================================================================================
+logger.info("[MultiGPU Core Patching] Applying ModelPatcher lifecycle tracking patch (__init__).")
+if not hasattr(comfy.model_patcher.ModelPatcher, '_mgpu_lifecycle_patched'):
+    try:
+        _mgpu_original_modelpatcher_init = comfy.model_patcher.ModelPatcher.__init__
+
+        def _mgpu_patched_modelpatcher_init(self, *args, **kwargs):
+            _mgpu_original_modelpatcher_init(self, *args, **kwargs)
+            # Track all ModelPatcher instances at construction time
+            try:
+                track_modelpatcher(self)
+            except Exception:
+                pass
+
+        comfy.model_patcher.ModelPatcher.__init__ = _mgpu_patched_modelpatcher_init
+        comfy.model_patcher.ModelPatcher._mgpu_lifecycle_patched = True
+        logger.info("[MultiGPU Core Patching] ModelPatcher.__init__ patched for lifecycle tracking.")
+    except Exception as e:
+        logger.error(f"[MultiGPU Core Patching] FAILED to patch ModelPatcher.__init__: {e}")
+
+# ==========================================================================================
+# Core Patching: Fix Potential Reference Cycles in LoadedModel
+# ==========================================================================================
+if hasattr(mm, 'LoadedModel') and hasattr(mm.LoadedModel, '_set_model'):
+    logger.info("[MultiGPU Core Patching] Patching mm.LoadedModel._set_model and _switch_parent to reduce reference cycles.")
+
+    _mgpu_original_set_model = mm.LoadedModel._set_model
+
+    def _mgpu_patched_set_model(self, model):
+        patcher_id = id(model)
+        # Ensure attributes exist
+        if not hasattr(self, '_model'):
+            self._model = None
+        if not hasattr(self, '_parent_model'):
+            self._parent_model = None
+        if not hasattr(self, '_patcher_finalizer'):
+            self._patcher_finalizer = None
+
+        # Reset refs
+        self._model = weakref.ref(model)
+        self._parent_model = None
+
+        # Detach any previous finalizer
+        if self._patcher_finalizer is not None:
+            try:
+                self._patcher_finalizer.detach()
+            except Exception:
+                pass
+            self._patcher_finalizer = None
+
+        # If clone, set parent and attach a weakref-based finalizer
+        parent = getattr(model, 'parent', None)
+        if parent is not None:
+            self._parent_model = weakref.ref(parent)
+            self_weak = weakref.ref(self)
+
+            def _mgpu_finalize_clone():
+                s = self_weak()
+                if s is not None and hasattr(s, '_switch_parent'):
+                    logger.mgpu_mm_log(f"[MultiGPU_LoadedModel_Patch] Clone Patcher {patcher_id} GC'd. Switching LoadedModel to parent.")
+                    s._switch_parent()
+                else:
+                    logger.mgpu_mm_log(f"[MultiGPU_LoadedModel_Patch] Clone Patcher {patcher_id} GC'd. LoadedModel already gone or missing _switch_parent.")
+
+            try:
+                self._patcher_finalizer = weakref.finalize(model, _mgpu_finalize_clone)
+            except Exception:
+                self._patcher_finalizer = None
+        else:
+            logger.mgpu_mm_log(f"[MultiGPU_LoadedModel_Patch] Set base model Patcher {patcher_id}.")
+
+    mm.LoadedModel._set_model = _mgpu_patched_set_model
+
+    # Patch _switch_parent to clear references explicitly
+    if hasattr(mm.LoadedModel, '_switch_parent'):
+        _mgpu_original_switch_parent = mm.LoadedModel._switch_parent
+
+        def _mgpu_patched_switch_parent(self):
+            _mgpu_original_switch_parent(self)
+            # Clear parent and detach finalizer to avoid cycles
+            if hasattr(self, '_parent_model'):
+                self._parent_model = None
+            if hasattr(self, '_patcher_finalizer') and self._patcher_finalizer is not None:
+                try:
+                    self._patcher_finalizer.detach()
+                except Exception:
+                    pass
+                self._patcher_finalizer = None
+
+        mm.LoadedModel._switch_parent = _mgpu_patched_switch_parent
+    else:
+        # Fallback if core ever changes
+        def _mgpu_fallback_switch_parent(self):
+            if hasattr(self, '_parent_model') and self._parent_model is not None:
+                parent_model = self._parent_model()
+                if parent_model is not None:
+                    self._set_model(parent_model)
+                self._parent_model = None
+        mm.LoadedModel._switch_parent = _mgpu_fallback_switch_parent
+else:
+    logger.warning("[MultiGPU Core Patching] mm.LoadedModel not found or missing _set_model; skip cycle patch.")
+
 def check_module_exists(module_path):
     full_path = os.path.join(folder_paths.get_folder_paths("custom_nodes")[0], module_path)
     logger.debug(f"[MultiGPU] Checking for module at {full_path}")
@@ -181,6 +298,7 @@ from .nodes import (
     HyVideoModelLoader,
     HyVideoVAELoader,
     DownloadAndLoadHyVideoTextEncoder,
+    FullCleanupMultiGPU,
 )
 
 # Import from wanvideo.py
@@ -221,32 +339,57 @@ from .distorch_2 import (
     override_class_with_distorch_safetensor_v2_clip_no_device
 )
 
-logger.info("[MultiGPU Core Patching] Patching mm.soft_empty_cache for DisTorch2 Multi-Device Allocation/Clearing")
+logger.info("[MultiGPU Core Patching] Patching mm.soft_empty_cache for Comprehensive Memory Management (VRAM + CPU + Store Pruning)")
 
 original_soft_empty_cache = mm.soft_empty_cache
 
 def soft_empty_cache_distorch2_patched(force=False):
     """
-    Patched mm.soft_empty_cache. If DisTorch2 models are active, clear cache on ALL devices.
-    Otherwise, execute original ComfyUI behavior.
+    Patched mm.soft_empty_cache.
+    - Prunes DisTorch store bookkeeping to avoid stale references
+    - Manages VRAM: if DisTorch2 models are active, clear allocator caches on all devices;
+      otherwise delegate to original mm.soft_empty_cache.
+    - Manages CPU RAM: adaptive threshold-based PromptExecutor cache reset;
+      and force-triggered reset when explicitly requested (mirrors ComfyUI 'Free memory' button).
     """
+    multigpu_memory_log("patched_soft_empty", f"start:force={force}")
+    # Prune DisTorch stores before any clearing to drop stale references
+    try:
+        prune_distorch_stores()
+    except Exception:
+        pass
     is_distorch_active = False
 
-    # Check if any loaded model is managed by DisTorch2 using the allocation store
+    # Detect DisTorch2-managed models
     for lm in mm.current_loaded_models:
         mp = lm.model  # weakref call to ModelPatcher
         if mp is not None:
             model_hash = create_safetensor_model_hash(mp, "cache_patch_check")
-            if model_hash in safetensor_allocation_store and safetensor_allocation_store[model_hash]:
+            if model_hash in safetensor_allocation_store and safetensor_allocation_store.get(model_hash):
                 is_distorch_active = True
                 break
 
+    # Phase 2: adaptive CPU memory management
+    check_cpu_memory_threshold()
+
+    # VRAM allocator management
     if is_distorch_active:
-        logger.mgpu_mm_log("DisTorch2 active: clearing caches on all devices")
+        logger.mgpu_mm_log("DisTorch2 active: clearing allocator caches on all devices (VRAM)")
         soft_empty_cache_multigpu()
     else:
-        logger.mgpu_mm_log("DisTorch2 not active: delegating to original mm.soft_empty_cache")
+        logger.mgpu_mm_log("DisTorch2 not active: delegating allocator cache clear (VRAM) to original mm.soft_empty_cache")
         original_soft_empty_cache(force)
+        # Attempt to return CPU heap to OS on legacy path as well
+        try:
+            try_malloc_trim()
+        except Exception:
+            pass
+
+    # Phase 1/3: forced executor reset mirrors ComfyUI 'Free memory' semantics
+    if force:
+        logger.mgpu_mm_log("Force flag active: triggering executor cache reset (CPU)")
+        trigger_executor_cache_reset(reason="forced_soft_empty", force=True)
+    multigpu_memory_log("patched_soft_empty", "end")
 
 mm.soft_empty_cache = soft_empty_cache_distorch2_patched
 
@@ -263,6 +406,7 @@ if hasattr(mm, 'load_models_gpu') and not hasattr(mm.load_models_gpu, "_distorch
         Proactively unload large models that are not needed when loading a large DisTorch2 model.
         This frees both compute and donor device memory ahead of ComfyUI's compute-only check.
         """
+        multigpu_memory_log("patched_load_models_gpu", "start")
         # Validate models argument loudly
         if not isinstance(models, (list, tuple, set)):
             logger.error("[MultiGPU Core Patching] CRITICAL: mm.load_models_gpu 'models' is not a list/tuple/set. Bypassing proactive patch.")
@@ -390,6 +534,8 @@ if hasattr(mm, 'load_models_gpu') and not hasattr(mm.load_models_gpu, "_distorch
 
         if incoming_distorch_nonzero:
             logger.mgpu_mm_log("Non-Zero incoming DisTorch2 model detected. Initiating proactive unload.")
+            # Proactively clear PromptExecutor caches ahead of major DisTorch2 load (Phase 1)
+            trigger_executor_cache_reset(reason="proactive_distorch_load", force=False)
             if not hasattr(mm, 'current_loaded_models'):
                 raise AttributeError("comfy.model_management is missing 'current_loaded_models'. Proactive unload check failed.")
 
@@ -478,8 +624,11 @@ if hasattr(mm, 'load_models_gpu') and not hasattr(mm.load_models_gpu, "_distorch
         elif incoming_is_distorch:
             logger.mgpu_mm_log("Incoming DisTorch2 model requires 0.00GB; skipping proactive unload")
 
-        # Continue with original behavior
-        return original_load_models_gpu(models, memory_required, force_patch_weights, minimum_memory_required, force_full_load)
+        # Memory Logging
+        multigpu_memory_log("patched_load_models_gpu", "pre-original-call")
+        result = original_load_models_gpu(models, memory_required, force_patch_weights, minimum_memory_required, force_full_load)
+        multigpu_memory_log("patched_load_models_gpu", "post-original-call")
+        return result
 
     # Mark and apply the patch
     patched_load_models_gpu._distorch2_proactive_patched = True
@@ -649,5 +798,8 @@ for item in registration_data:
     logger.info(fmt_reg.format(item['name'], item['found'], str(item['count'])))
 logger.info(dash_line)
 
+
+# Register maintenance node
+NODE_CLASS_MAPPINGS["FullCleanupMultiGPU"] = FullCleanupMultiGPU
 
 logger.info(f"[MultiGPU] Registration complete. Final mappings: {', '.join(NODE_CLASS_MAPPINGS.keys())}")

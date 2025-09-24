@@ -2,7 +2,7 @@ import torch
 import folder_paths
 from pathlib import Path
 from nodes import NODE_CLASS_MAPPINGS
-from .device_utils import get_device_list
+from .device_utils import get_device_list, force_full_system_cleanup
 
 class DeviceSelectorMultiGPU:
     @classmethod
@@ -527,3 +527,31 @@ class DownloadAndLoadHyVideoTextEncoder:
     def loadmodel(self, llm_model, clip_model, precision,  apply_final_norm=False, hidden_state_skip_layer=2, quantization="disabled"):
         original_loader = NODE_CLASS_MAPPINGS["DownloadAndLoadHyVideoTextEncoder"]()
         return original_loader.loadmodel(llm_model, clip_model, precision, apply_final_norm, hidden_state_skip_layer, quantization)
+
+
+class FullCleanupMultiGPU:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "image": ("IMAGE",),
+                "reason": ("STRING", {"default": "inline_node", "multiline": False}),
+            },
+            "optional": {
+                "force": ("BOOLEAN", {"default": True}),
+            }
+        }
+
+    RETURN_TYPES = ("IMAGE",)
+    RETURN_NAMES = ("image",)
+    FUNCTION = "cleanup"
+    CATEGORY = "multigpu/maintenance"
+    TITLE = "Full System Cleanup (MultiGPU)"
+
+    def cleanup(self, image, reason, force=True):
+        """
+        Trigger the full system cleanup to match ComfyUI's 'Free model and node cache'.
+        Passthroughs the input image unchanged; summary is logged via MultiGPU logger.
+        """
+        _ = force_full_system_cleanup(reason=reason, force=force)
+        return (image,)

@@ -16,8 +16,6 @@ import inspect
 from collections import defaultdict
 import comfy.model_management as mm
 import comfy.model_patcher
-from . import current_device
-from .device_utils import get_device_list, soft_empty_cache_multigpu, multigpu_memory_log
 
 safetensor_allocation_store = {}
 safetensor_settings_store = {}
@@ -61,6 +59,7 @@ def register_patched_safetensor_modelpatcher():
 
         def new_partially_load(self, device_to, extra_memory=0, full_load=False, force_patch_weights=False, **kwargs):
             """Override to use our static device assignments"""
+            from .device_utils import multigpu_memory_log, track_modelpatcher
             global safetensor_allocation_store
 
             debug_hash = create_safetensor_model_hash(self, "partial_load")
@@ -74,6 +73,12 @@ def register_patched_safetensor_modelpatcher():
                 if hasattr(self, '_distorch_block_assignments'):
                     del self._distorch_block_assignments
                 return result
+
+            # Track active DisTorch2 ModelPatcher lifecycle for leak diagnostics
+            try:
+                track_modelpatcher(self)
+            except Exception:
+                pass
 
             if not hasattr(self.model, 'current_weight_patches_uuid'):
                 self.model.current_weight_patches_uuid = None
@@ -176,6 +181,7 @@ def analyze_safetensor_loading(model_patcher, allocations_string):
     Analyze and distribute safetensor model blocks across devices
     Target for refactor back into one function once stability for CLIP is established.
     """
+    from .device_utils import get_device_list
     DEVICE_RATIOS_DISTORCH = {}
     device_table = {}
     distorch_alloc = allocations_string
@@ -383,6 +389,7 @@ def analyze_safetensor_loading_clip(model_patcher, allocations_string):
     All other logic and UX (logging, etc.) is identical to the original.
     Target for refactor once stability for CLIP is established.
     """
+    from .device_utils import get_device_list
     DEVICE_RATIOS_DISTORCH = {}
     device_table = {}
     distorch_alloc = allocations_string
@@ -794,11 +801,11 @@ def calculate_safetensor_vvram_allocation(model_patcher, virtual_vram_str):
 
 def override_class_with_distorch_safetensor_v2(cls):
     """DisTorch 2.0 wrapper for safetensor models"""
-    from . import current_device
 
     class NodeOverrideDisTorchSafetensorV2(cls):
         @classmethod
         def INPUT_TYPES(s):
+            from .device_utils import get_device_list
             inputs = copy.deepcopy(cls.INPUT_TYPES())
             devices = get_device_list()
             compute_device = devices[1] if len(devices) > 1 else devices[0]
@@ -891,11 +898,11 @@ def override_class_with_distorch_safetensor_v2(cls):
 
 def override_class_with_distorch_safetensor_v2_clip(cls):
     """DisTorch 2.0 wrapper for safetensor CLIP models"""
-    from . import current_device
 
     class NodeOverrideDisTorchSafetensorV2Clip(cls):
         @classmethod
         def INPUT_TYPES(s):
+            from .device_utils import get_device_list
             inputs = copy.deepcopy(cls.INPUT_TYPES())
             devices = get_device_list()
             default_device = devices[1] if len(devices) > 1 else devices[0]
@@ -989,11 +996,11 @@ def override_class_with_distorch_safetensor_v2_clip(cls):
 
 def override_class_with_distorch_safetensor_v2_clip_no_device(cls):
     """DisTorch 2.0 wrapper for safetensor CLIP models"""
-    from . import current_device
 
     class NodeOverrideDisTorchSafetensorV2ClipNoDevice(cls):
         @classmethod
         def INPUT_TYPES(s):
+            from .device_utils import get_device_list
             inputs = copy.deepcopy(cls.INPUT_TYPES())
             devices = get_device_list()
             default_device = devices[1] if len(devices) > 1 else devices[0]

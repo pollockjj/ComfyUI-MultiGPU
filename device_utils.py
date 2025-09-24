@@ -9,11 +9,174 @@ import logging
 import hashlib
 import psutil
 import comfy.model_management as mm
+import gc
+from datetime import datetime, timezone
+import server
+import weakref
+import platform
+import ctypes
+import sys
+import comfy.model_patcher
+
+# DisTorch stores for pruning/diagnostics
+from .distorch_2 import (
+    safetensor_allocation_store,
+    safetensor_settings_store,
+    create_safetensor_model_hash,
+)
+
+# Optional DisTorch v1 store support
+try:
+    from .distorch import (
+        model_allocation_store,
+        create_model_hash,
+    )
+except Exception:
+    model_allocation_store = {}
+    create_model_hash = None
 
 logger = logging.getLogger("MultiGPU")
 
 # Module-level cache for device list (populated once on first call)
 _DEVICE_LIST_CACHE = None
+
+# ==========================================================================================
+# Executor Cache Management and CPU Monitoring (Phases 1, 2, 3)
+# ==========================================================================================
+
+# Configuration for CPU Monitoring (Phase 2)
+CPU_MEMORY_THRESHOLD_PERCENT = 85.0
+# Hysteresis: Only trigger again if usage increased by this amount since the last reset.
+CPU_RESET_HYSTERESIS_PERCENT = 5.0
+_last_cpu_usage_at_reset = 0.0
+
+def clear_memory_snapshot_history():
+    """Clears the stored memory snapshot history. (Phase 3)"""
+    # Logging integration
+    multigpu_memory_log("mem_mgmt", "pre-history-clear")
+
+    # Snapshot globals exist in this module; operate safely in case of reload
+    if '_MEM_SNAPSHOT_LAST' in globals():
+        globals()['_MEM_SNAPSHOT_LAST'].clear()
+    if '_MEM_SNAPSHOT_SERIES' in globals():
+        globals()['_MEM_SNAPSHOT_SERIES'].clear()
+    logger.debug("[MultiGPU_Memory_Management] Memory snapshot history cleared.")
+
+    # Logging integration
+    multigpu_memory_log("mem_mgmt", "post-history-clear")
+
+def trigger_executor_cache_reset(reason="policy", force=False):
+    """
+    (Phase 1/2 Core) Triggers PromptExecutor.reset() by setting the 'free_memory' flag.
+    Releases CPU-side references held by execution caches.
+    """
+    global _last_cpu_usage_at_reset
+
+    # Ensure PromptServer singleton is available
+    if server.PromptServer.instance is None:
+        logger.debug("[MultiGPU_Memory_Management] PromptServer instance not yet initialized.")
+        return
+
+    prompt_server = server.PromptServer.instance
+
+    # Stability guard: Avoid during active execution unless forced
+    if prompt_server.prompt_queue.currently_running and not force:
+        logger.debug(f"[MultiGPU_Memory_Management] Skipping Executor Cache Reset during active prompt execution (Reason: {reason}).")
+        return
+
+    multigpu_memory_log("executor_reset", f"pre-trigger ({reason})")
+    logger.info(f"[MultiGPU_Memory_Management] Triggering PromptExecutor cache reset (e.reset()). Reason: {reason}")
+
+    # Diagnostics and store pruning prior to reset
+    analyze_cpu_memory_leaks(force=force)
+    prune_distorch_stores()
+
+    # Phase 3: Clear internal snapshot history as the context is resetting
+    clear_memory_snapshot_history()
+
+    # Set the flag on the prompt queue (ComfyUI core mechanism)
+    prompt_server.prompt_queue.set_flag("free_memory", True)
+    logger.debug("[MultiGPU_Memory_Management] 'free_memory' flag set.")
+
+    # Update usage baseline for hysteresis
+    vm = psutil.virtual_memory()
+    _last_cpu_usage_at_reset = vm.percent
+
+    # Attempt to return freed memory to OS
+    try_malloc_trim()
+
+    multigpu_memory_log("executor_reset", f"post-trigger ({reason})")
+
+
+def _cpu_used_bytes():
+    try:
+        vm = psutil.virtual_memory()
+        return vm.used
+    except Exception:
+        return 0
+
+
+def force_full_system_cleanup(reason="manual", force=True):
+    """
+    Mirror ComfyUI-Manager 'Free model and node cache' semantics:
+    - Only set unload_models=True and free_memory=True flags on the PromptQueue
+    - The prompt worker (main.py) performs unload/reset/GC
+    """
+    pre_cpu = _cpu_used_bytes()
+    pre_models = len(getattr(mm, "current_loaded_models", []))
+
+    multigpu_memory_log("full_cleanup", f"start:{reason}")
+    logger.mgpu_mm_log(f"[ManagerMatch] Requesting flags-only cleanup (reason={reason}) | pre_models={pre_models}, cpu_used_gib={pre_cpu/(1024**3):.2f}")
+
+    try:
+        if server.PromptServer.instance is not None:
+            pq = server.PromptServer.instance.prompt_queue
+            # Respect currently_running unless forced
+            if (not pq.currently_running) or force:
+                pq.set_flag("unload_models", True)
+                pq.set_flag("free_memory", True)
+                logger.mgpu_mm_log("[ManagerMatch] Flags set: unload_models=True, free_memory=True")
+            else:
+                logger.mgpu_mm_log("[ManagerMatch] Skipped setting flags due to active execution and force=False")
+    except Exception as e:
+        logger.mgpu_mm_log(f"[ManagerMatch] Failed to set flags: {e}")
+
+    post_cpu = _cpu_used_bytes()
+    post_models = len(getattr(mm, "current_loaded_models", []))
+    delta_cpu_mb = (post_cpu - pre_cpu) / (1024**2)
+
+    multigpu_memory_log("full_cleanup", f"requested:{reason}")
+    summary = (
+        f"[ManagerMatch] Flags-only cleanup requested (reason={reason}) | "
+        f"models {pre_models}->{post_models} (no immediate unload), cpu_delta_mb={delta_cpu_mb:.2f}"
+    )
+    logger.mgpu_mm_log(summary)
+    return summary
+
+def check_cpu_memory_threshold(threshold_percent=CPU_MEMORY_THRESHOLD_PERCENT):
+    """
+    (Phase 2) Checks CPU memory usage and triggers a reset if threshold is exceeded (with hysteresis).
+    """
+    # Ensure PromptServer singleton is available
+    if server.PromptServer.instance is None:
+        return
+
+    # Stability/optimization: Do not trigger during active execution
+    if server.PromptServer.instance.prompt_queue.currently_running:
+        return
+
+    vm = psutil.virtual_memory()
+    current_usage = vm.percent
+
+    if current_usage > threshold_percent:
+        # Hysteresis gating
+        if current_usage > (_last_cpu_usage_at_reset + CPU_RESET_HYSTERESIS_PERCENT):
+            logger.warning(f"[MultiGPU_Memory_Monitor] CPU usage ({current_usage:.1f}%) exceeds threshold ({threshold_percent:.1f}%) and hysteresis.")
+            multigpu_memory_log("cpu_monitor", f"trigger:{current_usage:.1f}pct")
+            trigger_executor_cache_reset(reason="cpu_threshold_exceeded", force=False)
+        else:
+            logger.debug(f"[MultiGPU_Memory_Monitor] CPU usage high ({current_usage:.1f}%) but within hysteresis range. Skipping reset.")
+            multigpu_memory_log("cpu_monitor", f"skip_hysteresis:{current_usage:.1f}pct")
 
 def get_device_list():
     """
@@ -246,9 +409,16 @@ def soft_empty_cache_multigpu():
     # Record pre-GC snapshot for general system view
     multigpu_memory_log("general", "pre-soft-empty")
 
-    # Python GC (same as all implementations)
+    multigpu_memory_log("general", "pre-gc")
+    # Lifecycle status before GC
+    log_tracked_modelpatchers_status(tag="pre-gc")
     gc.collect()
+    # Lifecycle status after GC
+    log_tracked_modelpatchers_status(tag="post-gc")
+    multigpu_memory_log("general", "post-gc")
     logger.mgpu_mm_log("soft_empty_cache_multigpu: garbage collection complete")
+    # Attempt to release freed heap memory to OS
+    try_malloc_trim()
 
     # Clear cache for ALL devices (not just ComfyUI's single device)
     all_devices = get_device_list()
@@ -263,41 +433,53 @@ def soft_empty_cache_multigpu():
                 device_idx = int(device_str.split(":")[1])
                 # Use context manager for safe switching and automatic restoration
                 logger.mgpu_mm_log(f"Clearing CUDA cache on {device_str} (idx={device_idx})")
+                multigpu_memory_log("general", f"pre-empty:{device_str}")
                 with torch.cuda.device(device_idx):
                     torch.cuda.empty_cache()
                     if hasattr(torch.cuda, "ipc_collect"):
                         torch.cuda.ipc_collect()  # ComfyUI's CUDA optimization
                 logger.mgpu_mm_log(f"Cleared CUDA cache (and IPC if available) on {device_str}")
+                multigpu_memory_log("general", f"post-empty:{device_str}")
 
         elif device_str == "mps":
             if hasattr(torch, "mps") and hasattr(torch.mps, "empty_cache"):
                 logger.mgpu_mm_log("Clearing MPS cache")
+                multigpu_memory_log("general", f"pre-empty:{device_str}")
                 torch.mps.empty_cache()
                 logger.mgpu_mm_log("Cleared MPS cache")
+                multigpu_memory_log("general", f"post-empty:{device_str}")
 
         elif device_str.startswith("xpu:"):
             if hasattr(torch, "xpu") and hasattr(torch.xpu, "empty_cache"):
                 logger.mgpu_mm_log(f"Clearing XPU cache on {device_str}")
+                multigpu_memory_log("general", f"pre-empty:{device_str}")
                 torch.xpu.empty_cache()
                 logger.mgpu_mm_log(f"Cleared XPU cache on {device_str}")
+                multigpu_memory_log("general", f"post-empty:{device_str}")
 
         elif device_str.startswith("npu:"):
             if hasattr(torch, "npu") and hasattr(torch.npu, "empty_cache"):
                 logger.mgpu_mm_log(f"Clearing NPU cache on {device_str}")
+                multigpu_memory_log("general", f"pre-empty:{device_str}")
                 torch.npu.empty_cache()
                 logger.mgpu_mm_log(f"Cleared NPU cache on {device_str}")
+                multigpu_memory_log("general", f"post-empty:{device_str}")
 
         elif device_str.startswith("mlu:"):
             if hasattr(torch, "mlu") and hasattr(torch.mlu, "empty_cache"):
                 logger.mgpu_mm_log(f"Clearing MLU cache on {device_str}")
+                multigpu_memory_log("general", f"pre-empty:{device_str}")
                 torch.mlu.empty_cache()
                 logger.mgpu_mm_log(f"Cleared MLU cache on {device_str}")
+                multigpu_memory_log("general", f"post-empty:{device_str}")
 
         elif device_str.startswith("corex:"):
             if hasattr(torch, "corex") and hasattr(torch.corex, "empty_cache"):
                 logger.mgpu_mm_log(f"Clearing CoreX cache on {device_str}")
+                multigpu_memory_log("general", f"pre-empty:{device_str}")
                 torch.corex.empty_cache()
                 logger.mgpu_mm_log(f"Cleared CoreX cache on {device_str}")
+                multigpu_memory_log("general", f"post-empty:{device_str}")
 
     # Record post-GC snapshot for general system view
     multigpu_memory_log("general", "post-soft-empty")
@@ -353,7 +535,6 @@ def comfyui_memory_load(tag: str) -> str:
 # Delta-capable memory logging (identifier + tag) with timestamped series
 # ==========================================================================================
 
-from datetime import datetime, timezone
 
 # Stores the last snapshot per identifier: identifier -> (last_tag, snapshot_map)
 # snapshot_map: device_str -> (used_bytes, total_bytes)
@@ -475,6 +656,127 @@ def multigpu_memory_log(identifier: str, tag: str, log: logging.Logger = logger)
 
     # Update last snapshot
     _MEM_SNAPSHOT_LAST[identifier] = (tag, curr)
+
+
+# ==========================================================================================
+# Lifecycle Tracking and Leak Analysis Utilities
+# ==========================================================================================
+
+# Track ModelPatcher lifecycle to correlate with CPU RAM trends
+if '_MGPU_TRACKED_MODELPATCHERS' not in globals():
+    _MGPU_TRACKED_MODELPATCHERS = weakref.WeakSet()
+
+def track_modelpatcher(model_patcher):
+    """Registers a ModelPatcher instance for lifecycle tracking."""
+    try:
+        if isinstance(model_patcher, comfy.model_patcher.ModelPatcher):
+            if model_patcher not in _MGPU_TRACKED_MODELPATCHERS:
+                _MGPU_TRACKED_MODELPATCHERS.add(model_patcher)
+                logger.debug(f"[MultiGPU_Lifecycle] Tracking ModelPatcher {id(model_patcher)} (tracked={len(_MGPU_TRACKED_MODELPATCHERS)})")
+    except Exception as e:
+        logger.debug(f"[MultiGPU_Lifecycle] track_modelpatcher error: {e}")
+
+def log_tracked_modelpatchers_status(tag="checkpoint"):
+    """Logs count and estimated CPU RAM for tracked ModelPatchers."""
+    alive_count = len(_MGPU_TRACKED_MODELPATCHERS)
+    total_cpu_memory_mb = 0.0
+    for patcher in list(_MGPU_TRACKED_MODELPATCHERS):
+        try:
+            if hasattr(patcher, "model") and patcher.model is not None:
+                for param in patcher.model.parameters():
+                    if getattr(param, "device", torch.device("cpu")).type == "cpu":
+                        total_cpu_memory_mb += (param.nelement() * param.element_size()) / (1024.0 * 1024.0)
+        except Exception:
+            continue
+    logger.warning(f"[MultiGPU_Lifecycle] [{tag}] Tracked ModelPatchers={alive_count}, approx CPU RAM={total_cpu_memory_mb:.2f} MB")
+
+def analyze_cpu_memory_leaks(force=False):
+    """Diagnostic: scan referrers of tracked ModelPatchers when memory is high."""
+    try:
+        vm = psutil.virtual_memory()
+        patchers = list(_MGPU_TRACKED_MODELPATCHERS)
+        if not force and len(patchers) <= 5 and vm.percent <= 80.0:
+            logger.debug(f"[MultiGPU_Leak_Analyzer] Skipping analysis. Patcher count ({len(patchers)}) and memory usage ({vm.percent:.1f}%) normal.")
+            return
+        logger.warning(f"[MultiGPU_Leak_Analyzer] High pressure (patchers={len(patchers)}, cpu_mem={vm.percent:.1f}%). Inspecting up to 5 referrer sets.")
+        for i, patcher in enumerate(patchers[:5]):
+                try:
+                    referrers = gc.get_referrers(patcher)
+                    logger.warning(f"[MultiGPU_Leak_Analyzer] Patcher #{i} id={id(patcher)} referrers={len(referrers)}")
+                    for j, ref in enumerate(referrers[:10]):
+                        rtype = type(ref).__name__
+                        rmod = getattr(type(ref), "__module__", "unknown")
+                        if isinstance(ref, dict):
+                            logger.warning(f"  Ref {j}: dict(len={len(ref)}) mod={rmod}")
+                        elif isinstance(ref, list):
+                            logger.warning(f"  Ref {j}: list(len={len(ref)}) mod={rmod}")
+                        else:
+                            logger.warning(f"  Ref {j}: {rtype} mod={rmod}")
+                except Exception:
+                    logger.warning("[MultiGPU_Leak_Analyzer] Failed to inspect referrers for a patcher.")
+    except Exception as e:
+        logger.debug(f"[MultiGPU_Leak_Analyzer] analyze error: {e}")
+
+def try_malloc_trim():
+    """Attempt to return freed heap memory to OS (Linux/glibc)."""
+    try:
+        if platform.system() == "Linux":
+            libc = ctypes.CDLL("libc.so.6")
+            if hasattr(libc, "malloc_trim"):
+                logger.info("[MultiGPU_Memory_Management] malloc_trim(0) begin")
+                multigpu_memory_log("mem_mgmt", "pre-malloc-trim")
+                res = libc.malloc_trim(0)
+                multigpu_memory_log("mem_mgmt", "post-malloc-trim")
+                if res == 1:
+                    logger.info("[MultiGPU_Memory_Management] malloc_trim(0) released memory")
+                else:
+                    logger.debug("[MultiGPU_Memory_Management] malloc_trim(0) no release")
+    except Exception as e:
+        logger.debug(f"[MultiGPU_Memory_Management] malloc_trim error: {e}")
+
+def prune_distorch_stores():
+    """Prune stale allocation/settings entries not tied to active models."""
+    try:
+        multigpu_memory_log("distorch_prune", "start")
+        active_hashes_v2 = set()
+        active_hashes_v1 = set()
+        for lm in getattr(mm, "current_loaded_models", []):
+            mp = getattr(lm, "model", None)
+            if mp is not None:
+                try:
+                    h2 = create_safetensor_model_hash(mp, "prune_check_v2")
+                    active_hashes_v2.add(h2)
+                except Exception:
+                    pass
+                if create_model_hash is not None:
+                    try:
+                        h1 = create_model_hash(mp, "prune_check_v1")
+                        active_hashes_v1.add(h1)
+                    except Exception:
+                        pass
+
+        # V1
+        if isinstance(model_allocation_store, dict) and active_hashes_v1:
+            stale = set(model_allocation_store.keys()) - active_hashes_v1
+            if stale:
+                logger.info(f"[MultiGPU_Memory_Management] Pruning {len(stale)} DisTorch V1 entries")
+                for k in stale:
+                    model_allocation_store.pop(k, None)
+
+        # V2
+        for store, name in ((safetensor_allocation_store, "allocation"), (safetensor_settings_store, "settings")):
+            try:
+                if isinstance(store, dict):
+                    stale2 = set(store.keys()) - active_hashes_v2
+                    if stale2:
+                        logger.info(f"[MultiGPU_Memory_Management] Pruning {len(stale2)} V2 {name} entries")
+                        for k in stale2:
+                            store.pop(k, None)
+            except Exception:
+                pass
+        multigpu_memory_log("distorch_prune", "end")
+    except Exception as e:
+        logger.debug(f"[MultiGPU_Memory_Management] prune_distorch_stores error: {e}")
 
 
 # ==========================================================================================
