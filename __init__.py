@@ -18,6 +18,7 @@ from .device_utils import (
     prune_distorch_stores,
     try_malloc_trim,
     track_modelpatcher,
+    force_full_system_cleanup,
 )
 
 # --- DisTorch V2 Logging Configuration ---
@@ -35,6 +36,18 @@ if not logger.handlers:
     handler.setFormatter(formatter)
     logger.addHandler(handler)
     logger.setLevel(log_level)
+
+# --- MultiGPU Cleanup Policy Configuration ---
+# Policy: off | threshold | every_load | every_load+threshold (alias threshold+every_load)
+MGPU_CLEANUP_POLICY = os.getenv("MULTIGPU_CLEANUP_POLICY", "off").lower()
+try:
+    MGPU_CPU_RESET_THRESHOLD = float(os.getenv("MULTIGPU_CPU_RESET_THRESHOLD", "0.85"))
+except Exception:
+    MGPU_CPU_RESET_THRESHOLD = 0.85
+# Malloc trim (not part of Comfy Core): on | off
+MGPU_MALLOC_TRIM = os.getenv("MULTIGPU_MALLOC_TRIM", "on").lower()
+
+logger.info(f"[MultiGPU Config] cleanup_policy={MGPU_CLEANUP_POLICY}, cpu_reset_threshold={MGPU_CPU_RESET_THRESHOLD:.2f}, malloc_trim={MGPU_MALLOC_TRIM}")
 
 MGPU_MM_LOG = True
 
@@ -379,11 +392,12 @@ def soft_empty_cache_distorch2_patched(force=False):
     else:
         logger.mgpu_mm_log("DisTorch2 not active: delegating allocator cache clear (VRAM) to original mm.soft_empty_cache")
         original_soft_empty_cache(force)
-        # Attempt to return CPU heap to OS on legacy path as well
-        try:
-            try_malloc_trim()
-        except Exception:
-            pass
+        # Optional: return CPU heap to OS (not part of Comfy Core)
+        if MGPU_MALLOC_TRIM != "off":
+            try:
+                try_malloc_trim()
+            except Exception:
+                pass
 
     # Phase 1/3: forced executor reset mirrors ComfyUI 'Free memory' semantics
     if force:
@@ -628,6 +642,20 @@ if hasattr(mm, 'load_models_gpu') and not hasattr(mm.load_models_gpu, "_distorch
         multigpu_memory_log("patched_load_models_gpu", "pre-original-call")
         result = original_load_models_gpu(models, memory_required, force_patch_weights, minimum_memory_required, force_full_load)
         multigpu_memory_log("patched_load_models_gpu", "post-original-call")
+
+        # Cleanup policy triggers (flags-only, Manager semantics)
+        if MGPU_CLEANUP_POLICY in ("threshold", "every_load+threshold", "threshold+every_load"):
+            try:
+                check_cpu_memory_threshold(threshold_percent=MGPU_CPU_RESET_THRESHOLD * 100.0)
+            except Exception:
+                pass
+        if MGPU_CLEANUP_POLICY in ("every_load", "every_load+threshold", "threshold+every_load"):
+            try:
+                # flags-only; prompt worker performs unload/reset/gc
+                force_full_system_cleanup(reason="policy_every_load", force=False)
+            except Exception:
+                pass
+
         return result
 
     # Mark and apply the patch
