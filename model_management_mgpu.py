@@ -20,6 +20,34 @@ from collections import defaultdict
 logger = logging.getLogger("MultiGPU")
 
 # ==========================================================================================
+# GC Anchor System for Model Retention Testing
+# ==========================================================================================
+
+# Global anchor set to prevent GC of models with keep_loaded=True
+_MGPU_RETENTION_ANCHORS = set()
+
+def add_retention_anchor(model_patcher, reason="keep_loaded"):
+    """Add a model patcher to the GC anchor set to prevent premature garbage collection"""
+    if model_patcher is not None:
+        _MGPU_RETENTION_ANCHORS.add(model_patcher)
+        model_name = type(getattr(model_patcher, 'model', model_patcher)).__name__
+        logger.mgpu_mm_log(f"[GC_ANCHOR] Added retention anchor for {model_name}, reason: {reason}, total anchors: {len(_MGPU_RETENTION_ANCHORS)}")
+
+def remove_retention_anchor(model_patcher, reason="cleanup"):
+    """Remove a model patcher from the GC anchor set"""
+    if model_patcher is not None and model_patcher in _MGPU_RETENTION_ANCHORS:
+        _MGPU_RETENTION_ANCHORS.discard(model_patcher)
+        model_name = type(getattr(model_patcher, 'model', model_patcher)).__name__
+        logger.mgpu_mm_log(f"[GC_ANCHOR] Removed retention anchor for {model_name}, reason: {reason}, total anchors: {len(_MGPU_RETENTION_ANCHORS)}")
+
+def clear_all_retention_anchors(reason="manual_clear"):
+    """Clear all retention anchors"""
+    count = len(_MGPU_RETENTION_ANCHORS)
+    _MGPU_RETENTION_ANCHORS.clear()
+    logger.mgpu_mm_log(f"[GC_ANCHOR] Cleared all {count} retention anchors, reason: {reason}")
+
+
+# ==========================================================================================
 # Model Analysis and Store Management (DisTorch V1 & V2)
 # ==========================================================================================
 
@@ -63,27 +91,44 @@ def prune_distorch_stores():
     active_hashes_v2 = set()
     active_hashes_v1 = set()
     
-    for lm in mm.current_loaded_models:
+    logger.mgpu_mm_log(f"[PRUNE_DEBUG] Starting prune - current_loaded_models count: {len(mm.current_loaded_models)}")
+    
+    for i, lm in enumerate(mm.current_loaded_models):
         mp = lm.model
         if mp is not None:
-            active_hashes_v2.add(create_safetensor_model_hash(mp, "prune_check_v2"))
-            active_hashes_v1.add(create_model_hash(mp, "prune_check_v1"))
+            try:
+                hash_v2 = create_safetensor_model_hash(mp, "prune_check_v2")
+                hash_v1 = create_model_hash(mp, "prune_check_v1")
+                active_hashes_v2.add(hash_v2)
+                active_hashes_v1.add(hash_v1)
+                
+                model_name = type(getattr(mp, 'model', mp)).__name__
+                keep_loaded = getattr(getattr(mp, 'model', None), '_mgpu_keep_loaded', False)
+                has_v2_alloc = hash_v2 in safetensor_allocation_store
+                logger.mgpu_mm_log(f"[PRUNE_DEBUG] Model {i}: {model_name}, keep_loaded={keep_loaded}, hash={hash_v2[:8]}, has_v2_allocation={has_v2_alloc}")
+            except Exception as e:
+                logger.mgpu_mm_log(f"[PRUNE_DEBUG] Model {i}: Error getting hash - {e}")
+
+    logger.mgpu_mm_log(f"[PRUNE_DEBUG] Active hashes V2: {len(active_hashes_v2)}, Store has: {len(safetensor_allocation_store)}")
 
     # V1 pruning
     stale_v1 = set(model_allocation_store.keys()) - active_hashes_v1
     if stale_v1:
-        logger.info(f"[MultiGPU_Memory_Management] Pruning {len(stale_v1)} DisTorch V1 entries")
+        logger.mgpu_mm_log(f"[MultiGPU_Memory_Management] Pruning {len(stale_v1)} DisTorch V1 entries")
         for k in stale_v1:
             del model_allocation_store[k]
 
-    # V2 pruning
+    # V2 pruning with diagnostics
     for store, name in ((safetensor_allocation_store, "allocation"), (safetensor_settings_store, "settings")):
         stale_v2 = set(store.keys()) - active_hashes_v2
         if stale_v2:
-            logger.info(f"[MultiGPU_Memory_Management] Pruning {len(stale_v2)} V2 {name} entries")
+            logger.mgpu_mm_log(f"[MultiGPU_Memory_Management] Would prune {len(stale_v2)} V2 {name} entries: {[h[:8] for h in list(stale_v2)[:5]]}")
             for k in stale_v2:
                 del store[k]
+        else:
+            logger.mgpu_mm_log(f"[PRUNE_DEBUG] No stale {name} entries to prune")
     
+    logger.mgpu_mm_log(f"[PRUNE_DEBUG] After pruning - V2 allocation store has: {len(safetensor_allocation_store)} entries")
     multigpu_memory_log("distorch_prune", "end")
 
 # ==========================================================================================
@@ -117,7 +162,7 @@ def _capture_memory_snapshot():
     return snapshot
 
 def multigpu_memory_log(identifier, tag):
-    """Record timestamped memory snapshot with delta logging"""
+    """Record timestamped memory snapshot with clean aligned logging"""
     if identifier == "print_summary":
         for id_key in sorted(_MEM_SNAPSHOT_SERIES.keys()):
             series = _MEM_SNAPSHOT_SERIES[id_key]
@@ -125,12 +170,13 @@ def multigpu_memory_log(identifier, tag):
             for ts, tag_name, snap in series:
                 parts = []
                 cpu_used, cpu_total = snap.get("cpu", (0, 0))
-                parts.append(f"cpu={cpu_used/(1024**3):.2f}/{cpu_total/(1024**3):.2f}")
+                parts.append(f"cpu|{cpu_used/(1024**3):.2f}")
                 for dev in sorted([k for k in snap.keys() if k != "cpu"]):
                     used, total = snap[dev]
-                    parts.append(f"{dev}={used/(1024**3):.2f}/{total/(1024**3):.2f}")
+                    parts.append(f"{dev}|{used/(1024**3):.2f}")
                 ts_str = ts.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
-                logger.mgpu_mm_log(f"{ts_str} {id_key} {tag_name} | " + " | ".join(parts))
+                tag_padded = f"{id_key}_{tag_name}".ljust(35)
+                logger.mgpu_mm_log(f"{ts_str} {tag_padded} {' '.join(parts)}")
         return
 
     ts = datetime.now(timezone.utc)
@@ -141,28 +187,20 @@ def multigpu_memory_log(identifier, tag):
         _MEM_SNAPSHOT_SERIES[identifier] = []
     _MEM_SNAPSHOT_SERIES[identifier].append((ts, tag, curr))
     
-    # Compute delta
-    if identifier in _MEM_SNAPSHOT_LAST:
-        prev_tag, prev = _MEM_SNAPSHOT_LAST[identifier]
-        keys = set(prev.keys()) | set(curr.keys())
-        ordered = ["cpu"] + sorted([k for k in keys if k != "cpu"])
-        parts = []
-        for k in ordered:
-            p_used, _ = prev.get(k, (0, 0))
-            c_used, _ = curr.get(k, (0, 0))
-            delta = c_used - p_used
-            sign = "+" if delta >= 0 else "-"
-            parts.append(f"{k}={sign}{abs(delta)/(1024**3):.2f}")
-        logger.mgpu_mm_log(f"{identifier} {tag} - {prev_tag}: " + " | ".join(parts))
-    else:
-        # Baseline
-        ordered = ["cpu"] + sorted([k for k in curr.keys() if k != "cpu"])
-        parts = []
-        for k in ordered:
-            c_used, _ = curr.get(k, (0, 0))
-            parts.append(f"{k}=+{c_used/(1024**3):.2f}")
-        logger.mgpu_mm_log(f"{identifier} {tag} - <baseline>: " + " | ".join(parts))
-
+    # Clean aligned format: timestamp + padded tag + memory values
+    ts_str = ts.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+    tag_padded = f"{identifier}_{tag}".ljust(35)
+    
+    parts = []
+    cpu_used, _ = curr.get("cpu", (0, 0))
+    parts.append(f"cpu|{cpu_used/(1024**3):.2f}")
+    
+    for dev in sorted([k for k in curr.keys() if k != "cpu"]):
+        used, _ = curr[dev]
+        parts.append(f"{dev}|{used/(1024**3):.2f}")
+    
+    logger.mgpu_mm_log(f"{ts_str} {tag_padded} {' '.join(parts)}")
+    
     _MEM_SNAPSHOT_LAST[identifier] = (tag, curr)
 
 def clear_memory_snapshot_history():
@@ -331,3 +369,73 @@ def force_full_system_cleanup(reason="manual", force=True):
     summary = f"[ManagerMatch] Cleanup requested (reason={reason}) | models {pre_models}->{post_models}, cpu_delta_mb={delta_cpu_mb:.2f}"
     logger.mgpu_mm_log(summary)
     return summary
+
+
+# ==========================================================================================
+# Core Patching: unload_all_models with keep_loaded retention
+# ==========================================================================================
+
+if hasattr(mm, 'unload_all_models') and not hasattr(mm.unload_all_models, '_mgpu_keep_loaded_patched'):
+    logger.info("[MultiGPU Core Patching] Patching mm.unload_all_models to respect keep_loaded flag for DisTorch models")
+    
+    _mgpu_original_unload_all_models = mm.unload_all_models
+    
+    def _mgpu_patched_unload_all_models():
+        """
+        Patched mm.unload_all_models that preserves DisTorch models with _mgpu_keep_loaded=True.
+        All other models (including DisTorch models without the flag) unload normally.
+        """
+        logger.mgpu_mm_log(f"[UNLOAD_DEBUG] Patched unload_all_models called - initial model count: {len(mm.current_loaded_models)}")
+        
+        # Direct approach: iterate through loaded models and selectively unload
+        models_to_unload = []
+        kept_models = []
+        
+        for i, lm in enumerate(mm.current_loaded_models):
+            mp = lm.model  # weakref call to ModelPatcher
+            if mp is not None and hasattr(mp, 'model'):
+                # Check if this is a DisTorch model with keep_loaded flag
+                keep_loaded = getattr(mp.model, '_mgpu_keep_loaded', False)
+                model_name = type(getattr(mp, 'model', mp)).__name__
+                logger.mgpu_mm_log(f"[UNLOAD_DEBUG] Model {i}: {model_name}, keep_loaded={keep_loaded}")
+                
+                if keep_loaded:
+                    kept_models.append(lm)
+                    logger.mgpu_mm_log(f"[UNLOAD_DEBUG] Adding to kept_models: {model_name}")
+                    # GC ANCHOR TEST: Prevent premature GC of clone patchers
+                    add_retention_anchor(mp, "keep_loaded_test")
+                else:
+                    models_to_unload.append(lm)
+            else:
+                logger.mgpu_mm_log(f"[UNLOAD_DEBUG] Model {i}: ModelPatcher is None or missing model attribute")
+                models_to_unload.append(lm)
+        
+        logger.mgpu_mm_log(f"[UNLOAD_DEBUG] Final counts - kept_models: {len(kept_models)}, models_to_unload: {len(models_to_unload)}")
+        
+        if kept_models:
+            logger.mgpu_mm_log(f"Found {len(kept_models)} model(s) to retain, unloading {len(models_to_unload)} model(s)")
+            
+            # Unload models that don't have keep_loaded flag
+            for lm in models_to_unload:
+                try:
+                    lm.model_unload(unpatch_weights=True)
+                    logger.debug(f"Unloaded model: {type(lm.model.model).__name__ if lm.model else 'Unknown'}")
+                except Exception as e:
+                    logger.warning(f"Error unloading model: {e}")
+            
+            # Remove unloaded models from current_loaded_models
+            mm.current_loaded_models = kept_models
+            logger.mgpu_mm_log(f"[UNLOAD_DEBUG] Updated mm.current_loaded_models, new count: {len(mm.current_loaded_models)}")
+            logger.mgpu_mm_log(f"Successfully retained {len(kept_models)} model(s) during unload")
+        else:
+            logger.mgpu_mm_log("No models with keep_loaded=True found - delegating to original unload_all_models")
+            _mgpu_original_unload_all_models()
+    
+    mm.unload_all_models = _mgpu_patched_unload_all_models
+    mm.unload_all_models._mgpu_keep_loaded_patched = True
+    logger.info("[MultiGPU Core Patching] mm.unload_all_models patched successfully")
+else:
+    if not hasattr(mm, 'unload_all_models'):
+        logger.warning("[MultiGPU Core Patching] mm.unload_all_models not found - cannot patch keep_loaded retention")
+    else:
+        logger.debug("[MultiGPU Core Patching] mm.unload_all_models already patched for keep_loaded - skipping")

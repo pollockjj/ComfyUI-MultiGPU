@@ -313,6 +313,7 @@ from .nodes import (
     HyVideoModelLoader,
     HyVideoVAELoader,
     DownloadAndLoadHyVideoTextEncoder,
+    UNetLoaderLP,
     FullCleanupMultiGPU,
 )
 
@@ -376,13 +377,28 @@ def soft_empty_cache_distorch2_patched(force=False):
     is_distorch_active = False
 
     # Detect DisTorch2-managed models
-    for lm in mm.current_loaded_models:
+    logger.mgpu_mm_log(f"[DETECT_DEBUG] Checking DisTorch2 active status - loaded models: {len(mm.current_loaded_models)}, store entries: {len(safetensor_allocation_store)}")
+    
+    for i, lm in enumerate(mm.current_loaded_models):
         mp = lm.model  # weakref call to ModelPatcher
         if mp is not None:
-            model_hash = create_safetensor_model_hash(mp, "cache_patch_check")
-            if model_hash in safetensor_allocation_store and safetensor_allocation_store.get(model_hash):
-                is_distorch_active = True
-                break
+            try:
+                model_hash = create_safetensor_model_hash(mp, "cache_patch_check")
+                in_store = model_hash in safetensor_allocation_store
+                alloc_value = safetensor_allocation_store.get(model_hash, "")
+                model_name = type(getattr(mp, 'model', mp)).__name__
+                keep_loaded = getattr(getattr(mp, 'model', None), '_mgpu_keep_loaded', False)
+                
+                logger.mgpu_mm_log(f"[DETECT_DEBUG] Model {i}: {model_name}, hash={model_hash[:8]}, in_store={in_store}, alloc_value='{alloc_value}', keep_loaded={keep_loaded}")
+                
+                if in_store and alloc_value:
+                    is_distorch_active = True
+                    logger.mgpu_mm_log(f"[DETECT_DEBUG] DisTorch2 ACTIVE detected on model: {model_name}")
+                    break
+            except Exception as e:
+                logger.mgpu_mm_log(f"[DETECT_DEBUG] Model {i}: Error during detection - {e}")
+    
+    logger.mgpu_mm_log(f"[DETECT_DEBUG] Final DisTorch2 active status: {is_distorch_active}")
 
     # Phase 2: adaptive CPU memory management
     check_cpu_memory_threshold()
@@ -645,19 +661,6 @@ if hasattr(mm, 'load_models_gpu') and not hasattr(mm.load_models_gpu, "_distorch
         result = original_load_models_gpu(models, memory_required, force_patch_weights, minimum_memory_required, force_full_load)
         multigpu_memory_log("patched_load_models_gpu", "post-original-call")
 
-        # Cleanup policy triggers (flags-only, Manager semantics)
-        if MGPU_CLEANUP_POLICY in ("threshold", "every_load+threshold", "threshold+every_load"):
-            try:
-                check_cpu_memory_threshold(threshold_percent=MGPU_CPU_RESET_THRESHOLD * 100.0)
-            except Exception:
-                pass
-        if MGPU_CLEANUP_POLICY in ("every_load", "every_load+threshold", "threshold+every_load"):
-            try:
-                # flags-only; prompt worker performs unload/reset/gc
-                force_full_system_cleanup(reason="policy_every_load", force=False)
-            except Exception:
-                pass
-
         return result
 
     # Mark and apply the patch
@@ -681,6 +684,7 @@ NODE_CLASS_MAPPINGS = {
     "HunyuanVideoEmbeddingsAdapter": HunyuanVideoEmbeddingsAdapter,
     "CheckpointLoaderAdvancedMultiGPU": CheckpointLoaderAdvancedMultiGPU,
     "CheckpointLoaderAdvancedDisTorch2MultiGPU": CheckpointLoaderAdvancedDisTorch2MultiGPU,
+    "UNetLoaderLP": UNetLoaderLP,
 }
 
 # Standard MultiGPU nodes

@@ -530,6 +530,30 @@ class DownloadAndLoadHyVideoTextEncoder:
         return original_loader.loadmodel(llm_model, clip_model, precision, apply_final_norm, hidden_state_skip_layer, quantization)
 
 
+class UNetLoaderLP:
+    """UNet Loader (Low Precision) - sets LoRA precision to False for CPU storage optimization"""
+    @classmethod
+    def INPUT_TYPES(s):
+        return {"required": { "unet_name": (folder_paths.get_filename_list("unet"), ),
+                             }}
+    RETURN_TYPES = ("MODEL",)
+    FUNCTION = "load_unet"
+    CATEGORY = "loaders"
+    TITLE = "UNet Loader (LP)"
+
+    def load_unet(self, unet_name):
+        original_loader = NODE_CLASS_MAPPINGS["UNETLoader"]()
+        out = original_loader.load_unet(unet_name)
+        
+        # Set the low-precision LoRA flag on the loaded model
+        if hasattr(out[0], 'model'):
+            out[0].model._distorch_high_precision_loras = False
+        elif hasattr(out[0], 'patcher') and hasattr(out[0].patcher, 'model'):
+            out[0].patcher.model._distorch_high_precision_loras = False
+            
+        return out
+
+
 class FullCleanupMultiGPU:
     @classmethod
     def INPUT_TYPES(s):

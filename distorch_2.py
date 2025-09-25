@@ -67,8 +67,11 @@ def register_patched_safetensor_modelpatcher():
             multigpu_memory_log(f"safetensor:{debug_hash[:8]}", "pre-load")
             allocations = safetensor_allocation_store.get(debug_hash)
 
-            if not hasattr(self.model, '_distorch_high_precision_loras') or not allocations:
+            # Set default precision flag before checking
+            if not hasattr(self.model, '_distorch_high_precision_loras'):
+                self.model._distorch_high_precision_loras = True
 
+            if not allocations:
                 result = original_partially_load(self, device_to, extra_memory, force_patch_weights)
                 multigpu_memory_log(f"safetensor:{debug_hash[:8]}", "post-load")
                 if hasattr(self, '_distorch_block_assignments'):
@@ -103,7 +106,7 @@ def register_patched_safetensor_modelpatcher():
                 device_assignments = analyze_safetensor_loading(self, allocations)
             
             model_original_dtype = comfy.utils.weight_dtype(self.model.state_dict())
-            high_precision_loras = self.model._distorch_high_precision_loras
+            high_precision_loras = getattr(self.model, "_distorch_high_precision_loras", True)
             loading = self._load_list()
             loading.sort(reverse=True)
             for module_size, module_name, module_object, params in loading:
@@ -813,7 +816,7 @@ def override_class_with_distorch_safetensor_v2(cls):
             inputs["optional"]["virtual_vram_gb"] = ("FLOAT", {"default": 4.0, "min": 0.0, "max": 128.0, "step": 0.1})
             inputs["optional"]["donor_device"] = (devices, {"default": "cpu"})
             inputs["optional"]["expert_mode_allocations"] = ("STRING", {"multiline": False, "default": ""})
-            inputs["optional"]["high_precision_loras"] = ("BOOLEAN", {"default": True})
+            inputs["optional"]["keep_loaded"] = ("BOOLEAN", {"default": True})
             return inputs
 
         CATEGORY = "multigpu/distorch_2"
@@ -822,13 +825,13 @@ def override_class_with_distorch_safetensor_v2(cls):
 
         @classmethod
         def IS_CHANGED(s, *args, compute_device=None, virtual_vram_gb=4.0,
-                       donor_device="cpu", expert_mode_allocations="", high_precision_loras=True, **kwargs):
+                       donor_device="cpu", expert_mode_allocations="", keep_loaded=True, **kwargs):
             # Create a hash of our specific settings
-            settings_str = f"{compute_device}{virtual_vram_gb}{donor_device}{expert_mode_allocations}{high_precision_loras}"
+            settings_str = f"{compute_device}{virtual_vram_gb}{donor_device}{expert_mode_allocations}{keep_loaded}"
             return hashlib.sha256(settings_str.encode()).hexdigest()
 
         def override(self, *args, compute_device=None, virtual_vram_gb=4.0,
-                     donor_device="cpu", expert_mode_allocations="", high_precision_loras=True, **kwargs):
+                     donor_device="cpu", expert_mode_allocations="", keep_loaded=True, **kwargs):
 
             from . import set_current_device
             if compute_device is not None:
@@ -837,39 +840,7 @@ def override_class_with_distorch_safetensor_v2(cls):
             # Register our patched ModelPatcher
             register_patched_safetensor_modelpatcher()
 
-            # Call original function
-            fn = getattr(super(), cls.FUNCTION)
-
-            # --- Check if we need to unload the model due to settings change ---
-            # This logic is a bit redundant with IS_CHANGED, but provides clear logging
-            settings_str = f"{compute_device}{virtual_vram_gb}{donor_device}{expert_mode_allocations}"
-            settings_hash = hashlib.sha256(settings_str.encode()).hexdigest()
-
-            # Temporarily load to get hash without applying our patch
-            temp_out = fn(*args, **kwargs)
-            model_to_check = None
-            if hasattr(temp_out[0], 'model'):
-                model_to_check = temp_out[0]
-            elif hasattr(temp_out[0], 'patcher') and hasattr(temp_out[0].patcher, 'model'):
-                model_to_check = temp_out[0].patcher
-
-            if model_to_check:
-                model_hash = create_safetensor_model_hash(model_to_check, "override_check")
-                last_settings_hash = safetensor_settings_store.get(model_hash)
-
-                if last_settings_hash != settings_hash:
-                    logger.mgpu_mm_log(f"Settings changed for model {model_hash[:8]}. Previous settings hash: {last_settings_hash}, New settings hash: {settings_hash}. Forcing reload.")
-                else:
-                    logger.mgpu_mm_log(f"Settings unchanged for model {model_hash[:8]}. Using cached model.")
-
-            out = fn(*args, **kwargs)
-
-            # Store high_precision_loras in the model for later retrieval
-            if hasattr(out[0], 'model'):
-                out[0].model._distorch_high_precision_loras = high_precision_loras
-            elif hasattr(out[0], 'patcher') and hasattr(out[0].patcher, 'model'):
-                out[0].patcher.model._distorch_high_precision_loras = high_precision_loras
-
+            # Build allocation string
             vram_string = ""
             if virtual_vram_gb > 0:
                 vram_string = f"{compute_device};{virtual_vram_gb};{donor_device}"
@@ -877,17 +848,35 @@ def override_class_with_distorch_safetensor_v2(cls):
                 vram_string = compute_device
 
             full_allocation = f"{expert_mode_allocations}#{vram_string}" if expert_mode_allocations or vram_string else ""
+            
+            fn = getattr(super(), cls.FUNCTION)
+            
+            # Load the model and get hash, then store allocation for future runs
+            out = fn(*args, **kwargs)
+            
+            model_to_check = None
+            if hasattr(out[0], 'model'):
+                model_to_check = out[0]
+            elif hasattr(out[0], 'patcher') and hasattr(out[0].patcher, 'model'):
+                model_to_check = out[0].patcher
+
+            if model_to_check:
+                model_hash = create_safetensor_model_hash(model_to_check, "override_store")
+                settings_str = f"{compute_device}{virtual_vram_gb}{donor_device}{expert_mode_allocations}"
+                settings_hash = hashlib.sha256(settings_str.encode()).hexdigest()
+                
+                # Store allocation for next run - this enables DisTorch for subsequent loads
+                safetensor_allocation_store[model_hash] = full_allocation
+                safetensor_settings_store[model_hash] = settings_hash
+                logger.debug(f"[MultiGPU DisTorch V2] Stored allocation for model {model_hash[:8]}: {full_allocation}")
 
             logger.info(f"[MultiGPU DisTorch V2] Full allocation string: {full_allocation}")
 
+            # Store keep_loaded in the model for later retrieval by unload_all_models patch
             if hasattr(out[0], 'model'):
-                model_hash = create_safetensor_model_hash(out[0], "override")
-                safetensor_allocation_store[model_hash] = full_allocation
-                safetensor_settings_store[model_hash] = settings_hash
+                out[0].model._mgpu_keep_loaded = keep_loaded
             elif hasattr(out[0], 'patcher') and hasattr(out[0].patcher, 'model'):
-                model_hash = create_safetensor_model_hash(out[0].patcher, "override")
-                safetensor_allocation_store[model_hash] = full_allocation
-                safetensor_settings_store[model_hash] = settings_hash
+                out[0].patcher.model._mgpu_keep_loaded = keep_loaded
 
             return out
 
@@ -909,7 +898,7 @@ def override_class_with_distorch_safetensor_v2_clip(cls):
             inputs["optional"]["virtual_vram_gb"] = ("FLOAT", {"default": 4.0, "min": 0.0, "max": 128.0, "step": 0.1})
             inputs["optional"]["donor_device"] = (devices, {"default": "cpu"})
             inputs["optional"]["expert_mode_allocations"] = ("STRING", {"multiline": False, "default": ""})
-            inputs["optional"]["high_precision_loras"] = ("BOOLEAN", {"default": True})
+            inputs["optional"]["keep_loaded"] = ("BOOLEAN", {"default": True})
             return inputs
 
         CATEGORY = "multigpu/distorch_2"
@@ -918,13 +907,13 @@ def override_class_with_distorch_safetensor_v2_clip(cls):
 
         @classmethod
         def IS_CHANGED(s, *args, device=None, virtual_vram_gb=4.0,  # Changed from compute_device
-                       donor_device="cpu", expert_mode_allocations="", high_precision_loras=True, **kwargs):
+                       donor_device="cpu", expert_mode_allocations="", keep_loaded=True, **kwargs):
             # Create a hash of our specific settings
-            settings_str = f"{device}{virtual_vram_gb}{donor_device}{expert_mode_allocations}{high_precision_loras}"  # Changed from compute_device
+            settings_str = f"{device}{virtual_vram_gb}{donor_device}{expert_mode_allocations}{keep_loaded}"  # Changed from compute_device
             return hashlib.sha256(settings_str.encode()).hexdigest()
 
         def override(self, *args, device=None, virtual_vram_gb=4.0,  # Changed from compute_device
-                     donor_device="cpu", expert_mode_allocations="", high_precision_loras=True, **kwargs):
+                     donor_device="cpu", expert_mode_allocations="", keep_loaded=True, **kwargs):
 
             from . import set_current_text_encoder_device  # Use text encoder device setter
             if device is not None:
@@ -938,35 +927,14 @@ def override_class_with_distorch_safetensor_v2_clip(cls):
             # Call original function
             fn = getattr(super(), cls.FUNCTION)
 
-            # --- Check if we need to unload the model due to settings change ---
-            # This logic is a bit redundant with IS_CHANGED, but provides clear logging
-            settings_str = f"{device}{virtual_vram_gb}{donor_device}{expert_mode_allocations}"  # Changed from compute_device
-            settings_hash = hashlib.sha256(settings_str.encode()).hexdigest()
-
-            # Temporarily load to get hash without applying our patch
-            temp_out = fn(*args, **kwargs)
-            model_to_check = None
-            if hasattr(temp_out[0], 'model'):
-                model_to_check = temp_out[0]
-            elif hasattr(temp_out[0], 'patcher') and hasattr(temp_out[0].patcher, 'model'):
-                model_to_check = temp_out[0].patcher
-
-            if model_to_check:
-                model_hash = create_safetensor_model_hash(model_to_check, "override_check")
-                last_settings_hash = safetensor_settings_store.get(model_hash)
-
-                if last_settings_hash != settings_hash:
-                    logger.mgpu_mm_log(f"Settings changed for model {model_hash[:8]}. Previous settings hash: {last_settings_hash}, New settings hash: {settings_hash}. Forcing reload.")
-                else:
-                    logger.mgpu_mm_log(f"Settings unchanged for model {model_hash[:8]}. Using cached model.")
-
+            # Call the main function once
             out = fn(*args, **kwargs)
 
-            # Store high_precision_loras in the model for later retrieval
+            # Store keep_loaded in the model for later retrieval by unload_all_models patch
             if hasattr(out[0], 'model'):
-                out[0].model._distorch_high_precision_loras = high_precision_loras
+                out[0].model._mgpu_keep_loaded = keep_loaded
             elif hasattr(out[0], 'patcher') and hasattr(out[0].patcher, 'model'):
-                out[0].patcher.model._distorch_high_precision_loras = high_precision_loras
+                out[0].patcher.model._mgpu_keep_loaded = keep_loaded
 
             vram_string = ""
             if virtual_vram_gb > 0:
@@ -978,12 +946,19 @@ def override_class_with_distorch_safetensor_v2_clip(cls):
 
             logger.info(f"[MultiGPU DisTorch V2] Full allocation string: {full_allocation}")
 
+            # Store allocation AFTER loading for next time
+            model_to_check = None
             if hasattr(out[0], 'model'):
-                model_hash = create_safetensor_model_hash(out[0], "override")
-                safetensor_allocation_store[model_hash] = full_allocation
-                safetensor_settings_store[model_hash] = settings_hash
+                model_to_check = out[0]
             elif hasattr(out[0], 'patcher') and hasattr(out[0].patcher, 'model'):
-                model_hash = create_safetensor_model_hash(out[0].patcher, "override")
+                model_to_check = out[0].patcher
+
+            if model_to_check:
+                model_hash = create_safetensor_model_hash(model_to_check, "override_store")
+                settings_str = f"{device}{virtual_vram_gb}{donor_device}{expert_mode_allocations}"
+                settings_hash = hashlib.sha256(settings_str.encode()).hexdigest()
+                
+                # Store allocation for next time
                 safetensor_allocation_store[model_hash] = full_allocation
                 safetensor_settings_store[model_hash] = settings_hash
 
@@ -1006,7 +981,7 @@ def override_class_with_distorch_safetensor_v2_clip_no_device(cls):
             inputs["optional"]["virtual_vram_gb"] = ("FLOAT", {"default": 4.0, "min": 0.0, "max": 128.0, "step": 0.1})
             inputs["optional"]["donor_device"] = (devices, {"default": "cpu"})
             inputs["optional"]["expert_mode_allocations"] = ("STRING", {"multiline": False, "default": ""})
-            inputs["optional"]["high_precision_loras"] = ("BOOLEAN", {"default": True})
+            inputs["optional"]["keep_loaded"] = ("BOOLEAN", {"default": True})
             return inputs
 
         CATEGORY = "multigpu/distorch_2"
@@ -1015,13 +990,13 @@ def override_class_with_distorch_safetensor_v2_clip_no_device(cls):
 
         @classmethod
         def IS_CHANGED(s, *args, device=None, virtual_vram_gb=4.0,  # Changed from compute_device
-                       donor_device="cpu", expert_mode_allocations="", high_precision_loras=True, **kwargs):
+                       donor_device="cpu", expert_mode_allocations="", keep_loaded=True, **kwargs):
             # Create a hash of our specific settings
-            settings_str = f"{device}{virtual_vram_gb}{donor_device}{expert_mode_allocations}{high_precision_loras}"  # Changed from compute_device
+            settings_str = f"{device}{virtual_vram_gb}{donor_device}{expert_mode_allocations}{keep_loaded}"  # Changed from compute_device
             return hashlib.sha256(settings_str.encode()).hexdigest()
 
         def override(self, *args, device=None, virtual_vram_gb=4.0,  # Changed from compute_device
-                     donor_device="cpu", expert_mode_allocations="", high_precision_loras=True, **kwargs):
+                     donor_device="cpu", expert_mode_allocations="", keep_loaded=True, **kwargs):
 
             from . import set_current_text_encoder_device  # Use text encoder device setter
             if device is not None:
@@ -1033,35 +1008,14 @@ def override_class_with_distorch_safetensor_v2_clip_no_device(cls):
             # Call original function
             fn = getattr(super(), cls.FUNCTION)
 
-            # --- Check if we need to unload the model due to settings change ---
-            # This logic is a bit redundant with IS_CHANGED, but provides clear logging
-            settings_str = f"{device}{virtual_vram_gb}{donor_device}{expert_mode_allocations}"  # Changed from compute_device
-            settings_hash = hashlib.sha256(settings_str.encode()).hexdigest()
-
-            # Temporarily load to get hash without applying our patch
-            temp_out = fn(*args, **kwargs)
-            model_to_check = None
-            if hasattr(temp_out[0], 'model'):
-                model_to_check = temp_out[0]
-            elif hasattr(temp_out[0], 'patcher') and hasattr(temp_out[0].patcher, 'model'):
-                model_to_check = temp_out[0].patcher
-
-            if model_to_check:
-                model_hash = create_safetensor_model_hash(model_to_check, "override_check")
-                last_settings_hash = safetensor_settings_store.get(model_hash)
-
-                if last_settings_hash != settings_hash:
-                    logger.info(f"[MultiGPU DisTorch V2] Settings changed for model {model_hash[:8]}. Previous settings hash: {last_settings_hash}, New settings hash: {settings_hash}. Forcing reload.")
-                else:
-                    logger.info(f"[MultiGPU DisTorch V2] Settings unchanged for model {model_hash[:8]}. Using cached model.")
-
+            # Call the main function once
             out = fn(*args, **kwargs)
 
-            # Store high_precision_loras in the model for later retrieval
+            # Store keep_loaded in the model for later retrieval by unload_all_models patch
             if hasattr(out[0], 'model'):
-                out[0].model._distorch_high_precision_loras = high_precision_loras
+                out[0].model._mgpu_keep_loaded = keep_loaded
             elif hasattr(out[0], 'patcher') and hasattr(out[0].patcher, 'model'):
-                out[0].patcher.model._distorch_high_precision_loras = high_precision_loras
+                out[0].patcher.model._mgpu_keep_loaded = keep_loaded
 
             vram_string = ""
             if virtual_vram_gb > 0:
@@ -1073,12 +1027,19 @@ def override_class_with_distorch_safetensor_v2_clip_no_device(cls):
 
             logger.info(f"[MultiGPU DisTorch V2] Full allocation string: {full_allocation}")
 
+            # Store allocation AFTER loading for next time
+            model_to_check = None
             if hasattr(out[0], 'model'):
-                model_hash = create_safetensor_model_hash(out[0], "override")
-                safetensor_allocation_store[model_hash] = full_allocation
-                safetensor_settings_store[model_hash] = settings_hash
+                model_to_check = out[0]
             elif hasattr(out[0], 'patcher') and hasattr(out[0].patcher, 'model'):
-                model_hash = create_safetensor_model_hash(out[0].patcher, "override")
+                model_to_check = out[0].patcher
+
+            if model_to_check:
+                model_hash = create_safetensor_model_hash(model_to_check, "override_store")
+                settings_str = f"{device}{virtual_vram_gb}{donor_device}{expert_mode_allocations}"
+                settings_hash = hashlib.sha256(settings_str.encode()).hexdigest()
+                
+                # Store allocation for next time
                 safetensor_allocation_store[model_hash] = full_allocation
                 safetensor_settings_store[model_hash] = settings_hash
 
