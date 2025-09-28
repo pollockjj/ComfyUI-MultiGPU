@@ -399,7 +399,12 @@ if hasattr(mm, 'unload_all_models') and not hasattr(mm.unload_all_models, '_mgpu
                 model_name = type(getattr(mp, 'model', mp)).__name__
                 logger.mgpu_mm_log(f"[UNLOAD_DEBUG] Model {i}: {model_name}, keep_loaded={keep_loaded}")
                 
-                if keep_loaded:
+                # Retain models that either:
+                # 1. Are non-DisTorch models (missing _mgpu_keep_loaded attribute)
+                # 2. Are DisTorch models with keep_loaded=True
+                should_retain = not hasattr(mp.model, '_mgpu_keep_loaded') or keep_loaded
+
+                if should_retain:
                     kept_models.append(lm)
                     logger.mgpu_mm_log(f"[UNLOAD_DEBUG] Adding to kept_models: {model_name}")
                     # GC ANCHOR TEST: Prevent premature GC of clone patchers
