@@ -57,6 +57,44 @@ def register_patched_safetensor_modelpatcher():
     from comfy.model_patcher import wipe_lowvram_weight, move_weight_functions
     # Patch ComfyUI's ModelPatcher
     if not hasattr(comfy.model_patcher.ModelPatcher, '_distorch_patched'):
+
+        # Patch LoadedModel.model_memory_required to drive behavior purely by keep_loaded flag
+        # This ensures precise control over unload behavior without further core patching
+        from comfy.model_management import current_loaded_models
+
+        original_loaded_model_memory_required = None
+        for cls in current_loaded_models.__class__.__mro__:
+            if hasattr(cls, 'model_memory_required'):
+                original_loaded_model_memory_required = cls.model_memory_required
+                break
+
+        if original_loaded_model_memory_required is None:
+            # Global patch of LoadedModel class if available
+            try:
+                import comfy.model_management as mm
+                if hasattr(mm, 'LoadedModel'):
+                    original_loaded_model_memory_required = mm.LoadedModel.model_memory_required
+
+                    def patched_loaded_model_memory_required(self, device):
+                        """Drive unload behavior purely by keep_loaded flag"""
+                        # Check if this is a DisTorch model with keep_loaded flag
+                        keep_loaded = getattr(getattr(self, 'model', None), '_mgpu_keep_loaded', None)
+                        if keep_loaded is True:
+                            # keep_loaded=True: return 0 to prevent any unloading
+                            return 0
+                        elif keep_loaded is False:
+                            # keep_loaded=False: return full device memory to guarantee eviction
+                            total_device_memory = mm.get_total_memory(device)
+                            return total_device_memory
+
+                        # Not a DisTorch model - use original behavior
+                        return original_loaded_model_memory_required(self, device)
+
+                    mm.LoadedModel.model_memory_required = patched_loaded_model_memory_required
+
+            except (ImportError, AttributeError):
+                logging.warning("[MultiGPU DisTorch] Could not patch LoadedModel.model_memory_required - unload behavior may be inconsistent")
+
         original_partially_load = comfy.model_patcher.ModelPatcher.partially_load
 
         def new_partially_load(self, device_to, extra_memory=0, full_load=False, force_patch_weights=False, **kwargs):

@@ -1,0 +1,171 @@
+{
+  "10": {
+    "type": "CheckpointLoaderSimpleDisTorch2MultiGPU",
+    "widgets_values": [
+      "safetensor_testing/realDream_15SD15.safetensors",
+      "cuda:0",
+      1,
+      "cpu",
+      "",
+      false
+    ]
+  },
+  "17": {
+    "type": "CheckpointLoaderAdvancedDisTorch2MultiGPU",
+    "widgets_values": [
+      "Juggernaut-XL_v9_RunDiffusionPhoto_v2.safetensors",
+      "cuda:0",
+      1.1,
+      "cpu",
+      "cuda:1",
+      2,
+      "cpu",
+      "cuda:1",
+      "",
+      "",
+      false
+    ]
+  },
+  "29": {
+    "type": "CheckpointLoaderAdvancedMultiGPU",
+    "widgets_values": [
+      "safetensor_testing/realisticVisionV60B1_v51VAE.safetensors",
+      "cuda:0",
+      "cuda:1",
+      "cuda:1"
+    ]
+  },
+  "30": {
+    "type": "CheckpointLoaderSimpleMultiGPU",
+    "widgets_values": [
+      "safetensor_testing/realDream_15SD15.safetensors",
+      "cuda:0"
+    ]
+  },
+  "40": {
+    "type": "UNETLoaderDisTorch2MultiGPU",
+    "widgets_values": [
+      "qwen_image_fp8_e4m3fn.safetensors",
+      "fp8_e4m3fn",
+      "cuda:0",
+      16,
+      "cpu",
+      "",
+      false
+    ]
+  },
+  "41": {
+    "type": "VAELoaderMultiGPU",
+    "widgets_values": [
+      "qwen_image_vae.safetensors",
+      "cuda:1"
+    ]
+  },
+  "42": {
+    "type": "CLIPLoaderMultiGPU",
+    "widgets_values": [
+      "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+      "qwen_image",
+      "cuda:1"
+    ]
+  },
+  "53": {
+    "type": "UNETLoaderMultiGPU",
+    "widgets_values": [
+      "flux1-dev-fp8.safetensors",
+      "default",
+      "cuda:0"
+    ]
+  },
+  "54": {
+    "type": "VAELoaderMultiGPU",
+    "widgets_values": [
+      "ae.safetensors",
+      "cuda:1"
+    ]
+  },
+  "55": {
+    "type": "DualCLIPLoaderMultiGPU",
+    "widgets_values": [
+      "t5xxl_fp8_e4m3fn.safetensors",
+      "clip_l.safetensors",
+      "flux",
+      "cuda:1"
+    ]
+  },
+  "72": {
+    "type": "UnetLoaderGGUFMultiGPU",
+    "widgets_values": [
+      "flux1-dev-Q8_0.gguf",
+      "cuda:0"
+    ]
+  },
+  "73": {
+    "type": "DualCLIPLoaderGGUFMultiGPU",
+    "widgets_values": [
+      "t5-v1_1-xxl-encoder-Q8_0.gguf",
+      "clip_l.safetensors",
+      "flux",
+      "cuda:1"
+    ]
+  },
+  "88": {
+    "type": "CLIPLoaderGGUFMultiGPU",
+    "widgets_values": [
+      "Qwen2.5-VL-7B-Instruct-Q4_K_S.gguf",
+      "qwen_image",
+      "cuda:1"
+    ]
+  },
+  "90": {
+    "type": "UNETLoader",
+    "widgets_values": [
+      "WanVideo/2_2/Wan2_2-I2V-A14B-HIGH_fp8_e4m3fn_scaled_KJ.safetensors",
+      "default"
+    ]
+  },
+  "108": {
+    "type": "VAELoaderMultiGPU",
+    "widgets_values": [
+      "ae.safetensors",
+      "cuda:1"
+    ]
+  },
+  "120": {
+    "type": "CLIPLoaderMultiGPU",
+    "widgets_values": [
+      "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+      "wan",
+      "cuda:1"
+    ]
+  },
+  "126": {
+    "type": "UnetLoaderGGUFDisTorch2MultiGPU",
+    "widgets_values": [
+      "Wan2.2-T2V-A14B-HighNoise-Q8_0.gguf",
+      "cuda:0",
+      47.5,
+      "cpu",
+      "",
+      true
+    ]
+  },
+  "130": {
+    "type": "VAELoaderMultiGPU",
+    "widgets_values": [
+      "wan_2.1_vae.safetensors",
+      "cuda:1"
+    ]
+  },
+  "135": {
+    "type": "UnetLoaderGGUFDisTorch2MultiGPU",
+    "widgets_values": [
+      "Wan2.2-T2V-A14B-LowNoise-Q8_0.gguf",
+      "cuda:0",
+      14,
+      "cpu",
+      "",
+      true
+    ]
+  }
+}

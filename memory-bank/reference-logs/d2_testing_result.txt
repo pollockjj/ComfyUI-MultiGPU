@@ -1,0 +1,430 @@
+
+[MultiGPU_Memory_Management] malloc_trim(0) begin
+[MultiGPU Model Management] 2025-09-28T16:55:25.058Z mem_mgmt_pre-malloc-trim            cpu|45.88 cuda:0|19.83 cuda:1|19.08
+[MultiGPU Model Management] 2025-09-28T16:55:25.083Z mem_mgmt_post-malloc-trim           cpu|45.38 cuda:0|19.83 cuda:1|19.08
+[MultiGPU_Memory_Management] malloc_trim(0) released memory
+[MultiGPU Model Management] soft_empty_cache_multigpu: devices to clear = ['cpu', 'cuda:0', 'cuda:1']
+[MultiGPU Model Management] Clearing CUDA cache on cuda:0 (idx=0)
+[MultiGPU Model Management] 2025-09-28T16:55:25.084Z general_pre-empty:cuda:0            cpu|45.38 cuda:0|19.83 cuda:1|19.08
+[MultiGPU Model Management] Cleared CUDA cache (and IPC if available) on cuda:0
+[MultiGPU Model Management] 2025-09-28T16:55:25.086Z general_post-empty:cuda:0           cpu|45.38 cuda:0|19.83 cuda:1|19.08
+[MultiGPU Model Management] Clearing CUDA cache on cuda:1 (idx=1)
+[MultiGPU Model Management] 2025-09-28T16:55:25.086Z general_pre-empty:cuda:1            cpu|45.38 cuda:0|19.83 cuda:1|19.08
+[MultiGPU Model Management] Cleared CUDA cache (and IPC if available) on cuda:1
+[MultiGPU Model Management] 2025-09-28T16:55:25.087Z general_post-empty:cuda:1           cpu|45.38 cuda:0|19.83 cuda:1|19.08
+[MultiGPU Model Management] 2025-09-28T16:55:25.087Z general_post-soft-empty             cpu|45.38 cuda:0|19.83 cuda:1|19.08
+[MultiGPU Model Management] Force flag active: triggering executor cache reset (CPU)
+[MultiGPU Model Management] 2025-09-28T16:55:25.088Z executor_reset_pre-trigger (forced_soft_empty) cpu|45.38 cuda:0|19.83 cuda:1|19.08
+[MultiGPU_Memory_Management] Triggering PromptExecutor cache reset. Reason: forced_soft_empty
+[MultiGPU_Leak_Analyzer] High pressure detected: patchers=27, cpu_mem=49.3%. Analyzing referrers.
+[MultiGPU_Leak_Analyzer] Patcher #0 id=137954885156944 referrers=4
+  Ref 0: list(len=27) mod=builtins
+  Ref 1: list(len=5) mod=builtins
+  Ref 2: tuple mod=builtins
+  Ref 3: VAE mod=comfy.sd
+[MultiGPU_Leak_Analyzer] Patcher #1 id=137952743399760 referrers=5
+  Ref 0: list(len=27) mod=builtins
+  Ref 1: list(len=5) mod=builtins
+  Ref 2: CLIP mod=comfy.sd
+  Ref 3: list(len=1) mod=builtins
+  Ref 4: set mod=builtins
+[MultiGPU_Leak_Analyzer] Patcher #2 id=137949390436688 referrers=4
+  Ref 0: list(len=27) mod=builtins
+  Ref 1: list(len=5) mod=builtins
+  Ref 2: tuple mod=builtins
+  Ref 3: CLIP mod=comfy.sd
+[MultiGPU_Leak_Analyzer] Patcher #3 id=137954821603840 referrers=3
+  Ref 0: list(len=27) mod=builtins
+  Ref 1: list(len=5) mod=builtins
+  Ref 2: VAE mod=comfy.sd
+[MultiGPU_Leak_Analyzer] Patcher #4 id=137952743397888 referrers=4
+  Ref 0: list(len=27) mod=builtins
+  Ref 1: list(len=5) mod=builtins
+  Ref 2: tuple mod=builtins
+  Ref 3: VAE mod=comfy.sd
+[MultiGPU Model Management] 2025-09-28T16:55:25.299Z distorch_prune_start                cpu|45.38 cuda:0|19.83 cuda:1|19.08
+[MultiGPU Model Management] [PRUNE_DEBUG] Starting prune - current_loaded_models count: 9
+[MultiGPU Model Management] [PRUNE_DEBUG] Model 0: SDXLClipModel, keep_loaded=False, hash=cd38a1f8, has_v2_allocation=False
+[MultiGPU Model Management] [PRUNE_DEBUG] Model 1: AutoencodingEngine, keep_loaded=False, hash=be20bc8e, has_v2_allocation=False
+[MultiGPU Model Management] [PRUNE_DEBUG] Model 2: Flux, keep_loaded=False, hash=d78780cf, has_v2_allocation=False
+[MultiGPU Model Management] [PRUNE_DEBUG] Model 3: FluxClipModel_, keep_loaded=False, hash=12b44a2d, has_v2_allocation=False
+[MultiGPU Model Management] [PRUNE_DEBUG] Model 4: BaseModel, keep_loaded=False, hash=8b7f0c0a, has_v2_allocation=False
+[MultiGPU Model Management] [PRUNE_DEBUG] Model 5: Flux, keep_loaded=False, hash=72754c29, has_v2_allocation=False
+[MultiGPU Model Management] [PRUNE_DEBUG] Model 6: FluxClipModel_, keep_loaded=False, hash=7190f578, has_v2_allocation=False
+[MultiGPU Model Management] [PRUNE_DEBUG] Model 7: QwenImageTEModel_, keep_loaded=False, hash=9b313bd7, has_v2_allocation=False
+[MultiGPU Model Management] [PRUNE_DEBUG] Model 8: QwenImageTEModel_, keep_loaded=False, hash=34f9ab09, has_v2_allocation=False
+[MultiGPU Model Management] [PRUNE_DEBUG] Active hashes V2: 9, Store has: 0
+[MultiGPU Model Management] [PRUNE_DEBUG] No stale allocation entries to prune
+[MultiGPU Model Management] [PRUNE_DEBUG] No stale settings entries to prune
+[MultiGPU Model Management] [PRUNE_DEBUG] After pruning - V2 allocation store has: 0 entries
+[MultiGPU Model Management] 2025-09-28T16:55:25.346Z distorch_prune_end                  cpu|45.38 cuda:0|19.83 cuda:1|19.08
+[MultiGPU Model Management] 2025-09-28T16:55:25.347Z mem_mgmt_pre-history-clear          cpu|45.38 cuda:0|19.83 cuda:1|19.08
+[MultiGPU Model Management] 2025-09-28T16:55:25.347Z mem_mgmt_post-history-clear         cpu|45.38 cuda:0|19.83 cuda:1|19.08
+[MultiGPU_Memory_Management] malloc_trim(0) begin
+[MultiGPU Model Management] 2025-09-28T16:55:25.348Z mem_mgmt_pre-malloc-trim            cpu|45.38 cuda:0|19.83 cuda:1|19.08
+[MultiGPU Model Management] 2025-09-28T16:55:25.349Z mem_mgmt_post-malloc-trim           cpu|45.38 cuda:0|19.83 cuda:1|19.08
+[MultiGPU_Memory_Management] malloc_trim(0) released memory
+[MultiGPU Model Management] 2025-09-28T16:55:25.350Z executor_reset_post-trigger (forced_soft_empty) cpu|45.38 cuda:0|19.83 cuda:1|19.08
+[MultiGPU Model Management] 2025-09-28T16:55:25.350Z patched_soft_empty_end              cpu|45.38 cuda:0|19.83 cuda:1|19.08
+[MultiGPU Model Management] 2025-09-28T16:55:25.351Z patched_load_models_gpu_pre-original-call cpu|45.38 cuda:0|19.83 cuda:1|19.08
+[MultiGPU Model Management] [MultiGPU_LoadedModel_Patch] Set base model Patcher 137952743399760.
+[MultiGPU Model Management] 2025-09-28T16:55:25.353Z safetensor:cd38a1f8_pre-load        cpu|45.38 cuda:0|19.83 cuda:1|19.08
+[MultiGPU_DisTorch2_CLIP] CLIP Compute Device: cuda:1
+[MultiGPU_DisTorch2_CLIP] Expert String Examples:
+  Direct(byte) Mode - cuda:0,500mb;cuda:1,3.0g;cpu,5gb* -> '*' cpu = over/underflow device, put 0.50gb on cuda0, 3.00gb on cuda1, and 5.00gb (or the rest) on cpu
+  Ratio(%) Mode - cuda:0,8%;cuda:1,8%;cpu,4% -> 8:8:4 ratio, put 40% on cuda0, 40% on cuda1, and 20% on cpu
+===============================================
+    DisTorch2 Model Virtual VRAM Analysis
+===============================================
+Object   Role   Original(GB) Total(GB)  Virt(GB)
+-----------------------------------------------
+cuda:1   recip      23.56GB   25.56GB   +2.00GB
+cpu      donor      93.98GB   91.98GB   -2.00GB
+-----------------------------------------------
+model    model       1.52GB    0.00GB   -2.00GB
+[MultiGPU_DisTorch2_CLIP] Final CLIP Allocation String:
+cuda:1,0.0000;cpu,0.0213;cuda:0,0.0
+==================================================
+    DisTorch2 CLIP Model Device Allocations
+==================================================
+Device    VRAM GB    Dev %   Model GB    Dist %
+--------------------------------------------------
+cuda:0      23.56     0.0%       0.00      0.0%
+cuda:1      23.56     0.0%       0.00      0.0%
+cpu         93.98     2.1%       2.00    100.0%
+--------------------------------------------------
+    DisTorch2 CLIP Model Layer Distribution
+--------------------------------------------------
+Layer Type         Layers   Memory (MB)   % Total
+--------------------------------------------------
+Embedding               4        193.30     12.4%
+LayerNorm              90          0.39      0.0%
+Linear                266       1367.11     87.6%
+--------------------------------------------------
+[MultiGPU_DisTorch2_CLIP] Preserving 4 head layer(s) (193.30 MB) on compute device: cuda:1
+DisTorch2 CLIP Model Final Device/Layer Assignments
+--------------------------------------------------
+Device             Layers   Memory (MB)   % Total
+--------------------------------------------------
+cuda:1                 94        193.69     12.4%
+cpu                   266       1367.11     87.6%
+--------------------------------------------------
+[MultiGPU DisTorch V2] DisTorch loading completed.
+[MultiGPU DisTorch V2] Total memory: 1560.80MB
+[MultiGPU Model Management] 2025-09-28T16:55:25.367Z safetensor:cd38a1f8_post-load       cpu|45.38 cuda:0|19.83 cuda:1|19.08
+[MultiGPU Model Management] 2025-09-28T16:55:25.367Z patched_load_models_gpu_post-original-call cpu|45.38 cuda:0|19.83 cuda:1|19.08
+[MultiGPU Model Management] 2025-09-28T16:55:25.670Z patched_load_models_gpu_start       cpu|45.38 cuda:0|19.83 cuda:1|19.08
+[MultiGPU Model Management] Incoming models summary: SDXL:4.78GB req on cuda:0
+[MultiGPU Model Management] Non-Zero incoming DisTorch2 model detected. Initiating proactive unload.
+[MultiGPU Model Management] Need calc on cuda:0: effective_needed=1.10GB, free_now=3.72GB, need_bytes=0.00GB
+[MultiGPU Model Management] No unloads; 25% torch-cache rule triggered on: cpu. Calling soft_empty_cache()
+[MultiGPU Model Management] 2025-09-28T16:55:25.678Z patched_soft_empty_start:force=True cpu|45.38 cuda:0|19.83 cuda:1|19.08
+[MultiGPU Model Management] 2025-09-28T16:55:25.678Z distorch_prune_start                cpu|45.38 cuda:0|19.83 cuda:1|19.08
+[MultiGPU Model Management] [PRUNE_DEBUG] Starting prune - current_loaded_models count: 9
+[MultiGPU Model Management] [PRUNE_DEBUG] Model 0: SDXLClipModel, keep_loaded=False, hash=cd38a1f8, has_v2_allocation=False
+[MultiGPU Model Management] [PRUNE_DEBUG] Model 1: AutoencodingEngine, keep_loaded=False, hash=be20bc8e, has_v2_allocation=False
+[MultiGPU Model Management] [PRUNE_DEBUG] Model 2: Flux, keep_loaded=False, hash=d78780cf, has_v2_allocation=False
+[MultiGPU Model Management] [PRUNE_DEBUG] Model 3: FluxClipModel_, keep_loaded=False, hash=12b44a2d, has_v2_allocation=False
+[MultiGPU Model Management] [PRUNE_DEBUG] Model 4: BaseModel, keep_loaded=False, hash=8b7f0c0a, has_v2_allocation=False
+[MultiGPU Model Management] [PRUNE_DEBUG] Model 5: Flux, keep_loaded=False, hash=72754c29, has_v2_allocation=False
+[MultiGPU Model Management] [PRUNE_DEBUG] Model 6: FluxClipModel_, keep_loaded=False, hash=7190f578, has_v2_allocation=False
+[MultiGPU Model Management] [PRUNE_DEBUG] Model 7: QwenImageTEModel_, keep_loaded=False, hash=9b313bd7, has_v2_allocation=False
+[MultiGPU Model Management] [PRUNE_DEBUG] Model 8: QwenImageTEModel_, keep_loaded=False, hash=34f9ab09, has_v2_allocation=False
+[MultiGPU Model Management] [PRUNE_DEBUG] Active hashes V2: 9, Store has: 0
+[MultiGPU Model Management] [PRUNE_DEBUG] No stale allocation entries to prune
+[MultiGPU Model Management] [PRUNE_DEBUG] No stale settings entries to prune
+[MultiGPU Model Management] [PRUNE_DEBUG] After pruning - V2 allocation store has: 0 entries
+[MultiGPU Model Management] 2025-09-28T16:55:25.725Z distorch_prune_end                  cpu|45.38 cuda:0|19.83 cuda:1|19.08
+[MultiGPU Model Management] [DETECT_DEBUG] Checking DisTorch2 active status - loaded models: 9, store entries: 4
+[MultiGPU Model Management] [DETECT_DEBUG] Model 0: SDXLClipModel, hash=cd38a1f8, in_store=True, alloc_value='#cuda:1;2.0;cpu', keep_loaded=False
+[MultiGPU Model Management] [DETECT_DEBUG] DisTorch2 ACTIVE detected on model: SDXLClipModel
+[MultiGPU Model Management] [DETECT_DEBUG] Final DisTorch2 active status: True
+[MultiGPU Model Management] DisTorch2 active: clearing allocator caches on all devices (VRAM)
+[MultiGPU Model Management] soft_empty_cache_multigpu: starting GC and multi-device cache clear
+[MultiGPU Model Management] 2025-09-28T16:55:25.727Z general_pre-soft-empty              cpu|45.38 cuda:0|19.83 cuda:1|19.08
+[MultiGPU Model Management] 2025-09-28T16:55:25.728Z general_pre-gc                      cpu|45.38 cuda:0|19.83 cuda:1|19.08
+[MultiGPU_Lifecycle] [pre-gc] Tracked ModelPatchers=27, approx CPU RAM=64192.58 MB
+[MultiGPU_Lifecycle] [post-gc] Tracked ModelPatchers=27, approx CPU RAM=64192.58 MB
+[MultiGPU Model Management] 2025-09-28T16:55:25.997Z general_post-gc                     cpu|45.37 cuda:0|19.83 cuda:1|19.08
+[MultiGPU Model Management] soft_empty_cache_multigpu: garbage collection complete
+[MultiGPU_Memory_Management] malloc_trim(0) begin
+[MultiGPU Model Management] 2025-09-28T16:55:25.998Z mem_mgmt_pre-malloc-trim            cpu|45.37 cuda:0|19.83 cuda:1|19.08
+[MultiGPU Model Management] 2025-09-28T16:55:25.999Z mem_mgmt_post-malloc-trim           cpu|45.37 cuda:0|19.83 cuda:1|19.08
+[MultiGPU_Memory_Management] malloc_trim(0) released memory
+[MultiGPU Model Management] soft_empty_cache_multigpu: devices to clear = ['cpu', 'cuda:0', 'cuda:1']
+[MultiGPU Model Management] Clearing CUDA cache on cuda:0 (idx=0)
+[MultiGPU Model Management] 2025-09-28T16:55:26.000Z general_pre-empty:cuda:0            cpu|45.37 cuda:0|19.83 cuda:1|19.08
+[MultiGPU Model Management] Cleared CUDA cache (and IPC if available) on cuda:0
+[MultiGPU Model Management] 2025-09-28T16:55:26.002Z general_post-empty:cuda:0           cpu|45.37 cuda:0|19.83 cuda:1|19.08
+[MultiGPU Model Management] Clearing CUDA cache on cuda:1 (idx=1)
+[MultiGPU Model Management] 2025-09-28T16:55:26.002Z general_pre-empty:cuda:1            cpu|45.37 cuda:0|19.83 cuda:1|19.08
+[MultiGPU Model Management] Cleared CUDA cache (and IPC if available) on cuda:1
+[MultiGPU Model Management] 2025-09-28T16:55:26.003Z general_post-empty:cuda:1           cpu|45.37 cuda:0|19.83 cuda:1|19.08
+[MultiGPU Model Management] 2025-09-28T16:55:26.003Z general_post-soft-empty             cpu|45.37 cuda:0|19.83 cuda:1|19.08
+[MultiGPU Model Management] Force flag active: triggering executor cache reset (CPU)
+[MultiGPU Model Management] 2025-09-28T16:55:26.004Z executor_reset_pre-trigger (forced_soft_empty) cpu|45.37 cuda:0|19.83 cuda:1|19.08
+[MultiGPU_Memory_Management] Triggering PromptExecutor cache reset. Reason: forced_soft_empty
+[MultiGPU_Leak_Analyzer] High pressure detected: patchers=27, cpu_mem=49.3%. Analyzing referrers.
+[MultiGPU_Leak_Analyzer] Patcher #0 id=137954885156944 referrers=4
+  Ref 0: list(len=27) mod=builtins
+  Ref 1: list(len=5) mod=builtins
+  Ref 2: tuple mod=builtins
+  Ref 3: VAE mod=comfy.sd
+[MultiGPU_Leak_Analyzer] Patcher #1 id=137952743399760 referrers=3
+  Ref 0: list(len=27) mod=builtins
+  Ref 1: list(len=5) mod=builtins
+  Ref 2: CLIP mod=comfy.sd
+[MultiGPU_Leak_Analyzer] Patcher #2 id=137949390436688 referrers=4
+  Ref 0: list(len=27) mod=builtins
+  Ref 1: list(len=5) mod=builtins
+  Ref 2: tuple mod=builtins
+  Ref 3: CLIP mod=comfy.sd
+[MultiGPU_Leak_Analyzer] Patcher #3 id=137954821603840 referrers=3
+  Ref 0: list(len=27) mod=builtins
+  Ref 1: list(len=5) mod=builtins
+  Ref 2: VAE mod=comfy.sd
+[MultiGPU_Leak_Analyzer] Patcher #4 id=137952743397888 referrers=4
+  Ref 0: list(len=27) mod=builtins
+  Ref 1: list(len=5) mod=builtins
+  Ref 2: tuple mod=builtins
+  Ref 3: VAE mod=comfy.sd
+[MultiGPU Model Management] 2025-09-28T16:55:26.180Z distorch_prune_start                cpu|45.37 cuda:0|19.83 cuda:1|19.08
+[MultiGPU Model Management] [PRUNE_DEBUG] Starting prune - current_loaded_models count: 9
+[MultiGPU Model Management] [PRUNE_DEBUG] Model 0: SDXLClipModel, keep_loaded=False, hash=cd38a1f8, has_v2_allocation=False
+[MultiGPU Model Management] [PRUNE_DEBUG] Model 1: AutoencodingEngine, keep_loaded=False, hash=be20bc8e, has_v2_allocation=False
+[MultiGPU Model Management] [PRUNE_DEBUG] Model 2: Flux, keep_loaded=False, hash=d78780cf, has_v2_allocation=False
+[MultiGPU Model Management] [PRUNE_DEBUG] Model 3: FluxClipModel_, keep_loaded=False, hash=12b44a2d, has_v2_allocation=False
+[MultiGPU Model Management] [PRUNE_DEBUG] Model 4: BaseModel, keep_loaded=False, hash=8b7f0c0a, has_v2_allocation=False
+[MultiGPU Model Management] [PRUNE_DEBUG] Model 5: Flux, keep_loaded=False, hash=72754c29, has_v2_allocation=False
+[MultiGPU Model Management] [PRUNE_DEBUG] Model 6: FluxClipModel_, keep_loaded=False, hash=7190f578, has_v2_allocation=False
+[MultiGPU Model Management] [PRUNE_DEBUG] Model 7: QwenImageTEModel_, keep_loaded=False, hash=9b313bd7, has_v2_allocation=False
+[MultiGPU Model Management] [PRUNE_DEBUG] Model 8: QwenImageTEModel_, keep_loaded=False, hash=34f9ab09, has_v2_allocation=False
+[MultiGPU Model Management] [PRUNE_DEBUG] Active hashes V2: 9, Store has: 0
+[MultiGPU Model Management] [PRUNE_DEBUG] No stale allocation entries to prune
+[MultiGPU Model Management] [PRUNE_DEBUG] No stale settings entries to prune
+[MultiGPU Model Management] [PRUNE_DEBUG] After pruning - V2 allocation store has: 0 entries
+[MultiGPU Model Management] 2025-09-28T16:55:26.227Z distorch_prune_end                  cpu|45.37 cuda:0|19.83 cuda:1|19.08
+[MultiGPU Model Management] 2025-09-28T16:55:26.227Z mem_mgmt_pre-history-clear          cpu|45.37 cuda:0|19.83 cuda:1|19.08
+[MultiGPU Model Management] 2025-09-28T16:55:26.228Z mem_mgmt_post-history-clear         cpu|45.37 cuda:0|19.83 cuda:1|19.08
+[MultiGPU_Memory_Management] malloc_trim(0) begin
+[MultiGPU Model Management] 2025-09-28T16:55:26.228Z mem_mgmt_pre-malloc-trim            cpu|45.37 cuda:0|19.83 cuda:1|19.08
+[MultiGPU Model Management] 2025-09-28T16:55:26.230Z mem_mgmt_post-malloc-trim           cpu|45.37 cuda:0|19.83 cuda:1|19.08
+[MultiGPU_Memory_Management] malloc_trim(0) released memory
+[MultiGPU Model Management] 2025-09-28T16:55:26.230Z executor_reset_post-trigger (forced_soft_empty) cpu|45.37 cuda:0|19.83 cuda:1|19.08
+[MultiGPU Model Management] 2025-09-28T16:55:26.231Z patched_soft_empty_end              cpu|45.37 cuda:0|19.83 cuda:1|19.08
+[MultiGPU Model Management] 2025-09-28T16:55:26.231Z patched_load_models_gpu_pre-original-call cpu|45.37 cuda:0|19.83 cuda:1|19.08
+[MultiGPU Model Management] [MultiGPU_LoadedModel_Patch] Set base model Patcher 137952610352304.
+Requested to load SDXL
+[MultiGPU Model Management] 2025-09-28T16:55:26.456Z patched_soft_empty_start:force=False cpu|45.37 cuda:0|19.23 cuda:1|19.08
+[MultiGPU Model Management] 2025-09-28T16:55:26.456Z distorch_prune_start                cpu|45.37 cuda:0|19.23 cuda:1|19.08
+[MultiGPU Model Management] [PRUNE_DEBUG] Starting prune - current_loaded_models count: 8
+[MultiGPU Model Management] [PRUNE_DEBUG] Model 0: SDXLClipModel, keep_loaded=False, hash=cd38a1f8, has_v2_allocation=False
+[MultiGPU Model Management] [PRUNE_DEBUG] Model 1: AutoencodingEngine, keep_loaded=False, hash=be20bc8e, has_v2_allocation=False
+[MultiGPU Model Management] [PRUNE_DEBUG] Model 2: Flux, keep_loaded=False, hash=d78780cf, has_v2_allocation=False
+[MultiGPU Model Management] [PRUNE_DEBUG] Model 3: FluxClipModel_, keep_loaded=False, hash=12b44a2d, has_v2_allocation=False
+[MultiGPU Model Management] [PRUNE_DEBUG] Model 4: Flux, keep_loaded=False, hash=72754c29, has_v2_allocation=False
+[MultiGPU Model Management] [PRUNE_DEBUG] Model 5: FluxClipModel_, keep_loaded=False, hash=7190f578, has_v2_allocation=False
+[MultiGPU Model Management] [PRUNE_DEBUG] Model 6: QwenImageTEModel_, keep_loaded=False, hash=9b313bd7, has_v2_allocation=False
+[MultiGPU Model Management] [PRUNE_DEBUG] Model 7: QwenImageTEModel_, keep_loaded=False, hash=34f9ab09, has_v2_allocation=False
+[MultiGPU Model Management] [PRUNE_DEBUG] Active hashes V2: 8, Store has: 0
+[MultiGPU Model Management] [PRUNE_DEBUG] No stale allocation entries to prune
+[MultiGPU Model Management] [PRUNE_DEBUG] No stale settings entries to prune
+[MultiGPU Model Management] [PRUNE_DEBUG] After pruning - V2 allocation store has: 0 entries
+[MultiGPU Model Management] 2025-09-28T16:55:26.500Z distorch_prune_end                  cpu|45.37 cuda:0|19.23 cuda:1|19.08
+[MultiGPU Model Management] [DETECT_DEBUG] Checking DisTorch2 active status - loaded models: 8, store entries: 4
+[MultiGPU Model Management] [DETECT_DEBUG] Model 0: SDXLClipModel, hash=cd38a1f8, in_store=True, alloc_value='#cuda:1;2.0;cpu', keep_loaded=False
+[MultiGPU Model Management] [DETECT_DEBUG] DisTorch2 ACTIVE detected on model: SDXLClipModel
+[MultiGPU Model Management] [DETECT_DEBUG] Final DisTorch2 active status: True
+[MultiGPU Model Management] DisTorch2 active: clearing allocator caches on all devices (VRAM)
+[MultiGPU Model Management] soft_empty_cache_multigpu: starting GC and multi-device cache clear
+[MultiGPU Model Management] 2025-09-28T16:55:26.502Z general_pre-soft-empty              cpu|45.37 cuda:0|19.23 cuda:1|19.08
+[MultiGPU Model Management] 2025-09-28T16:55:26.503Z general_pre-gc                      cpu|45.37 cuda:0|19.23 cuda:1|19.08
+[MultiGPU_Lifecycle] [pre-gc] Tracked ModelPatchers=27, approx CPU RAM=64811.94 MB
+[MultiGPU_Lifecycle] [post-gc] Tracked ModelPatchers=27, approx CPU RAM=64811.94 MB
+[MultiGPU Model Management] 2025-09-28T16:55:26.769Z general_post-gc                     cpu|45.37 cuda:0|19.23 cuda:1|19.08
+[MultiGPU Model Management] soft_empty_cache_multigpu: garbage collection complete
+[MultiGPU_Memory_Management] malloc_trim(0) begin
+[MultiGPU Model Management] 2025-09-28T16:55:26.770Z mem_mgmt_pre-malloc-trim            cpu|45.37 cuda:0|19.23 cuda:1|19.08
+[MultiGPU Model Management] 2025-09-28T16:55:26.772Z mem_mgmt_post-malloc-trim           cpu|45.37 cuda:0|19.23 cuda:1|19.08
+[MultiGPU_Memory_Management] malloc_trim(0) released memory
+[MultiGPU Model Management] soft_empty_cache_multigpu: devices to clear = ['cpu', 'cuda:0', 'cuda:1']
+[MultiGPU Model Management] Clearing CUDA cache on cuda:0 (idx=0)
+[MultiGPU Model Management] 2025-09-28T16:55:26.772Z general_pre-empty:cuda:0            cpu|45.37 cuda:0|19.23 cuda:1|19.08
+[MultiGPU Model Management] Cleared CUDA cache (and IPC if available) on cuda:0
+[MultiGPU Model Management] 2025-09-28T16:55:26.788Z general_post-empty:cuda:0           cpu|45.37 cuda:0|19.23 cuda:1|19.08
+[MultiGPU Model Management] Clearing CUDA cache on cuda:1 (idx=1)
+[MultiGPU Model Management] 2025-09-28T16:55:26.788Z general_pre-empty:cuda:1            cpu|45.37 cuda:0|19.23 cuda:1|19.08
+[MultiGPU Model Management] Cleared CUDA cache (and IPC if available) on cuda:1
+[MultiGPU Model Management] 2025-09-28T16:55:26.789Z general_post-empty:cuda:1           cpu|45.37 cuda:0|19.23 cuda:1|19.08
+[MultiGPU Model Management] 2025-09-28T16:55:26.789Z general_post-soft-empty             cpu|45.37 cuda:0|19.23 cuda:1|19.08
+[MultiGPU Model Management] 2025-09-28T16:55:26.790Z patched_soft_empty_end              cpu|45.37 cuda:0|19.23 cuda:1|19.08
+[MultiGPU Model Management] 2025-09-28T16:55:26.795Z safetensor:5d907277_pre-load        cpu|45.37 cuda:0|19.23 cuda:1|19.08
+===============================================
+    DisTorch2 Model Virtual VRAM Analysis
+===============================================
+Object   Role   Original(GB) Total(GB)  Virt(GB)
+-----------------------------------------------
+cuda:0   recip      23.56GB   24.66GB   +1.10GB
+cpu      donor      93.98GB   92.88GB   -1.10GB
+-----------------------------------------------
+model    model       4.78GB    3.68GB   -1.10GB
+==================================================
+[MultiGPU DisTorch V2] Final Allocation String:
+cuda:0,0.1563;cpu,0.0117;cuda:1,0.0
+==================================================
+    DisTorch2 Model Device Allocations
+==================================================
+Device    VRAM GB    Dev %   Model GB    Dist %
+--------------------------------------------------
+cuda:0      23.56    15.6%       3.68     77.0%
+cuda:1      23.56     0.0%       0.00      0.0%
+cpu         93.98     1.2%       1.10     23.0%
+--------------------------------------------------
+    DisTorch2 Model Layer Distribution
+--------------------------------------------------
+Layer Type         Layers   Memory (MB)   % Total
+--------------------------------------------------
+Linear                743       4260.26     87.0%
+Conv2d                 51        635.67     13.0%
+GroupNorm              46          0.17      0.0%
+LayerNorm             210          0.95      0.0%
+--------------------------------------------------
+DisTorch2 Model Final Device/Layer Assignments
+--------------------------------------------------
+Device             Layers   Memory (MB)   % Total
+--------------------------------------------------
+cuda:0 (<0.01%)       261          2.34      0.0%
+cuda:0                584       3769.60     77.0%
+cpu                   205       1125.10     23.0%
+--------------------------------------------------
+[MultiGPU DisTorch V2] DisTorch loading completed.
+[MultiGPU DisTorch V2] Total memory: 4897.05MB
+[MultiGPU Model Management] 2025-09-28T16:55:28.156Z safetensor:5d907277_post-load       cpu|44.34 cuda:0|22.91 cuda:1|19.08
+[MultiGPU Model Management] 2025-09-28T16:55:28.157Z patched_load_models_gpu_post-original-call cpu|44.34 cuda:0|22.91 cuda:1|19.08
+100%|█████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 20/20 [00:13<00:00,  1.49it/s]
+[MultiGPU Model Management] 2025-09-28T16:55:41.636Z patched_load_models_gpu_start       cpu|44.29 cuda:0|22.91 cuda:1|19.08
+[MultiGPU Model Management] Incoming models summary: AutoencoderKL:0.16GB req on cuda:1
+[MultiGPU Model Management] 2025-09-28T16:55:41.638Z patched_load_models_gpu_pre-original-call cpu|44.29 cuda:0|22.91 cuda:1|19.08
+[MultiGPU Model Management] [MultiGPU_LoadedModel_Patch] Set base model Patcher 137952743397888.
+Requested to load AutoencoderKL
+[MultiGPU Model Management] 2025-09-28T16:55:41.755Z patched_soft_empty_start:force=False cpu|44.49 cuda:0|22.91 cuda:1|18.74
+[MultiGPU Model Management] 2025-09-28T16:55:41.755Z distorch_prune_start                cpu|44.49 cuda:0|22.91 cuda:1|18.74
+[MultiGPU Model Management] [PRUNE_DEBUG] Starting prune - current_loaded_models count: 7
+[MultiGPU Model Management] [PRUNE_DEBUG] Model 0: SDXL, keep_loaded=False, hash=5d907277, has_v2_allocation=False
+[MultiGPU Model Management] [PRUNE_DEBUG] Model 1: AutoencodingEngine, keep_loaded=False, hash=be20bc8e, has_v2_allocation=False
+[MultiGPU Model Management] [PRUNE_DEBUG] Model 2: Flux, keep_loaded=False, hash=d78780cf, has_v2_allocation=False
+[MultiGPU Model Management] [PRUNE_DEBUG] Model 3: FluxClipModel_, keep_loaded=False, hash=12b44a2d, has_v2_allocation=False
+[MultiGPU Model Management] [PRUNE_DEBUG] Model 4: Flux, keep_loaded=False, hash=72754c29, has_v2_allocation=False
+[MultiGPU Model Management] [PRUNE_DEBUG] Model 5: QwenImageTEModel_, keep_loaded=False, hash=9b313bd7, has_v2_allocation=False
+[MultiGPU Model Management] [PRUNE_DEBUG] Model 6: QwenImageTEModel_, keep_loaded=False, hash=34f9ab09, has_v2_allocation=False
+[MultiGPU Model Management] [PRUNE_DEBUG] Active hashes V2: 7, Store has: 0
+[MultiGPU Model Management] [PRUNE_DEBUG] No stale allocation entries to prune
+[MultiGPU Model Management] [PRUNE_DEBUG] No stale settings entries to prune
+[MultiGPU Model Management] [PRUNE_DEBUG] After pruning - V2 allocation store has: 0 entries
+[MultiGPU Model Management] 2025-09-28T16:55:41.804Z distorch_prune_end                  cpu|44.49 cuda:0|22.91 cuda:1|18.74
+[MultiGPU Model Management] [DETECT_DEBUG] Checking DisTorch2 active status - loaded models: 7, store entries: 4
+[MultiGPU Model Management] [DETECT_DEBUG] Model 0: SDXL, hash=5d907277, in_store=True, alloc_value='#cuda:0;1.1;cpu', keep_loaded=False
+[MultiGPU Model Management] [DETECT_DEBUG] DisTorch2 ACTIVE detected on model: SDXL
+[MultiGPU Model Management] [DETECT_DEBUG] Final DisTorch2 active status: True
+[MultiGPU Model Management] DisTorch2 active: clearing allocator caches on all devices (VRAM)
+[MultiGPU Model Management] soft_empty_cache_multigpu: starting GC and multi-device cache clear
+[MultiGPU Model Management] 2025-09-28T16:55:41.809Z general_pre-soft-empty              cpu|44.49 cuda:0|22.91 cuda:1|18.74
+[MultiGPU Model Management] 2025-09-28T16:55:41.810Z general_pre-gc                      cpu|44.49 cuda:0|22.91 cuda:1|18.74
+[MultiGPU_Lifecycle] [pre-gc] Tracked ModelPatchers=27, approx CPU RAM=61393.56 MB
+[MultiGPU_Lifecycle] [post-gc] Tracked ModelPatchers=27, approx CPU RAM=61393.56 MB
+[MultiGPU Model Management] 2025-09-28T16:55:42.078Z general_post-gc                     cpu|44.48 cuda:0|22.91 cuda:1|18.74
+[MultiGPU Model Management] soft_empty_cache_multigpu: garbage collection complete
+[MultiGPU_Memory_Management] malloc_trim(0) begin
+[MultiGPU Model Management] 2025-09-28T16:55:42.079Z mem_mgmt_pre-malloc-trim            cpu|44.48 cuda:0|22.91 cuda:1|18.74
+[MultiGPU Model Management] 2025-09-28T16:55:42.136Z mem_mgmt_post-malloc-trim           cpu|42.20 cuda:0|22.91 cuda:1|18.74
+[MultiGPU_Memory_Management] malloc_trim(0) released memory
+[MultiGPU Model Management] soft_empty_cache_multigpu: devices to clear = ['cpu', 'cuda:0', 'cuda:1']
+[MultiGPU Model Management] Clearing CUDA cache on cuda:0 (idx=0)
+[MultiGPU Model Management] 2025-09-28T16:55:42.136Z general_pre-empty:cuda:0            cpu|42.20 cuda:0|22.91 cuda:1|18.74
+[MultiGPU Model Management] Cleared CUDA cache (and IPC if available) on cuda:0
+[MultiGPU Model Management] 2025-09-28T16:55:42.149Z general_post-empty:cuda:0           cpu|42.20 cuda:0|22.91 cuda:1|18.74
+[MultiGPU Model Management] Clearing CUDA cache on cuda:1 (idx=1)
+[MultiGPU Model Management] 2025-09-28T16:55:42.150Z general_pre-empty:cuda:1            cpu|42.20 cuda:0|22.91 cuda:1|18.74
+[MultiGPU Model Management] Cleared CUDA cache (and IPC if available) on cuda:1
+[MultiGPU Model Management] 2025-09-28T16:55:42.150Z general_post-empty:cuda:1           cpu|42.20 cuda:0|22.91 cuda:1|18.74
+[MultiGPU Model Management] 2025-09-28T16:55:42.151Z general_post-soft-empty             cpu|42.20 cuda:0|22.91 cuda:1|18.74
+[MultiGPU Model Management] 2025-09-28T16:55:42.151Z patched_soft_empty_end              cpu|42.20 cuda:0|22.91 cuda:1|18.74
+[MultiGPU Model Management] 2025-09-28T16:55:42.153Z safetensor:626f5bc4_pre-load        cpu|42.20 cuda:0|22.91 cuda:1|18.74
+loaded completely 179.03548431396484 159.55708122253418 True
+[MultiGPU Model Management] 2025-09-28T16:55:42.195Z safetensor:626f5bc4_post-load       cpu|42.20 cuda:0|22.91 cuda:1|18.90
+[MultiGPU Model Management] 2025-09-28T16:55:42.195Z patched_load_models_gpu_post-original-call cpu|42.20 cuda:0|22.91 cuda:1|18.90
+Prompt executed in 327.39 seconds
+[MultiGPU Model Management] [UNLOAD_DEBUG] Patched unload_all_models called - initial model count: 8
+[MultiGPU Model Management] [UNLOAD_DEBUG] Model 0: AutoencoderKL, keep_loaded=False
+[MultiGPU Model Management] [UNLOAD_DEBUG] Adding to kept_models: AutoencoderKL
+[MultiGPU Model Management] [GC_ANCHOR] Added retention anchor for AutoencoderKL, reason: keep_loaded_test, total anchors: 1
+[MultiGPU Model Management] [UNLOAD_DEBUG] Model 1: SDXL, keep_loaded=False
+[MultiGPU Model Management] [UNLOAD_DEBUG] Adding to kept_models: SDXL
+[MultiGPU Model Management] [GC_ANCHOR] Added retention anchor for SDXL, reason: keep_loaded_test, total anchors: 2
+[MultiGPU Model Management] [UNLOAD_DEBUG] Model 2: AutoencodingEngine, keep_loaded=False
+[MultiGPU Model Management] [UNLOAD_DEBUG] Adding to kept_models: AutoencodingEngine
+[MultiGPU Model Management] [GC_ANCHOR] Added retention anchor for AutoencodingEngine, reason: keep_loaded_test, total anchors: 3
+[MultiGPU Model Management] [UNLOAD_DEBUG] Model 3: Flux, keep_loaded=False
+[MultiGPU Model Management] [UNLOAD_DEBUG] Adding to kept_models: Flux
+[MultiGPU Model Management] [GC_ANCHOR] Added retention anchor for Flux, reason: keep_loaded_test, total anchors: 4
+[MultiGPU Model Management] [UNLOAD_DEBUG] Model 4: FluxClipModel_, keep_loaded=False
+[MultiGPU Model Management] [UNLOAD_DEBUG] Adding to kept_models: FluxClipModel_
+[MultiGPU Model Management] [GC_ANCHOR] Added retention anchor for FluxClipModel_, reason: keep_loaded_test, total anchors: 5
+[MultiGPU Model Management] [UNLOAD_DEBUG] Model 5: Flux, keep_loaded=False
+[MultiGPU Model Management] [UNLOAD_DEBUG] Adding to kept_models: Flux
+[MultiGPU Model Management] [GC_ANCHOR] Added retention anchor for Flux, reason: keep_loaded_test, total anchors: 6
+[MultiGPU Model Management] [UNLOAD_DEBUG] Model 6: QwenImageTEModel_, keep_loaded=False
+[MultiGPU Model Management] [UNLOAD_DEBUG] Adding to kept_models: QwenImageTEModel_
+[MultiGPU Model Management] [GC_ANCHOR] Added retention anchor for QwenImageTEModel_, reason: keep_loaded_test, total anchors: 7
+[MultiGPU Model Management] [UNLOAD_DEBUG] Model 7: QwenImageTEModel_, keep_loaded=False
+[MultiGPU Model Management] [UNLOAD_DEBUG] Adding to kept_models: QwenImageTEModel_
+[MultiGPU Model Management] [GC_ANCHOR] Added retention anchor for QwenImageTEModel_, reason: keep_loaded_test, total anchors: 8
+[MultiGPU Model Management] [UNLOAD_DEBUG] Final counts - kept_models: 8, models_to_unload: 0
+[MultiGPU Model Management] Found 8 model(s) to retain, unloading 0 model(s)
+[MultiGPU Model Management] [UNLOAD_DEBUG] Updated mm.current_loaded_models, new count: 8
+[MultiGPU Model Management] Successfully retained 8 model(s) during unload
+[MultiGPU Model Management] [MultiGPU_LoadedModel_Patch] Clone Patcher 137950125562944 GC'd. LoadedModel already gone or missing _switch_parent.
+[MultiGPU Model Management] 2025-09-28T16:55:43.520Z patched_soft_empty_start:force=False cpu|23.56 cuda:0|22.91 cuda:1|18.90
+[MultiGPU Model Management] 2025-09-28T16:55:43.524Z distorch_prune_start                cpu|23.56 cuda:0|22.91 cuda:1|18.90
+[MultiGPU Model Management] [PRUNE_DEBUG] Starting prune - current_loaded_models count: 8
+[MultiGPU Model Management] [PRUNE_DEBUG] Model 0: AutoencoderKL, keep_loaded=False, hash=626f5bc4, has_v2_allocation=False
+[MultiGPU Model Management] [PRUNE_DEBUG] Model 1: SDXL, keep_loaded=False, hash=5d907277, has_v2_allocation=False
+[MultiGPU Model Management] [PRUNE_DEBUG] Model 2: AutoencodingEngine, keep_loaded=False, hash=be20bc8e, has_v2_allocation=False
+[MultiGPU Model Management] [PRUNE_DEBUG] Model 3: Flux, keep_loaded=False, hash=d78780cf, has_v2_allocation=False
+[MultiGPU Model Management] [PRUNE_DEBUG] Model 4: FluxClipModel_, keep_loaded=False, hash=12b44a2d, has_v2_allocation=False
+[MultiGPU Model Management] [PRUNE_DEBUG] Model 5: Flux, keep_loaded=False, hash=72754c29, has_v2_allocation=False
+[MultiGPU Model Management] [PRUNE_DEBUG] Model 6: QwenImageTEModel_, keep_loaded=False, hash=9b313bd7, has_v2_allocation=False
+[MultiGPU Model Management] [PRUNE_DEBUG] Model 7: QwenImageTEModel_, keep_loaded=False, hash=34f9ab09, has_v2_allocation=False
+[MultiGPU Model Management] [PRUNE_DEBUG] Active hashes V2: 8, Store has: 0
+[MultiGPU Model Management] [PRUNE_DEBUG] No stale allocation entries to prune
+[MultiGPU Model Management] [PRUNE_DEBUG] No stale settings entries to prune
+[MultiGPU Model Management] [PRUNE_DEBUG] After pruning - V2 allocation store has: 0 entries
+[MultiGPU Model Management] 2025-09-28T16:55:43.598Z distorch_prune_end                  cpu|23.56 cuda:0|22.91 cuda:1|18.90
+[MultiGPU Model Management] [DETECT_DEBUG] Checking DisTorch2 active status - loaded models: 8, store entries: 4
+[MultiGPU Model Management] [DETECT_DEBUG] Model 0: AutoencoderKL, hash=626f5bc4, in_store=False, alloc_value='', keep_loaded=False
+[MultiGPU Model Management] [DETECT_DEBUG] Model 1: SDXL, hash=5d907277, in_store=True, alloc_value='#cuda:0;1.1;cpu', keep_loaded=False
+[MultiGPU Model Management] [DETECT_DEBUG] DisTorch2 ACTIVE detected on model: SDXL
+[MultiGPU Model Management] [DETECT_DEBUG] Final DisTorch2 active status: True
+[MultiGPU Model Management] DisTorch2 active: clearing allocator caches on all devices (VRAM)
+[MultiGPU Model Management] soft_empty_cache_multigpu: starting GC and multi-device cache clear
+[MultiGPU Model Management] 2025-09-28T16:55:43.607Z general_pre-soft-empty              cpu|23.56 cuda:0|22.91 cuda:1|18.90
+[MultiGPU Model Management] 2025-09-28T16:55:43.608Z general_pre-gc                      cpu|23.56 cuda:0|22.91 cuda:1|18.90
+[MultiGPU_Lifecycle] [pre-gc] Tracked ModelPatchers=13, approx CPU RAM=9581.31 MB
+[MultiGPU_Lifecycle] [post-gc] Tracked ModelPatchers=13, approx CPU RAM=9581.31 MB
+[MultiGPU Model Management] 2025-09-28T16:55:43.929Z general_post-gc                     cpu|23.54 cuda:0|22.91 cuda:1|18.90
+[MultiGPU Model Management] soft_empty_cache_multigpu: garbage collection complete
+[MultiGPU_Memory_Management] malloc_trim(0) begin
+[MultiGPU Model Management] 2025-09-28T16:55:43.931Z mem_mgmt_pre-malloc-trim            cpu|23.54 cuda:0|22.91 cuda:1|18.90
+[MultiGPU Model Management] 2025-09-28T16:55:44.319Z mem_mgmt_post-malloc-trim           cpu|10.43 cuda:0|22.91 cuda:1|18.90
+[MultiGPU_Memory_Management] malloc_trim(0) released memory
+[MultiGPU Model Management] soft_empty_cache_multigpu: devices to clear = ['cpu', 'cuda:0', 'cuda:1']
+[MultiGPU Model Management] Clearing CUDA cache on cuda:0 (idx=0)
+[MultiGPU Model Management] 2025-09-28T16:55:44.320Z general_pre-empty:cuda:0            cpu|10.43 cuda:0|22.91 cuda:1|18.90
+[MultiGPU Model Management] Cleared CUDA cache (and IPC if available) on cuda:0
+[MultiGPU Model Management] 2025-09-28T16:55:44.391Z general_post-empty:cuda:0           cpu|10.41 cuda:0|22.91 cuda:1|18.90
+[MultiGPU Model Management] Clearing CUDA cache on cuda:1 (idx=1)
+[MultiGPU Model Management] 2025-09-28T16:55:44.391Z general_pre-empty:cuda:1            cpu|10.41 cuda:0|22.91 cuda:1|18.90
+[MultiGPU Model Management] Cleared CUDA cache (and IPC if available) on cuda:1
+[MultiGPU Model Management] 2025-09-28T16:55:44.392Z general_post-empty:cuda:1           cpu|10.41 cuda:0|22.91 cuda:1|18.90
+[MultiGPU Model Management] 2025-09-28T16:55:44.392Z general_post-soft-empty             cpu|10.41 cuda:0|22.91 cuda:1|18.90
+[MultiGPU Model Management] 2025-09-28T16:55:44.393Z patched_soft_empty_end              cpu|10.41 cuda:0|22.91 cuda:1|18.90
