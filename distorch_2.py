@@ -17,7 +17,7 @@ from collections import defaultdict
 import comfy.model_management as mm
 import comfy.model_patcher
 from .device_utils import get_device_list, soft_empty_cache_multigpu
-from .model_management_mgpu import multigpu_memory_log
+from .model_management_mgpu import multigpu_memory_log, force_full_system_cleanup
 
 
 safetensor_allocation_store = {}
@@ -942,6 +942,9 @@ def override_class_with_distorch_safetensor_v2(cls):
                 logger.mgpu_mm_log(f"[PHASE 1] model {out[0].patcher.model.__class__.__name__}'_mgpu_unload_distorch_model set to: {unload_distorch_model}")
                 out[0].patcher.model._mgpu_unload_distorch_model = unload_distorch_model
 
+            if unload_distorch_model:
+                force_full_system_cleanup(reason="policy_every_load", force=True)
+
             return out
 
     return NodeOverrideDisTorchSafetensorV2
@@ -1050,6 +1053,9 @@ def override_class_with_distorch_safetensor_v2_clip(cls):
                 safetensor_allocation_store[model_hash] = full_allocation
                 safetensor_settings_store[model_hash] = settings_hash
 
+            if unload_distorch_model:
+                force_full_system_cleanup(reason="policy_every_load", force=True)
+
             return out
 
     return NodeOverrideDisTorchSafetensorV2Clip
@@ -1153,6 +1159,9 @@ def override_class_with_distorch_safetensor_v2_clip_no_device(cls):
                 # Store allocation for next time
                 safetensor_allocation_store[model_hash] = full_allocation
                 safetensor_settings_store[model_hash] = settings_hash
+
+            if unload_distorch_model:
+                force_full_system_cleanup(reason="policy_every_load", force=True)
 
             return out
 
