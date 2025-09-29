@@ -868,9 +868,16 @@ def override_class_with_distorch_safetensor_v2(cls):
         @classmethod
         def IS_CHANGED(s, *args, compute_device=None, virtual_vram_gb=4.0,
                        donor_device="cpu", expert_mode_allocations="", keep_loaded=True, **kwargs):
-            # Create a hash of our specific settings
             settings_str = f"{compute_device}{virtual_vram_gb}{donor_device}{expert_mode_allocations}{keep_loaded}"
-            return hashlib.sha256(settings_str.encode()).hexdigest()
+            current_hash = hashlib.sha256(settings_str.encode()).hexdigest()
+
+            if not hasattr(cls, '_last_hash'):
+                cls._last_hash = current_hash
+                logger.mgpu_mm_log(f"IS_CHANGED first call: {current_hash[:8]}")
+            elif cls._last_hash != current_hash:
+                cls._last_hash = current_hash
+                logger.mgpu_mm_log(f"IS_CHANGED CHANGED: {current_hash[:8]} ← settings changed")
+            return current_hash
 
         def override(self, *args, compute_device=None, virtual_vram_gb=4.0,
                      donor_device="cpu", expert_mode_allocations="", keep_loaded=True, **kwargs):
@@ -967,7 +974,15 @@ def override_class_with_distorch_safetensor_v2_clip(cls):
                        donor_device="cpu", expert_mode_allocations="", keep_loaded=True, **kwargs):
             # Create a hash of our specific settings
             settings_str = f"{device}{virtual_vram_gb}{donor_device}{expert_mode_allocations}{keep_loaded}"  # Changed from compute_device
-            return hashlib.sha256(settings_str.encode()).hexdigest()
+            current_hash = hashlib.sha256(settings_str.encode()).hexdigest()
+
+            if not hasattr(cls, '_last_hash'):
+                cls._last_hash = current_hash
+                logger.mgpu_mm_log(f"IS_CHANGED first call: {current_hash[:8]}")
+            elif cls._last_hash != current_hash:
+                cls._last_hash = current_hash
+                logger.mgpu_mm_log(f"IS_CHANGED CHANGED: {current_hash[:8]} ← settings changed")
+            return current_hash
 
         def override(self, *args, device=None, virtual_vram_gb=4.0,  # Changed from compute_device
                      donor_device="cpu", expert_mode_allocations="", keep_loaded=True, **kwargs):
@@ -1066,8 +1081,15 @@ def override_class_with_distorch_safetensor_v2_clip_no_device(cls):
                        donor_device="cpu", expert_mode_allocations="", keep_loaded=True, **kwargs):
             # Create a hash of our specific settings
             settings_str = f"{device}{virtual_vram_gb}{donor_device}{expert_mode_allocations}{keep_loaded}"  # Changed from compute_device
-            return hashlib.sha256(settings_str.encode()).hexdigest()
+            current_hash = hashlib.sha256(settings_str.encode()).hexdigest()
 
+            if not hasattr(cls, '_last_hash'):
+                cls._last_hash = current_hash
+                logger.mgpu_mm_log(f"IS_CHANGED first call: {current_hash[:8]}")
+            elif cls._last_hash != current_hash:
+                cls._last_hash = current_hash
+                logger.mgpu_mm_log(f"IS_CHANGED CHANGED: {current_hash[:8]} ← settings changed")
+            return current_hash
         def override(self, *args, device=None, virtual_vram_gb=4.0,  # Changed from compute_device
                      donor_device="cpu", expert_mode_allocations="", keep_loaded=True, **kwargs):
 
