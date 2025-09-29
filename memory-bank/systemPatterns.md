@@ -341,7 +341,6 @@ def benchmark_allocation_performance(model, hardware_config, allocation_configs)
 - Model lifecycle tracking (`track_modelpatcher`)
 - Memory logging (`multigpu_memory_log`) 
 - System cleanup (`force_full_system_cleanup`, `trigger_executor_cache_reset`)
-- Store pruning (`prune_distorch_stores`)
 
 **distorch_2.py/distorch.py** (Feature Layer):
 - DisTorch distribution algorithms
@@ -386,8 +385,6 @@ def benchmark_allocation_performance(model, hardware_config, allocation_configs)
 - `track_modelpatcher` - ModelPatcher lifecycle tracking  
 - `trigger_executor_cache_reset` - CPU memory management
 - `check_cpu_memory_threshold` - Adaptive cleanup triggers
-- `prune_distorch_stores` - Store cleanup utilities
-- `try_malloc_trim` - System memory reclamation
 - `force_full_system_cleanup` - Full system reset
 
 **Rationale**: These functions manage model lifecycle and memory state, not hardware detection. Separation prevents circular dependencies while maintaining clean responsibilities.

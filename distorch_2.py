@@ -17,7 +17,8 @@ from collections import defaultdict
 import comfy.model_management as mm
 import comfy.model_patcher
 from .device_utils import get_device_list, soft_empty_cache_multigpu
-from .model_management_mgpu import multigpu_memory_log, track_modelpatcher
+from .model_management_mgpu import multigpu_memory_log
+
 
 safetensor_allocation_store = {}
 safetensor_settings_store = {}
@@ -58,8 +59,7 @@ def register_patched_safetensor_modelpatcher():
     # Patch ComfyUI's ModelPatcher
     if not hasattr(comfy.model_patcher.ModelPatcher, '_distorch_patched'):
 
-        # Patch LoadedModel.model_memory_required to drive behavior purely by keep_loaded flag
-        # This ensures precise control over unload behavior without further core patching
+        # Patch LoadedModel.model_memory_required to drive behavior purely by Phase 2 = unload_distorch_model flag
         from comfy.model_management import current_loaded_models
 
         original_loaded_model_memory_required = None
@@ -70,48 +70,40 @@ def register_patched_safetensor_modelpatcher():
 
         if original_loaded_model_memory_required is None:
             # Global patch of LoadedModel class if available
-            try:
-                import comfy.model_management as mm
-                if hasattr(mm, 'LoadedModel'):
-                    original_loaded_model_memory_required = mm.LoadedModel.model_memory_required
+            import comfy.model_management as mm
 
-                    def patched_loaded_model_memory_required(self, device):
-                        """Drive unload behavior purely by keep_loaded flag"""
-                        multigpu_memory_log("keep_loaded_memory_check", "start")
-                        logger.mgpu_mm_log(f"[KEEP_LOADED_DEBUG] Memory assessment requested for model on device: {device}")
+            original_loaded_model_memory_required = mm.LoadedModel.model_memory_required
 
-                        # Check if this is a DisTorch model with keep_loaded flag
-                        keep_loaded = getattr(getattr(self, 'model', None), '_mgpu_keep_loaded', None)
+            def patched_loaded_model_memory_required(self, device):
+                """Drive unload behavior purely by unload_distorch_model flag"""
+                multigpu_memory_log("unload_distorch_model_memory_check", "start")
+                logger.mgpu_mm_log(f"[IS_DISTORCH_MODEL] Memory assessment requested for model on device: {device}")
 
-                        if keep_loaded is not None:
-                            # This is a DisTorch model - log the decision
-                            model_name = type(getattr(self, 'model', mp)).__name__ if getattr(self, 'model', None) else "Unknown"
-                            logger.mgpu_mm_log(f"[KEEP_LOADED_DEBUG] DisTorch model: {model_name}, keep_loaded={keep_loaded}")
+                # Check if this is a DisTorch model with unload_distorch_model flag
+                is_distorch_model = hasattr(getattr(getattr(self, 'model', None), 'model', None), '_mgpu_unload_distorch_model')
 
-                        if keep_loaded is True:
-                            logger.mgpu_mm_log("[KEEP_LOADED_DEBUG] keep_loaded=True - Reporting 0 bytes (prevents eviction)")
-                            multigpu_memory_log("keep_loaded_memory_check", "prevents_eviction")
-                            return 0
-                        elif keep_loaded is False:
-                            # keep_loaded=False: return full device memory to guarantee eviction
-                            total_device_memory = mm.get_total_memory(device)
-                            memory_gb = total_device_memory / (1024**3)
-                            logger.mgpu_mm_log(f"[KEEP_LOADED_DEBUG] keep_loaded=False - Reporting MAX memory ({memory_gb:.2f}GB) to force complete eviction")
-                            multigpu_memory_log("keep_loaded_memory_check", f"forces_eviction:{memory_gb:.2f}gb")
-                            return total_device_memory
+                model_name = type(getattr(getattr(self, 'model', None), 'model', None)).__name__ if getattr(getattr(self, 'model', None), 'model', None) else "Unknown"
+                logger.mgpu_mm_log(f"[IS_DISTORCH_MODEL] DisTorch model: {model_name}, is_distorch_model={is_distorch_model}")
 
-                        # Not a DisTorch model - use original behavior
-                        logger.mgpu_mm_log("[KEEP_LOADED_DEBUG] Non-DisTorch model - Using original Comfy memory calculation")
-                        original_result = original_loaded_model_memory_required(self, device)
-                        original_gb = original_result / (1024**3) if original_result else 0
-                        logger.mgpu_mm_log(f"[KEEP_LOADED_DEBUG] Original calculation returned: {original_gb:.2f}GB")
-                        multigpu_memory_log("keep_loaded_memory_check", "end")
-                        return original_result
+                if is_distorch_model:
+                    if self.model.model._mgpu_unload_distorch_model:
+                        total_device_memory = mm.get_total_memory(device)
+                        memory_gb = total_device_memory / (1024**3)
+                        logger.mgpu_mm_log(f"[IS_DISTORCH_MODEL] _mgpu_unload_distorch_model=True - Reporting MAX memory ({memory_gb:.2f}GB) to force complete eviction")
+                        return total_device_memory
+                    else:
+                        logger.mgpu_mm_log("[IS_DISTORCH_MODEL] _mgpu_unload_distorch_model=False - Reporting 0 bytes (prevents eviction)")
+                        return 0
 
-                    mm.LoadedModel.model_memory_required = patched_loaded_model_memory_required
+                # Not a DisTorch model - use original behavior
+                logger.mgpu_mm_log("[IS_DISTORCH_MODEL] Non-DisTorch model - Using original Comfy memory calculation")
+                original_result = original_loaded_model_memory_required(self, device)
+                original_gb = original_result / (1024**3) if original_result else 0
+                logger.mgpu_mm_log(f"[IS_DISTORCH_MODEL] Original calculation returned: {original_gb:.2f}GB")
+                multigpu_memory_log("keep_loaded_memory_check", "end")
+                return original_result
 
-            except (ImportError, AttributeError):
-                logging.warning("[MultiGPU DisTorch] Could not patch LoadedModel.model_memory_required - unload behavior may be inconsistent")
+            mm.LoadedModel.model_memory_required = patched_loaded_model_memory_required
 
         original_partially_load = comfy.model_patcher.ModelPatcher.partially_load
 
@@ -133,12 +125,6 @@ def register_patched_safetensor_modelpatcher():
                 if hasattr(self, '_distorch_block_assignments'):
                     del self._distorch_block_assignments
                 return result
-
-            # Track active DisTorch2 ModelPatcher lifecycle for leak diagnostics
-            try:
-                track_modelpatcher(self)
-            except Exception:
-                pass
 
             if not hasattr(self.model, 'current_weight_patches_uuid'):
                 self.model.current_weight_patches_uuid = None
@@ -889,6 +875,17 @@ def override_class_with_distorch_safetensor_v2(cls):
         def override(self, *args, compute_device=None, virtual_vram_gb=4.0,
                      donor_device="cpu", expert_mode_allocations="", keep_loaded=True, **kwargs):
 
+            from . import DISTORCH2_UNLOAD_MODEL
+
+            logger.mgpu_mm_log(f"[PHASE 1] DISTORCH2_UNLOAD_MODEL INITIAL SETTING ={DISTORCH2_UNLOAD_MODEL}")
+
+            unload_distorch_model = not keep_loaded
+
+            if unload_distorch_model:
+                logger.mgpu_mm_log("[PHASE 1] DisTorch2 with keep_loaded=False. Setting DISTORCH2_UNLOAD_MODEL=True")
+                DISTORCH2_UNLOAD_MODEL = True
+                logger.mgpu_mm_log(f"[PHASE 1] DISTORCH2_UNLOAD_MODEL UPDATED SETTING ={DISTORCH2_UNLOAD_MODEL}")
+
             from . import set_current_device
             if compute_device is not None:
                 set_current_device(compute_device)
@@ -928,11 +925,15 @@ def override_class_with_distorch_safetensor_v2(cls):
 
             logger.info(f"[MultiGPU DisTorch V2] Full allocation string: {full_allocation}")
 
-            # Store keep_loaded in the model for later retrieval by unload_all_models patch
+            logger.mgpu_mm_log(f"[PHASE 1] Tracking setting of '_mgpu_unload_distorch_model to unload_distorch_model: {unload_distorch_model}")
+
+            # Store unload_distorch_model in the model for later retrieval by unload_all_models patch
             if hasattr(out[0], 'model'):
-                out[0].model._mgpu_keep_loaded = keep_loaded
+                logger.mgpu_mm_log(f"[PHASE 1] model {out[0].model.__class__.__name__}'_mgpu_unload_distorch_model set to: {unload_distorch_model}")
+                out[0].model._mgpu_unload_distorch_model = unload_distorch_model
             elif hasattr(out[0], 'patcher') and hasattr(out[0].patcher, 'model'):
-                out[0].patcher.model._mgpu_keep_loaded = keep_loaded
+                logger.mgpu_mm_log(f"[PHASE 1] model {out[0].patcher.model.__class__.__name__}'_mgpu_unload_distorch_model set to: {unload_distorch_model}")
+                out[0].patcher.model._mgpu_unload_distorch_model = unload_distorch_model
 
             return out
 
@@ -971,6 +972,17 @@ def override_class_with_distorch_safetensor_v2_clip(cls):
         def override(self, *args, device=None, virtual_vram_gb=4.0,  # Changed from compute_device
                      donor_device="cpu", expert_mode_allocations="", keep_loaded=True, **kwargs):
 
+            from . import DISTORCH2_UNLOAD_MODEL
+
+            logger.mgpu_mm_log(f"[PHASE 1] DISTORCH2_UNLOAD_MODEL INITIAL SETTING ={DISTORCH2_UNLOAD_MODEL}")
+
+            unload_distorch_model = not keep_loaded
+
+            if unload_distorch_model:
+                logger.mgpu_mm_log("[PHASE 1] DisTorch2 with keep_loaded=False. Setting DISTORCH2_UNLOAD_MODEL=True")
+                DISTORCH2_UNLOAD_MODEL = True
+                logger.mgpu_mm_log(f"[PHASE 1] DISTORCH2_UNLOAD_MODEL UPDATED SETTING ={DISTORCH2_UNLOAD_MODEL}")
+
             from . import set_current_text_encoder_device  # Use text encoder device setter
             if device is not None:
                 set_current_text_encoder_device(device)
@@ -987,10 +999,15 @@ def override_class_with_distorch_safetensor_v2_clip(cls):
             out = fn(*args, **kwargs)
 
             # Store keep_loaded in the model for later retrieval by unload_all_models patch
+            logger.mgpu_mm_log(f"[PHASE 1] Tracking setting of '_mgpu_unload_distorch_model to unload_distorch_model: {unload_distorch_model}")
+
+            # Store unload_distorch_model in the model for later retrieval by unload_all_models patch
             if hasattr(out[0], 'model'):
-                out[0].model._mgpu_keep_loaded = keep_loaded
+                logger.mgpu_mm_log(f"[PHASE 1] model {out[0].model.__class__.__name__}'_mgpu_unload_distorch_model set to: {unload_distorch_model}")
+                out[0].model._mgpu_unload_distorch_model = unload_distorch_model
             elif hasattr(out[0], 'patcher') and hasattr(out[0].patcher, 'model'):
-                out[0].patcher.model._mgpu_keep_loaded = keep_loaded
+                logger.mgpu_mm_log(f"[PHASE 1] model {out[0].patcher.model.__class__.__name__}'_mgpu_unload_distorch_model set to: {unload_distorch_model}")
+                out[0].patcher.model._mgpu_unload_distorch_model = unload_distorch_model
 
             vram_string = ""
             if virtual_vram_gb > 0:
@@ -1054,6 +1071,18 @@ def override_class_with_distorch_safetensor_v2_clip_no_device(cls):
         def override(self, *args, device=None, virtual_vram_gb=4.0,  # Changed from compute_device
                      donor_device="cpu", expert_mode_allocations="", keep_loaded=True, **kwargs):
 
+            from . import DISTORCH2_UNLOAD_MODEL
+
+            logger.mgpu_mm_log(f"[PHASE 1] DISTORCH2_UNLOAD_MODEL INITIAL SETTING ={DISTORCH2_UNLOAD_MODEL}")
+
+            unload_distorch_model = not keep_loaded
+
+            if unload_distorch_model:
+                logger.mgpu_mm_log("[PHASE 1] DisTorch2 with keep_loaded=False. Setting DISTORCH2_UNLOAD_MODEL=True")
+                DISTORCH2_UNLOAD_MODEL = True
+                logger.mgpu_mm_log(f"[PHASE 1] DISTORCH2_UNLOAD_MODEL UPDATED SETTING ={DISTORCH2_UNLOAD_MODEL}")
+
+
             from . import set_current_text_encoder_device  # Use text encoder device setter
             if device is not None:
                 set_current_text_encoder_device(device)
@@ -1067,11 +1096,15 @@ def override_class_with_distorch_safetensor_v2_clip_no_device(cls):
             # Call the main function once
             out = fn(*args, **kwargs)
 
-            # Store keep_loaded in the model for later retrieval by unload_all_models patch
+            logger.mgpu_mm_log(f"[PHASE 1] Tracking setting of '_mgpu_unload_distorch_model to unload_distorch_model: {unload_distorch_model}")
+
+            # Store unload_distorch_model in the model for later retrieval by unload_all_models patch
             if hasattr(out[0], 'model'):
-                out[0].model._mgpu_keep_loaded = keep_loaded
+                logger.mgpu_mm_log(f"[PHASE 1] model {out[0].model.__class__.__name__}'_mgpu_unload_distorch_model set to: {unload_distorch_model}")
+                out[0].model._mgpu_unload_distorch_model = unload_distorch_model
             elif hasattr(out[0], 'patcher') and hasattr(out[0].patcher, 'model'):
-                out[0].patcher.model._mgpu_keep_loaded = keep_loaded
+                logger.mgpu_mm_log(f"[PHASE 1] model {out[0].patcher.model.__class__.__name__}'_mgpu_unload_distorch_model set to: {unload_distorch_model}")
+                out[0].patcher.model._mgpu_unload_distorch_model = unload_distorch_model
 
             vram_string = ""
             if virtual_vram_gb > 0:

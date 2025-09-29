@@ -223,19 +223,11 @@ def soft_empty_cache_multigpu():
     Uses context managers to ensure the calling thread's device context is restored.
     """
     # Import model management functions
-    from .model_management_mgpu import multigpu_memory_log, log_tracked_modelpatchers_status, try_malloc_trim
+    from .model_management_mgpu import multigpu_memory_log
     
     logger.mgpu_mm_log("soft_empty_cache_multigpu: starting GC and multi-device cache clear")
-    multigpu_memory_log("general", "pre-soft-empty")
 
-    multigpu_memory_log("general", "pre-gc")
-    log_tracked_modelpatchers_status(tag="pre-gc")
     gc.collect()
-    log_tracked_modelpatchers_status(tag="post-gc")
-    multigpu_memory_log("general", "post-gc")
-    logger.mgpu_mm_log("soft_empty_cache_multigpu: garbage collection complete")
-
-    try_malloc_trim()
 
     # Clear cache for ALL devices (not just ComfyUI's single device)
     all_devices = get_device_list()
