@@ -217,6 +217,45 @@ def force_full_system_cleanup(reason="manual", force=True):
     return summary
 
 # ==========================================================================================
+# Core Patching: soft_empty_cache (Instrumentation)
+# ==========================================================================================
+
+if not hasattr(mm.soft_empty_cache, '_mgpu_instrumented'):
+    logger.info("[MultiGPU Core Patching] Instrumenting mm.soft_empty_cache for diagnostics")
+    
+    _mgpu_original_soft_empty_cache = mm.soft_empty_cache
+    
+    def _mgpu_instrumented_soft_empty_cache(force=False):
+        """Instrumented soft_empty_cache to track what it does to mm.current_loaded_models"""
+        models_before = len(mm.current_loaded_models)
+        logger.mgpu_mm_log(f"[SOFT_EMPTY_ENTRY] Original mm.soft_empty_cache called, models_before={models_before}, force={force}")
+        
+        # Log the models present before calling original
+        for i, lm in enumerate(mm.current_loaded_models):
+            mp = lm.model
+            inner_model = getattr(mp, 'model', None)
+            model_name = type(inner_model).__name__ if inner_model else "None"
+            logger.mgpu_mm_log(f"[SOFT_EMPTY_ENTRY] Model {i} before: {model_name} (lm_id=0x{id(lm):x})")
+        
+        # Call original
+        result = _mgpu_original_soft_empty_cache(force)
+        
+        # Check what happened to models
+        models_after = len(mm.current_loaded_models)
+        logger.mgpu_mm_log(f"[SOFT_EMPTY_EXIT] Original mm.soft_empty_cache returned, models_after={models_after} (delta={models_after - models_before})")
+        
+        if models_after != models_before:
+            logger.mgpu_mm_log(f"[SOFT_EMPTY_CULPRIT] Original mm.soft_empty_cache MODIFIED mm.current_loaded_models: {models_before} → {models_after}")
+            
+        return result
+    
+    mm.soft_empty_cache = _mgpu_instrumented_soft_empty_cache
+    mm.soft_empty_cache._mgpu_instrumented = True
+    logger.info("[MultiGPU Core Patching] mm.soft_empty_cache instrumented successfully")
+else:
+    logger.debug("[MultiGPU Core Patching] mm.soft_empty_cache already instrumented - skipping")
+
+# ==========================================================================================
 # Core Patching: unload_all_models
 # ==========================================================================================
 
@@ -227,11 +266,10 @@ if not hasattr(mm.unload_all_models, '_mgpu_eject_distorch_patched'):
     
     def _mgpu_patched_unload_all_models():
         """
-        Patched mm.unload_all_models that checks to see if the .
-        All other models (including DisTorch models without the flag) unload normally.
+        Patched mm.unload_all_models with comprehensive diagnostics and fixed path alignment.
         """
 
-        logger.mgpu_mm_log(f"[Phase 2 Debug] Patched unload_all_models called - initial model count: {len(mm.current_loaded_models)}")
+        logger.mgpu_mm_log(f"[UNLOAD_START] Patched unload_all_models called - initial model count: {len(mm.current_loaded_models)}")
 
         # Direct approach: iterate through loaded models and selectively unload
         models_to_unload = []
@@ -239,48 +277,93 @@ if not hasattr(mm.unload_all_models, '_mgpu_eject_distorch_patched'):
         
         for i, lm in enumerate(mm.current_loaded_models):
             mp = lm.model  # weakref call to ModelPatcher
-
-            unload_distorch_model = getattr(mp.model, '_mgpu_unload_distorch_model', False)
-            model_name = type(getattr(mp, 'model', mp)).__name__
-            logger.mgpu_mm_log(f"[Phase 3 Debug] Model {i}: {model_name}, unload_distorch_model={unload_distorch_model}")
             
-            # Retain models that either:
-            # 1. Are non-DisTorch models (missing _mgpu_keep_loaded attribute)
-            # 2. Are DisTorch models with keep_loaded=True
-
+            # DIAGNOSTIC: Log full object chain
+            lm_id = id(lm)
+            mp_id = id(mp)
+            inner_model = getattr(mp, 'model', None)
+            inner_model_id = id(inner_model) if inner_model else None
+            inner_model_name = type(inner_model).__name__ if inner_model else "None"
+            
+            # Format inner_model_id properly for f-string
+            inner_id_str = f"0x{inner_model_id:x}" if inner_model_id is not None else "None"
+            
+            logger.mgpu_mm_log(f"[OBJECT_CHAIN_READ] Model {i}: lm_id=0x{lm_id:x}, mp_id=0x{mp_id:x}, inner_model_id={inner_id_str}, inner_model_type={inner_model_name}")
+            
+            # FIX: Check flag on ModelPatcher (where it was set), not on inner model
+            # OLD BUG: unload_distorch_model = getattr(mp.model, '_mgpu_unload_distorch_model', False)
+            # NEW FIX: Check both locations to see which one has the flag
+            flag_on_mp = getattr(mp, '_mgpu_unload_distorch_model', None)
+            flag_on_inner = getattr(mp.model, '_mgpu_unload_distorch_model', None) if inner_model else None
+            
+            logger.mgpu_mm_log(f"[FLAG_CHECK] Model {i} ({inner_model_name}): flag_on_mp={flag_on_mp}, flag_on_inner={flag_on_inner}")
+            
+            # Use whichever location has the flag (for backwards compatibility during transition)
+            if flag_on_mp is not None:
+                unload_distorch_model = flag_on_mp
+                logger.mgpu_mm_log(f"[FLAG_SOURCE] Using flag from ModelPatcher (mp_id=0x{mp_id:x})")
+            elif flag_on_inner is not None:
+                unload_distorch_model = flag_on_inner
+                logger.mgpu_mm_log(f"[FLAG_SOURCE] Using flag from inner model (inner_model_id={inner_id_str})")
+            else:
+                unload_distorch_model = False
+                logger.mgpu_mm_log(f"[FLAG_SOURCE] No flag found - defaulting to False (keep loaded)")
+            
+            logger.mgpu_mm_log(f"[DECISION] Model {i} ({inner_model_name}): unload_distorch_model={unload_distorch_model}")
+            
             if unload_distorch_model:
                 models_to_unload.append(lm)
+                logger.mgpu_mm_log(f"[CATEGORIZE] Model {i} ({inner_model_name}) → models_to_unload")
             else:
                 kept_models.append(lm)
-                logger.mgpu_mm_log(f"[UNLOAD_DEBUG] Adding to kept_models: {model_name}")
+                logger.mgpu_mm_log(f"[CATEGORIZE] Model {i} ({inner_model_name}) → kept_models")
 
         # After the kept_models/models_to_unload evaluation
+        logger.mgpu_mm_log(f"[CATEGORIZE_SUMMARY] kept_models: {len(kept_models)}, models_to_unload: {len(models_to_unload)}, total: {len(mm.current_loaded_models)}")
+        
         if len(kept_models) == len(mm.current_loaded_models):
             # All models are meant to be kept - no DisTorch selective unloading needed
-            logger.mgpu_mm_log("[Phase 2 Debug] All models flagged to be kept - using standard unload_all_models")
+            logger.mgpu_mm_log("[DELEGATION] All models flagged to be kept - delegating to standard unload_all_models")
             _mgpu_original_unload_all_models()
             return
 
-        
-        logger.mgpu_mm_log(f"[UNLOAD_DEBUG] Final counts - kept_models: {len(kept_models)}, models_to_unload: {len(models_to_unload)}")
-
         if kept_models:
-            logger.mgpu_mm_log(f"Found {len(kept_models)} model(s) to retain, unloading {len(models_to_unload)} model(s)")
+            logger.mgpu_mm_log(f"[SELECTIVE_UNLOAD] Proceeding with selective unload: retaining {len(kept_models)}, unloading {len(models_to_unload)}")
 
-            # Unload models that don't have keep_loaded flag
+            # Unload models flagged for unload
             for lm in models_to_unload:
                 try:
+                    model_name = type(lm.model.model).__name__ if lm.model and hasattr(lm.model, 'model') else 'Unknown'
+                    logger.mgpu_mm_log(f"[UNLOAD_EXECUTE] Unloading model: {model_name} (lm_id=0x{id(lm):x})")
                     lm.model_unload(unpatch_weights=True)
-                    logger.debug(f"Unloaded model: {type(lm.model.model).__name__ if lm.model else 'Unknown'}")
                 except Exception as e:
-                    logger.warning(f"Error unloading model: {e}")
+                    logger.warning(f"[UNLOAD_ERROR] Error unloading model: {e}")
+
+            # WEAKREF TRACKING: Attach weakref callbacks to prove if kept models are GC'd
+            def model_deleted_callback(ref, model_name, model_id):
+                logger.mgpu_mm_log(f"[WEAKREF_DELETED] Kept model GARBAGE COLLECTED: {model_name} (id=0x{model_id:x})")
+            
+            for i, lm in enumerate(kept_models):
+                mp = lm.model
+                inner_model = getattr(mp, 'model', None)
+                model_name = type(inner_model).__name__ if inner_model else 'Unknown'
+                model_id = id(lm)
+                weakref.ref(lm, lambda ref, name=model_name, mid=model_id: model_deleted_callback(ref, name, mid))
+                logger.mgpu_mm_log(f"[WEAKREF_ATTACHED] Tracking kept model {i}: {model_name} (lm_id=0x{model_id:x}, mp_id=0x{id(mp):x})")
 
             # Remove unloaded models from current_loaded_models
             mm.current_loaded_models = kept_models
-            logger.mgpu_mm_log(f"[UNLOAD_DEBUG] Updated mm.current_loaded_models, new count: {len(mm.current_loaded_models)}")
-            logger.mgpu_mm_log(f"Successfully retained {len(kept_models)} model(s) during unload")
+            logger.mgpu_mm_log(f"[SELECTIVE_COMPLETE] Updated mm.current_loaded_models, new count: {len(mm.current_loaded_models)}")
+            logger.mgpu_mm_log(f"[SELECTIVE_COMPLETE] mm.current_loaded_models id: 0x{id(mm.current_loaded_models):x}")
+            
+            # DIAGNOSTIC: Log what's remaining
+            for i, lm in enumerate(mm.current_loaded_models):
+                mp = lm.model
+                inner_model = getattr(mp, 'model', None)
+                model_name = type(inner_model).__name__ if inner_model else "None"
+                logger.mgpu_mm_log(f"[REMAINING_MODEL] {i}: {model_name} (lm_id=0x{id(lm):x}, mp_id=0x{id(mp):x})")
         else:
-            logger.mgpu_mm_log("No models with keep_loaded=True found - delegating to original unload_all_models")
+            logger.mgpu_mm_log("[DELEGATION] No models with keep_loaded=True found - delegating to original unload_all_models")
             _mgpu_original_unload_all_models()
     
     mm.unload_all_models = _mgpu_patched_unload_all_models

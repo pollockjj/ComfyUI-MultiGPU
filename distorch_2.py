@@ -923,17 +923,54 @@ def override_class_with_distorch_safetensor_v2(cls):
 
             logger.info(f"[MultiGPU DisTorch V2] Full allocation string: {full_allocation}")
 
-            logger.mgpu_mm_log(f"[PHASE 1] Tracking setting of '_mgpu_unload_distorch_model to unload_distorch_model: {unload_distorch_model}")
+            logger.mgpu_mm_log(f"[FLAG_SET_START] Setting '_mgpu_unload_distorch_model' to: {unload_distorch_model} (keep_loaded={keep_loaded})")
 
-            # Store unload_distorch_model in the model for later retrieval by unload_all_models patch
+            # DIAGNOSTIC: Log full object chain at SET time
             if hasattr(out[0], 'model'):
-                logger.mgpu_mm_log(f"[PHASE 1] model {out[0].model.__class__.__name__}'_mgpu_unload_distorch_model set to: {unload_distorch_model}")
-                out[0].model._mgpu_unload_distorch_model = unload_distorch_model
+                mp = out[0]  # This is the ModelPatcher
+                mp_id = id(mp)
+                inner_model = getattr(mp, 'model', None)
+                inner_model_id = id(inner_model) if inner_model else None
+                inner_model_name = type(inner_model).__name__ if inner_model else "None"
+                
+                # Format inner_model_id properly for f-string
+                inner_id_str = f"0x{inner_model_id:x}" if inner_model_id is not None else "None"
+                
+                logger.mgpu_mm_log(f"[OBJECT_CHAIN_SET] ModelPatcher: mp_id=0x{mp_id:x}, inner_model_id={inner_id_str}, inner_model_type={inner_model_name}")
+                
+                # FIX: Store flag on ModelPatcher itself (not inner model)
+                # This aligns with where it will be READ in model_management_mgpu.py
+                mp._mgpu_unload_distorch_model = unload_distorch_model
+                logger.mgpu_mm_log(f"[FLAG_SET_LOCATION] Set on ModelPatcher (mp_id=0x{mp_id:x}): mp._mgpu_unload_distorch_model = {unload_distorch_model}")
+                
+                # Also set on inner model for backwards compatibility during transition
+                if inner_model:
+                    inner_model._mgpu_unload_distorch_model = unload_distorch_model
+                    logger.mgpu_mm_log(f"[FLAG_SET_COMPAT] Also set on inner model (inner_model_id=0x{inner_model_id:x}) for compatibility")
+                    
             elif hasattr(out[0], 'patcher') and hasattr(out[0].patcher, 'model'):
-                logger.mgpu_mm_log(f"[PHASE 1] model {out[0].patcher.model.__class__.__name__}'_mgpu_unload_distorch_model set to: {unload_distorch_model}")
-                out[0].patcher.model._mgpu_unload_distorch_model = unload_distorch_model
+                mp = out[0].patcher  # This is the ModelPatcher
+                mp_id = id(mp)
+                inner_model = getattr(mp, 'model', None)
+                inner_model_id = id(inner_model) if inner_model else None
+                inner_model_name = type(inner_model).__name__ if inner_model else "None"
+                
+                # Format inner_model_id properly for f-string
+                inner_id_str = f"0x{inner_model_id:x}" if inner_model_id is not None else "None"
+                
+                logger.mgpu_mm_log(f"[OBJECT_CHAIN_SET] ModelPatcher via patcher: mp_id=0x{mp_id:x}, inner_model_id={inner_id_str}, inner_model_type={inner_model_name}")
+                
+                # FIX: Store flag on ModelPatcher itself
+                mp._mgpu_unload_distorch_model = unload_distorch_model
+                logger.mgpu_mm_log(f"[FLAG_SET_LOCATION] Set on ModelPatcher (mp_id=0x{mp_id:x}): mp._mgpu_unload_distorch_model = {unload_distorch_model}")
+                
+                # Also set on inner model for backwards compatibility
+                if inner_model:
+                    inner_model._mgpu_unload_distorch_model = unload_distorch_model
+                    logger.mgpu_mm_log(f"[FLAG_SET_COMPAT] Also set on inner model (inner_model_id=0x{inner_model_id:x}) for compatibility")
 
             if unload_distorch_model:
+                logger.mgpu_mm_log("[FLAG_TRIGGER] unload_distorch_model=True, triggering full system cleanup")
                 force_full_system_cleanup(reason="policy_every_load", force=True)
 
             return out
@@ -998,22 +1035,56 @@ def override_class_with_distorch_safetensor_v2_clip(cls):
             # Call the main function once
             out = fn(*args, **kwargs)
 
-            # Store keep_loaded in the model for later retrieval by unload_all_models patch
-            logger.mgpu_mm_log(f"[PHASE 1] Tracking setting of '_mgpu_unload_distorch_model to unload_distorch_model: {unload_distorch_model}")
+            logger.mgpu_mm_log(f"[FLAG_SET_START] Setting '_mgpu_unload_distorch_model' to: {unload_distorch_model} (keep_loaded={keep_loaded})")
 
-            # Store unload_distorch_model in the model for later retrieval by unload_all_models patch
+            # DIAGNOSTIC: Log full object chain at SET time
             if hasattr(out[0], 'model'):
-                logger.mgpu_mm_log(f"[PHASE 1] model {out[0].model.__class__.__name__}'_mgpu_unload_distorch_model set to: {unload_distorch_model}")
-                out[0].model._mgpu_unload_distorch_model = unload_distorch_model
+                mp = out[0]  # This is the ModelPatcher
+                mp_id = id(mp)
+                inner_model = getattr(mp, 'model', None)
+                inner_model_id = id(inner_model) if inner_model else None
+                inner_model_name = type(inner_model).__name__ if inner_model else "None"
+                
+                # Format inner_model_id properly for f-string
+                inner_id_str = f"0x{inner_model_id:x}" if inner_model_id is not None else "None"
+                
+                logger.mgpu_mm_log(f"[OBJECT_CHAIN_SET] CLIP ModelPatcher: mp_id=0x{mp_id:x}, inner_model_id={inner_id_str}, inner_model_type={inner_model_name}")
+                
+                # FIX: Store flag on ModelPatcher itself
+                mp._mgpu_unload_distorch_model = unload_distorch_model
+                logger.mgpu_mm_log(f"[FLAG_SET_LOCATION] Set on ModelPatcher (mp_id=0x{mp_id:x}): mp._mgpu_unload_distorch_model = {unload_distorch_model}")
+                
+                # Also set on inner model for backwards compatibility
+                if inner_model:
+                    inner_model._mgpu_unload_distorch_model = unload_distorch_model
+                    logger.mgpu_mm_log(f"[FLAG_SET_COMPAT] Also set on inner model (inner_model_id=0x{inner_model_id:x}) for compatibility")
+                    
             elif hasattr(out[0], 'patcher') and hasattr(out[0].patcher, 'model'):
-                logger.mgpu_mm_log(f"[PHASE 1] model {out[0].patcher.model.__class__.__name__}'_mgpu_unload_distorch_model set to: {unload_distorch_model}")
-                out[0].patcher.model._mgpu_unload_distorch_model = unload_distorch_model
+                mp = out[0].patcher  # This is the ModelPatcher
+                mp_id = id(mp)
+                inner_model = getattr(mp, 'model', None)
+                inner_model_id = id(inner_model) if inner_model else None
+                inner_model_name = type(inner_model).__name__ if inner_model else "None"
+                
+                # Format inner_model_id properly for f-string
+                inner_id_str = f"0x{inner_model_id:x}" if inner_model_id is not None else "None"
+                
+                logger.mgpu_mm_log(f"[OBJECT_CHAIN_SET] CLIP ModelPatcher via patcher: mp_id=0x{mp_id:x}, inner_model_id={inner_id_str}, inner_model_type={inner_model_name}")
+                
+                # FIX: Store flag on ModelPatcher itself
+                mp._mgpu_unload_distorch_model = unload_distorch_model
+                logger.mgpu_mm_log(f"[FLAG_SET_LOCATION] Set on ModelPatcher (mp_id=0x{mp_id:x}): mp._mgpu_unload_distorch_model = {unload_distorch_model}")
+                
+                # Also set on inner model for backwards compatibility
+                if inner_model:
+                    inner_model._mgpu_unload_distorch_model = unload_distorch_model
+                    logger.mgpu_mm_log(f"[FLAG_SET_COMPAT] Also set on inner model (inner_model_id=0x{inner_model_id:x}) for compatibility")
 
             vram_string = ""
             if virtual_vram_gb > 0:
-                vram_string = f"{device};{virtual_vram_gb};{donor_device}"  # Changed from compute_device
-            elif expert_mode_allocations:  # Only include device if there's an expert string
-                vram_string = device  # Changed from compute_device
+                vram_string = f"{device};{virtual_vram_gb};{donor_device}"
+            elif expert_mode_allocations:
+                vram_string = device
 
             full_allocation = f"{expert_mode_allocations}#{vram_string}" if expert_mode_allocations or vram_string else ""
 
@@ -1036,6 +1107,7 @@ def override_class_with_distorch_safetensor_v2_clip(cls):
                 safetensor_settings_store[model_hash] = settings_hash
 
             if unload_distorch_model:
+                logger.mgpu_mm_log("[FLAG_TRIGGER] unload_distorch_model=True, triggering full system cleanup")
                 force_full_system_cleanup(reason="policy_every_load", force=True)
 
             return out
@@ -1096,21 +1168,56 @@ def override_class_with_distorch_safetensor_v2_clip_no_device(cls):
             # Call the main function once
             out = fn(*args, **kwargs)
 
-            logger.mgpu_mm_log(f"[PHASE 1] Tracking setting of '_mgpu_unload_distorch_model to unload_distorch_model: {unload_distorch_model}")
+            logger.mgpu_mm_log(f"[FLAG_SET_START] Setting '_mgpu_unload_distorch_model' to: {unload_distorch_model} (keep_loaded={keep_loaded})")
 
-            # Store unload_distorch_model in the model for later retrieval by unload_all_models patch
+            # DIAGNOSTIC: Log full object chain at SET time
             if hasattr(out[0], 'model'):
-                logger.mgpu_mm_log(f"[PHASE 1] model {out[0].model.__class__.__name__}'_mgpu_unload_distorch_model set to: {unload_distorch_model}")
-                out[0].model._mgpu_unload_distorch_model = unload_distorch_model
+                mp = out[0]  # This is the ModelPatcher
+                mp_id = id(mp)
+                inner_model = getattr(mp, 'model', None)
+                inner_model_id = id(inner_model) if inner_model else None
+                inner_model_name = type(inner_model).__name__ if inner_model else "None"
+                
+                # Format inner_model_id properly for f-string
+                inner_id_str = f"0x{inner_model_id:x}" if inner_model_id is not None else "None"
+                
+                logger.mgpu_mm_log(f"[OBJECT_CHAIN_SET] CLIP_NoDevice ModelPatcher: mp_id=0x{mp_id:x}, inner_model_id={inner_id_str}, inner_model_type={inner_model_name}")
+                
+                # FIX: Store flag on ModelPatcher itself
+                mp._mgpu_unload_distorch_model = unload_distorch_model
+                logger.mgpu_mm_log(f"[FLAG_SET_LOCATION] Set on ModelPatcher (mp_id=0x{mp_id:x}): mp._mgpu_unload_distorch_model = {unload_distorch_model}")
+                
+                # Also set on inner model for backwards compatibility
+                if inner_model:
+                    inner_model._mgpu_unload_distorch_model = unload_distorch_model
+                    logger.mgpu_mm_log(f"[FLAG_SET_COMPAT] Also set on inner model (inner_model_id=0x{inner_model_id:x}) for compatibility")
+                    
             elif hasattr(out[0], 'patcher') and hasattr(out[0].patcher, 'model'):
-                logger.mgpu_mm_log(f"[PHASE 1] model {out[0].patcher.model.__class__.__name__}'_mgpu_unload_distorch_model set to: {unload_distorch_model}")
-                out[0].patcher.model._mgpu_unload_distorch_model = unload_distorch_model
+                mp = out[0].patcher  # This is the ModelPatcher
+                mp_id = id(mp)
+                inner_model = getattr(mp, 'model', None)
+                inner_model_id = id(inner_model) if inner_model else None
+                inner_model_name = type(inner_model).__name__ if inner_model else "None"
+                
+                # Format inner_model_id properly for f-string
+                inner_id_str = f"0x{inner_model_id:x}" if inner_model_id is not None else "None"
+                
+                logger.mgpu_mm_log(f"[OBJECT_CHAIN_SET] CLIP_NoDevice ModelPatcher via patcher: mp_id=0x{mp_id:x}, inner_model_id={inner_id_str}, inner_model_type={inner_model_name}")
+                
+                # FIX: Store flag on ModelPatcher itself
+                mp._mgpu_unload_distorch_model = unload_distorch_model
+                logger.mgpu_mm_log(f"[FLAG_SET_LOCATION] Set on ModelPatcher (mp_id=0x{mp_id:x}): mp._mgpu_unload_distorch_model = {unload_distorch_model}")
+                
+                # Also set on inner model for backwards compatibility
+                if inner_model:
+                    inner_model._mgpu_unload_distorch_model = unload_distorch_model
+                    logger.mgpu_mm_log(f"[FLAG_SET_COMPAT] Also set on inner model (inner_model_id=0x{inner_model_id:x}) for compatibility")
 
             vram_string = ""
             if virtual_vram_gb > 0:
-                vram_string = f"{device};{virtual_vram_gb};{donor_device}"  # Changed from compute_device
-            elif expert_mode_allocations:  # Only include device if there's an expert string
-                vram_string = device  # Changed from compute_device
+                vram_string = f"{device};{virtual_vram_gb};{donor_device}"
+            elif expert_mode_allocations:
+                vram_string = device
 
             full_allocation = f"{expert_mode_allocations}#{vram_string}" if expert_mode_allocations or vram_string else ""
 
@@ -1133,6 +1240,7 @@ def override_class_with_distorch_safetensor_v2_clip_no_device(cls):
                 safetensor_settings_store[model_hash] = settings_hash
 
             if unload_distorch_model:
+                logger.mgpu_mm_log("[FLAG_TRIGGER] unload_distorch_model=True, triggering full system cleanup")
                 force_full_system_cleanup(reason="policy_every_load", force=True)
 
             return out
