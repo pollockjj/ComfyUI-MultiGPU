@@ -2,6 +2,7 @@
 
 Purpose
 - Provide an end-to-end, fully verified lineage of the ComfyUI Manager “Free model and node cache” button through to the exact consumption of flags in ComfyUI core, with exact file paths and code excerpts captured from the current snapshot in this workspace.
+- Document MultiGPU patch integration points that participate in the free/unload flow, including selective unload behavior and current caveats.
 
 End‑to‑End Flow (Current Snapshot)
 1) UI Button (Manager) → 2) JS helper free_models(...) → 3) POST /free (Comfy core) → 4) main.py prompt_worker thread polls flags and performs:
@@ -144,3 +145,87 @@ Verification Status
   - Manager JS files under ../ComfyUI-Manager/js/
   - ComfyUI server and main under ../../server.py and ../../main.py
 - Consumption site conclusively identified in ../../main.py prompt_worker via q.get_flags → unload_all_models + PromptExecutor.reset
+
+---
+
+MultiGPU Integration Points (This Repository)
+
+Overview
+- In addition to the core /free flow, MultiGPU patches (in this repository) alter both the unload and soft-empty behaviors to enable selective ejection of DisTorch-managed models and multi-device cache clearing.
+
+1) Per-model transient flag (DisTorch2 nodes)
+- File: memory-bank reference → implemented in code at: ./distorch_2.py
+- Where:
+  - In DisTorch2 wrappers (UNET/CLIP/VAE) inside `override(...)`, after calling the original node:
+    - `out[0].model._mgpu_unload_distorch_model = (not keep_loaded)`
+- Purpose:
+  - Mark models for ejection only when the user disables “keep_loaded”.
+  - This supplants the previously planned global sentinel; the implemented design is purely per-model.
+
+2) Selective unloading (patched unload_all_models)
+- File: ./model_management_mgpu.py
+- Patch site notes:
+  - At import time, we patch `mm.unload_all_models` with `_mgpu_patched_unload_all_models`.
+  - Behavior:
+    - Iterate `mm.current_loaded_models` into:
+      - `models_to_unload`: those with `_mgpu_unload_distorch_model == True`
+      - `kept_models`: the rest
+    - If any are flagged, unload only `models_to_unload` and rebuild `mm.current_loaded_models = kept_models`.
+    - If none are flagged (all kept), current code delegates to original `unload_all_models()` (known caveat; see below).
+- Known caveat (to be fixed next):
+  - The “all kept” branch currently delegates to the original unload, which unloads everything. Target behavior is strict no-op when no models are flagged.
+
+3) Multi-device VRAM cache and CPU reset (patched soft_empty_cache)
+- File: ./__init__.py
+- Patch site notes:
+  - `mm.soft_empty_cache` → `soft_empty_cache_distorch2_patched`
+  - Behavior:
+    - Detect DisTorch2 active state; clear allocator caches on ALL devices via `soft_empty_cache_multigpu()` from `device_utils.py`
+    - Adaptive CPU memory reset with optional force to emulate Manager “free_memory”.
+  - This ensures cache clearing covers all devices in MultiGPU environments beyond a single `mm.get_torch_device()`.
+
+4) Manager parity helper
+- File: ./model_management_mgpu.py
+- Function: `force_full_system_cleanup(reason="manual", force=True)`
+  - Sets both flags (`unload_models=True`, `free_memory=True`) on PromptQueue, identical to Manager’s “Free model and node cache”.
+  - Useful for testing and ensuring parity from MultiGPU paths.
+
+Behavioral Summary
+- End-to-end Manager parity:
+  - Manager “Free model and node cache” → POST /free sets flags → Comfy’s prompt_worker calls our patched `unload_all_models` (selective) → `PromptExecutor.reset()` → our patched `soft_empty_cache` (multi-device) → GC.
+- Selectiveness guarantee (intended):
+  - Only DisTorch2 models flagged with `_mgpu_unload_distorch_model=True` are ejected.
+  - Unflagged models (keep_loaded=True) remain in `mm.current_loaded_models` after the entire flow.
+- Current discrepancy:
+  - When no models are flagged, our patch currently delegates to the original unload (unloads everything). Target fix is to convert this branch to a strict no-op.
+
+Validation & Logging Hooks
+- Memory snapshots:
+  - Use `multigpu_memory_log(identifier, tag)` in `model_management_mgpu.py` for timestamped CPU/VRAM snapshot lines.
+- VRAM cache clearing:
+  - `soft_empty_cache_multigpu()` logs per-device clearing events (pre/post) in `device_utils.py`.
+- Unload path tracing:
+  - `_mgpu_patched_unload_all_models` logs the counts of kept/unloaded models and updates to `mm.current_loaded_models`.
+
+Practical Test Recipes
+1) Minimal retention test
+- Load A(keep=false), B(keep=true), C(keep=true)
+- POST /free payload: {"unload_models": true, "free_memory": true}
+- Expected:
+  - Only A is ejected; B and C remain in `mm.current_loaded_models` post-flow.
+  - CPU RAM drops; VRAM caches clear on all devices.
+
+2) All-kept test
+- Load D(keep=true), E(keep=true)
+- POST /free payload: {"unload_models": true, "free_memory": true}
+- Expected target behavior:
+  - No models are ejected (strict no-op in unload step), allocator/cache cleaning only.
+- Current behavior (caveat):
+  - Delegates to original unload → all models may be ejected. This is the next change to reinstate strict no-op.
+
+References (paths in this repo)
+- Per-model flagging: ./distorch_2.py
+- Selective unload patch: ./model_management_mgpu.py
+- Patched soft empty: ./__init__.py (soft_empty_cache_distorch2_patched)
+- Multi-device cache clear: ./device_utils.py
+- Manager parity helper: ./model_management_mgpu.py (force_full_system_cleanup)
