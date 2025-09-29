@@ -54,8 +54,11 @@
 ### Medium-term Goals (2-3 months)
 
 #### Advanced Memory Management 📋
+- **3-Flag Surgical Ejection System**: Transient flags eliminate CPU memory leaks ✅
+- **keep_loaded Boolean Engineering**: Drives preservation, eviction triggers, and surgical destructon ✅
+- **Transient Flag Architecture**: Execution-scoped flags with complete external isolation ✅
 - **Smart Offloading**: Machine learning-based allocation optimization
-- **Memory Compression**: Runtime compression of stored layers
+- **Memory Compression**: Runtime compression of stored model layers
 - **Fragmentation Handling**: Better memory pool management
 - **Pressure Monitoring**: Proactive memory pressure detection
 

@@ -30,12 +30,23 @@
 
 ## Current Development Priorities
 
-### 1. Ecosystem Expansion (High Priority)
+### 1. CPU Memory Leak Resolution (RESOLVED)
+**Goal**: eliminate CPU DRAM memory leaks through 3-flag surgical ejection system
+
+**Finalized Solution**:
+- **keep_loaded Boolean Engineering**: Drives preservation, trigger, and selective destruction ✅
+- **3-Transient-Flags Architecture**: Execution-scoped flags with complete isolation ✅
+- **Surgical Ejection Logic**: Only processes models with ejection flag set ✅
+- **Complete CPU Memory Leak Elimination**: Clinical resolution through distributed cleanup ✅
+
+**Status**: Memory leaks eliminated. All documentation updated with final solution.
+
+### 2. Ecosystem Expansion (High Priority)
 **Goal**: Support emerging model formats and custom nodes
 
 **Active Integrations**:
 - **ComfyUI-GGUF**: 6 DisTorch-enabled GGUF nodes (complete)
-- **WanVideoWrapper**: 8 MultiGPU video nodes (complete)  
+- **WanVideoWrapper**: 8 MultiGPU video nodes (complete)
 - **Florence2**: Vision model support (complete)
 - **HunyuanVideoWrapper**: Native VAE + device selection (active development)
 

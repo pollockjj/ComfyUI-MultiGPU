@@ -77,18 +77,36 @@ def register_patched_safetensor_modelpatcher():
 
                     def patched_loaded_model_memory_required(self, device):
                         """Drive unload behavior purely by keep_loaded flag"""
+                        multigpu_memory_log("keep_loaded_memory_check", "start")
+                        logger.mgpu_mm_log(f"[KEEP_LOADED_DEBUG] Memory assessment requested for model on device: {device}")
+
                         # Check if this is a DisTorch model with keep_loaded flag
                         keep_loaded = getattr(getattr(self, 'model', None), '_mgpu_keep_loaded', None)
+
+                        if keep_loaded is not None:
+                            # This is a DisTorch model - log the decision
+                            model_name = type(getattr(self, 'model', mp)).__name__ if getattr(self, 'model', None) else "Unknown"
+                            logger.mgpu_mm_log(f"[KEEP_LOADED_DEBUG] DisTorch model: {model_name}, keep_loaded={keep_loaded}")
+
                         if keep_loaded is True:
-                            # keep_loaded=True: return 0 to prevent any unloading
+                            logger.mgpu_mm_log("[KEEP_LOADED_DEBUG] keep_loaded=True - Reporting 0 bytes (prevents eviction)")
+                            multigpu_memory_log("keep_loaded_memory_check", "prevents_eviction")
                             return 0
                         elif keep_loaded is False:
                             # keep_loaded=False: return full device memory to guarantee eviction
                             total_device_memory = mm.get_total_memory(device)
+                            memory_gb = total_device_memory / (1024**3)
+                            logger.mgpu_mm_log(f"[KEEP_LOADED_DEBUG] keep_loaded=False - Reporting MAX memory ({memory_gb:.2f}GB) to force complete eviction")
+                            multigpu_memory_log("keep_loaded_memory_check", f"forces_eviction:{memory_gb:.2f}gb")
                             return total_device_memory
 
                         # Not a DisTorch model - use original behavior
-                        return original_loaded_model_memory_required(self, device)
+                        logger.mgpu_mm_log("[KEEP_LOADED_DEBUG] Non-DisTorch model - Using original Comfy memory calculation")
+                        original_result = original_loaded_model_memory_required(self, device)
+                        original_gb = original_result / (1024**3) if original_result else 0
+                        logger.mgpu_mm_log(f"[KEEP_LOADED_DEBUG] Original calculation returned: {original_gb:.2f}GB")
+                        multigpu_memory_log("keep_loaded_memory_check", "end")
+                        return original_result
 
                     mm.LoadedModel.model_memory_required = patched_loaded_model_memory_required
 

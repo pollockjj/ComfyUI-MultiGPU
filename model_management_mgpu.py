@@ -395,7 +395,7 @@ if hasattr(mm, 'unload_all_models') and not hasattr(mm.unload_all_models, '_mgpu
             mp = lm.model  # weakref call to ModelPatcher
             if mp is not None and hasattr(mp, 'model'):
                 # Check if this is a DisTorch model with keep_loaded flag
-                should_retain = getattr(mp.model, '_mgpu_keep_loaded', False)
+                should_retain = getattr(mp.model, '_mgpu_keep_loaded', True)
                 model_name = type(getattr(mp, 'model', mp)).__name__
                 logger.mgpu_mm_log(f"[UNLOAD_DEBUG] Model {i}: {model_name}, keep_loaded={should_retain}")
                 
