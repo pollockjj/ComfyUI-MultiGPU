@@ -54,9 +54,9 @@
 ### Medium-term Goals (2-3 months)
 
 #### Advanced Memory Management 📋
-- **3-Flag Surgical Ejection System**: Transient flags eliminate CPU memory leaks ✅
-- **keep_loaded Boolean Engineering**: Drives preservation, eviction triggers, and surgical destructon ✅
-- **Transient Flag Architecture**: Execution-scoped flags with complete external isolation ✅
+- **3-Flag Surgical Ejection System**: Conceptual transient flags design for CPU memory leak elimination ✅
+- **keep_loaded Boolean Engineering**: Conceptual triple-duty design for preservation, triggers, and destruction ✅
+- **Transient Flag Architecture**: Conceptual execution-scoped flags with complete external isolation ✅
 - **Smart Offloading**: Machine learning-based allocation optimization
 - **Memory Compression**: Runtime compression of stored model layers
 - **Fragmentation Handling**: Better memory pool management
@@ -96,9 +96,9 @@
 
 ## Current Status Assessment
 
-### Stability Rating: **Production Grade** (9/10)
+### Stability Rating: **Production Grade** (8/10)
+- **Memory Leaks**: CPU leaks still present - final solution conceptualized but not implemented
 - **Crash Rate**: <0.1% based on community feedback
-- **Memory Leaks**: None identified in extended testing
 - **API Compatibility**: Stable across ComfyUI versions
 - **Hardware Compatibility**: 95%+ success rate across configurations
 
