@@ -41,10 +41,9 @@ Current code state (verified in repo):
     - `mm.soft_empty_cache` → `soft_empty_cache_distorch2_patched` (multi-device VRAM clear + adaptive CPU reset, and forceable executor reset for parity)
 
 Outstanding defect:
-- In some flows, retained (keep_loaded=True) models are still being ejected downstream.
-- Two likely culprits:
-  1) “All-kept delegation” in our patched unload: when no models are flagged, delegation to the original `unload_all_models()` unloads everything.
-  2) Post-unload follow-on flows (e.g., `PromptExecutor.reset()`, GC, `soft_empty_cache()`, or a core `free_memory(...)` path) may cause unintended detaches for retained models.
+- Selective retention not working: In some flows, retained (keep_loaded=True) models are still being ejected downstream despite selective unload logic being present.
+- Root cause unknown - the selective logic exists and appears correct, but retained models are not staying loaded.
+- Note: The "all-kept delegation" to original `unload_all_models()` when no models are flagged is INTENTIONAL - it triggers necessary cleanup post-execution and is NOT the bug.
 
 Immediate Actions:
 - Documentation sync (this update) and commit

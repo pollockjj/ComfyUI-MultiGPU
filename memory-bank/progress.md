@@ -47,15 +47,20 @@
 
 #### Selective Retention Hardening (Top Priority) 🔄
 - Current state:
-  - Phase 3 selective ejection implemented without global sentinel
-  - In some flows, retained models (keep_loaded=True) are still ejected downstream
-- Likely culprits:
-  1) “All-kept delegation” in patched unload: when no models are flagged, current code delegates to original unload which unloads everything
-  2) Post-unload follow-on flows (PromptExecutor.reset/GC/soft_empty/free_memory path) may detach retained models
+  - Phase 3 selective ejection fully implemented without global sentinel
+  - In some flows, retained models (keep_loaded=True) are still ejected downstream despite selective logic being present
+- Root cause:
+  - Unknown - the selective logic exists and appears correct on inspection
+  - Previously worked in earlier commits on this branch
+- Important clarification:
+  - The "all-kept delegation" to original `unload_all_models()` when no models are flagged is INTENTIONAL
+  - This delegation triggers necessary cleanup post-execution and is NOT the bug
 - Action plan:
   - Rediscover prior commit(s) where selectiveness worked end-to-end
-  - Reinstate strict no-op when `models_to_unload` is empty (do not delegate to original)
-  - Add instrumentation: pre/post unload → post reset → post GC/soft_empty snapshots; ERROR if any kept model disappears
+  - Investigate flag storage/retrieval paths (object hierarchy mismatch?)
+  - Check flag persistence between load and unload operations
+  - Verify categorization logic (models going to wrong list?)
+  - Add instrumentation: pre/post unload → post reset → post GC/soft_empty snapshots
   - Re-run verification matrix (A=false, B/C=true; D/E all kept)
 
 #### User Experience Improvements 🔄

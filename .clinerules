@@ -153,7 +153,7 @@ for lm in mm.current_loaded_models:
 - **Execution isolation**: Each workflow manages its own ejection
 - **Memory safety**: Designed for CPU leaks elimination through proper distributed cleanup
 
-**Implementation Status**: FINAL CONCEPTUALIZED SOLUTION - Comprehensive 3-transient-flags architecture designed and documented. Code changes specified but awaiting implementation and testing. Memory leaks WILL BE eliminated once deployed.
+**Implementation Status**: ✅ IMPLEMENTED - Phase 3 selective ejection fully deployed in code. Per-model `_mgpu_unload_distorch_model` flags, patched `unload_all_models`, and Manager parity via `force_full_system_cleanup` are all active. 🐛 REMAINING BUG: Selective retention not working correctly - retained models (keep_loaded=True) are still being ejected in some flows despite the selective unload logic being present.
 
 ## Module Architecture Rules
 

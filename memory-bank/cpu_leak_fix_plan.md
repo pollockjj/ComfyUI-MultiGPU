@@ -50,23 +50,27 @@ Current implementation snapshot
 What is not used (vs. earlier plan)
 - No global executing sentinel (e.g., `DISTORCH2_UNLOAD_MODEL`). The selective logic is driven entirely by per-model `_mgpu_unload_distorch_model` flags plus the patched unload path and standard ComfyUI flags.
 
-Observed defect (to fix next)
-- In some flows (e.g., after selective unload completes), retained models get ejected anyway. Evidence points to two hotspots:
-  1) The “all kept” branch in `_mgpu_patched_unload_all_models`:
-     - Current code:
-       - If `len(kept_models) == len(mm.current_loaded_models)`, it delegates to original `mm.unload_all_models()`.
-       - That call will unload everything, defeating the selective policy when no models were flagged.
-     2) Downstream actions after returning from our unload:
-       - `PromptExecutor.reset()`, GC, and `soft_empty_cache()` shouldn’t unload models, but other core flows (e.g., a subsequent `free_memory()` call or a clone swap) might detach/evict retained models if not guarded.
+Observed defect (root cause unknown)
+- In some flows, retained models (keep_loaded=True) are still being ejected downstream despite selective unload logic being present.
+- The selective logic exists in the code and appears correct on inspection, but practical testing shows retained models are not staying loaded.
 
-Hypotheses to validate
-1) “All-kept delegation” wipes retained models
-   - When no models are flagged (`models_to_unload` empty), our patch delegates to the original unload which unloads everything.
-   - Fix approach: If there are zero models to unload, do nothing (no-op) — do not delegate to original unload.
+Important clarification
+- The "all-kept delegation" to original `mm.unload_all_models()` when `len(kept_models) == len(mm.current_loaded_models)` is INTENTIONAL behavior.
+- This delegation is necessary to trigger cleanup post-execution when no models are flagged for ejection.
+- This is NOT the bug - it's required functionality for proper memory management.
 
-2) Post-unload follow-on flows eject retained models
-   - After selective unload, `PromptExecutor.reset()` and GC execute. These should not trigger unloads for retained models, but there may be a core call path that drives unload/evict regardless.
-   - Fix approach: Instrumenting and asserting retained references across the entire `/free` flow to pinpoint where the undesired eviction occurs.
+Hypotheses to investigate
+1) Object path mismatch in flag storage/retrieval
+   - Flag may be set on one object hierarchy during load but read from a different hierarchy during unload
+   - Need to verify: `out[0].model._mgpu_unload_distorch_model` vs `mp.model._mgpu_unload_distorch_model` paths match
+
+2) Flag not persisting between load and unload
+   - Something may be clearing or resetting the flag after it's set
+   - Transient flag may be lost during model operations or transfers
+
+3) Incorrect categorization logic
+   - Models with keep_loaded=True being incorrectly added to `models_to_unload` instead of `kept_models`
+   - Logic error in the flag evaluation or defaulting behavior
 
 Rediscovery plan (the next step after committing this Memory Bank update)
 
