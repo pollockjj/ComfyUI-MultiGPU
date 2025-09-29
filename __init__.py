@@ -1,5 +1,3 @@
-DISTORCH2_UNLOAD_MODEL = False
-
 import torch
 import logging
 import weakref
@@ -42,8 +40,6 @@ def mgpu_mm_log_method(self, msg):
     if MGPU_MM_LOG:
         self.info(f"[MultiGPU Model Management] {msg}")
 logger.mgpu_mm_log = mgpu_mm_log_method.__get__(logger, type(logger))
-
-logger.mgpu_mm_log(f"[PHASE 1] DISTORCH2_UNLOAD_MODEL={DISTORCH2_UNLOAD_MODEL}")
 
 # Global device state management
 current_device = mm.get_torch_device()

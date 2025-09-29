@@ -87,10 +87,7 @@ The `keep_loaded` boolean serves triple duty when set to "False":
 3. **Surgical Destruction**: End-of-workflow unload applies wrecking ball ONLY to flagged DisTorch models
 
 #### 3-Transient-Flags Architecture
-**Global Flag**: `DISTORCH2_UNLOAD_MODEL = TRUE/FALSE` (workflow-scoped)
-- Set when `keep_loaded=False` detected during model loading
-- Reset after surgical ejection completes
-- External unload calls see FALSE → original Comfy behavior preserved
+
 
 **Per-Model Flag**: `_distorch2_unload_model = TRUE/FALSE` (object-scoped)
 - Marks specific DisTorch models for distributed device ejection

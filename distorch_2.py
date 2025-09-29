@@ -882,16 +882,7 @@ def override_class_with_distorch_safetensor_v2(cls):
         def override(self, *args, compute_device=None, virtual_vram_gb=4.0,
                      donor_device="cpu", expert_mode_allocations="", keep_loaded=True, **kwargs):
 
-            from . import DISTORCH2_UNLOAD_MODEL
-
-            logger.mgpu_mm_log(f"[PHASE 1] DISTORCH2_UNLOAD_MODEL INITIAL SETTING ={DISTORCH2_UNLOAD_MODEL}")
-
             unload_distorch_model = not keep_loaded
-
-            if unload_distorch_model:
-                logger.mgpu_mm_log("[PHASE 1] DisTorch2 with keep_loaded=False. Setting DISTORCH2_UNLOAD_MODEL=True")
-                DISTORCH2_UNLOAD_MODEL = True
-                logger.mgpu_mm_log(f"[PHASE 1] DISTORCH2_UNLOAD_MODEL UPDATED SETTING ={DISTORCH2_UNLOAD_MODEL}")
 
             from . import set_current_device
             if compute_device is not None:
@@ -990,16 +981,7 @@ def override_class_with_distorch_safetensor_v2_clip(cls):
         def override(self, *args, device=None, virtual_vram_gb=4.0,  # Changed from compute_device
                      donor_device="cpu", expert_mode_allocations="", keep_loaded=True, **kwargs):
 
-            from . import DISTORCH2_UNLOAD_MODEL
-
-            logger.mgpu_mm_log(f"[PHASE 1] DISTORCH2_UNLOAD_MODEL INITIAL SETTING ={DISTORCH2_UNLOAD_MODEL}")
-
             unload_distorch_model = not keep_loaded
-
-            if unload_distorch_model:
-                logger.mgpu_mm_log("[PHASE 1] DisTorch2 with keep_loaded=False. Setting DISTORCH2_UNLOAD_MODEL=True")
-                DISTORCH2_UNLOAD_MODEL = True
-                logger.mgpu_mm_log(f"[PHASE 1] DISTORCH2_UNLOAD_MODEL UPDATED SETTING ={DISTORCH2_UNLOAD_MODEL}")
 
             from . import set_current_text_encoder_device  # Use text encoder device setter
             if device is not None:
@@ -1099,17 +1081,7 @@ def override_class_with_distorch_safetensor_v2_clip_no_device(cls):
         def override(self, *args, device=None, virtual_vram_gb=4.0,  # Changed from compute_device
                      donor_device="cpu", expert_mode_allocations="", keep_loaded=True, **kwargs):
 
-            from . import DISTORCH2_UNLOAD_MODEL
-
-            logger.mgpu_mm_log(f"[PHASE 1] DISTORCH2_UNLOAD_MODEL INITIAL SETTING ={DISTORCH2_UNLOAD_MODEL}")
-
             unload_distorch_model = not keep_loaded
-
-            if unload_distorch_model:
-                logger.mgpu_mm_log("[PHASE 1] DisTorch2 with keep_loaded=False. Setting DISTORCH2_UNLOAD_MODEL=True")
-                DISTORCH2_UNLOAD_MODEL = True
-                logger.mgpu_mm_log(f"[PHASE 1] DISTORCH2_UNLOAD_MODEL UPDATED SETTING ={DISTORCH2_UNLOAD_MODEL}")
-
 
             from . import set_current_text_encoder_device  # Use text encoder device setter
             if device is not None:

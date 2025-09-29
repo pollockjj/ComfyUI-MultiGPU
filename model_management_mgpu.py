@@ -230,15 +230,8 @@ if not hasattr(mm.unload_all_models, '_mgpu_eject_distorch_patched'):
         Patched mm.unload_all_models that checks to see if the .
         All other models (including DisTorch models without the flag) unload normally.
         """
-        from . import DISTORCH2_UNLOAD_MODEL
 
         logger.mgpu_mm_log(f"[Phase 2 Debug] Patched unload_all_models called - initial model count: {len(mm.current_loaded_models)}")
-        logger.mgpu_mm_log(f"[Phase 2 Debug] DISTORCH2_UNLOAD_MODEL={DISTORCH2_UNLOAD_MODEL}")
-
-        if DISTORCH2_UNLOAD_MODEL == False:
-            logger.mgpu_mm_log("[Phase 2 Debug] Standard unload_all_models() called from Comfy Core")
-            _mgpu_original_unload_all_models()
-            return
 
         # Direct approach: iterate through loaded models and selectively unload
         models_to_unload = []
@@ -246,26 +239,28 @@ if not hasattr(mm.unload_all_models, '_mgpu_eject_distorch_patched'):
         
         for i, lm in enumerate(mm.current_loaded_models):
             mp = lm.model  # weakref call to ModelPatcher
-            if mp is not None and hasattr(mp, 'model'):
-                # Check if this is a DisTorch model with keep_loaded flag
-                should_retain = getattr(mp.model, '_mgpu_keep_loaded', True)
-                model_name = type(getattr(mp, 'model', mp)).__name__
-                logger.mgpu_mm_log(f"[UNLOAD_DEBUG] Model {i}: {model_name}, keep_loaded={should_retain}")
-                
-                # Retain models that either:
-                # 1. Are non-DisTorch models (missing _mgpu_keep_loaded attribute)
-                # 2. Are DisTorch models with keep_loaded=True
 
-                if should_retain:
-                    kept_models.append(lm)
-                    logger.mgpu_mm_log(f"[UNLOAD_DEBUG] Adding to kept_models: {model_name}")
-                    # GC ANCHOR TEST: Prevent premature GC of clone patchers
-                    add_retention_anchor(mp, "keep_loaded_test")
-                else:
-                    models_to_unload.append(lm)
-            else:
-                logger.mgpu_mm_log(f"[UNLOAD_DEBUG] Model {i}: ModelPatcher is None or missing model attribute")
+            unload_distorch_model = getattr(mp.model, '_mgpu_unload_distorch_model', False)
+            model_name = type(getattr(mp, 'model', mp)).__name__
+            logger.mgpu_mm_log(f"[Phase 3 Debug] Model {i}: {model_name}, unload_distorch_model={unload_distorch_model}")
+            
+            # Retain models that either:
+            # 1. Are non-DisTorch models (missing _mgpu_keep_loaded attribute)
+            # 2. Are DisTorch models with keep_loaded=True
+
+            if unload_distorch_model:
                 models_to_unload.append(lm)
+            else:
+                kept_models.append(lm)
+                logger.mgpu_mm_log(f"[UNLOAD_DEBUG] Adding to kept_models: {model_name}")
+
+        # After the kept_models/models_to_unload evaluation
+        if len(kept_models) == len(mm.current_loaded_models):
+            # All models are meant to be kept - no DisTorch selective unloading needed
+            logger.mgpu_mm_log("[Phase 2 Debug] All models flagged to be kept - using standard unload_all_models")
+            _mgpu_original_unload_all_models()
+            return
+
         
         logger.mgpu_mm_log(f"[UNLOAD_DEBUG] Final counts - kept_models: {len(kept_models)}, models_to_unload: {len(models_to_unload)}")
 
@@ -287,11 +282,6 @@ if not hasattr(mm.unload_all_models, '_mgpu_eject_distorch_patched'):
         else:
             logger.mgpu_mm_log("No models with keep_loaded=True found - delegating to original unload_all_models")
             _mgpu_original_unload_all_models()
-
-        # Phase 1: Reset DISTORCH2_UNLOAD_MODEL flag at end of unload (REGARDLESS)
-        logger.mgpu_mm_log("[PHASE1_DEBUG] Setting DISTORCH2_UNLOAD_MODEL=False at end of unload")
-        multigpu_memory_log("distorch_flag", "reset_false")
-        DISTORCH2_UNLOAD_MODEL = False
     
     mm.unload_all_models = _mgpu_patched_unload_all_models
     mm.unload_all_models._mgpu_eject_distorch_patched = True
