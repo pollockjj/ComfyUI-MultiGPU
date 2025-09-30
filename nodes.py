@@ -552,31 +552,3 @@ class UNetLoaderLP:
             out[0].patcher.model._distorch_high_precision_loras = False
             
         return out
-
-
-class FullCleanupMultiGPU:
-    @classmethod
-    def INPUT_TYPES(s):
-        return {
-            "required": {
-                "image": ("IMAGE",),
-                "reason": ("STRING", {"default": "inline_node", "multiline": False}),
-            },
-            "optional": {
-                "force": ("BOOLEAN", {"default": True}),
-            }
-        }
-
-    RETURN_TYPES = ("IMAGE",)
-    RETURN_NAMES = ("image",)
-    FUNCTION = "cleanup"
-    CATEGORY = "multigpu/maintenance"
-    TITLE = "Full System Cleanup (MultiGPU)"
-
-    def cleanup(self, image, reason, force=True):
-        """
-        Trigger the full system cleanup to match ComfyUI's 'Free model and node cache'.
-        Passthroughs the input image unchanged; summary is logged via MultiGPU logger.
-        """
-        _ = force_full_system_cleanup(reason=reason, force=force)
-        return (image,)
