@@ -20,6 +20,7 @@ from .model_management_mgpu import (
     force_full_system_cleanup,
 )
 
+WEB_DIRECTORY = "./web"
 MGPU_MM_LOG = False 
 DEBUG_LOG = False
 
