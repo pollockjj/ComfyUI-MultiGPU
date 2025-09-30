@@ -116,7 +116,7 @@ All MultiGPU nodes available for your install can be found in the "multigpu" cat
 
 Detailed technical documentation is available for all **automatically-detected core MultiGPU and DisTorch2 nodes**, covering 36+ documented nodes with comprehensive parameter details, output specifications, and DisTorch2 allocation guidance where applicable.
 
-- **To access documentation**: Right-click on any core MultiGPU or DisTorch2 node in ComfyUI and select "Help" from the context menu
+- **To access documentation**: Click on any core MultiGPU or DisTorch2 node in ComfyUI and select "Help" (question mark inside a circle) from the resultant menu 
 - **Coverage**: All standard ComfyUI loader nodes (UNet, VAE, Checkpoints, CLIP, ControlNet, Diffusers) plus popular GGUF loader variants
 - **Contents**: Input parameters with data types and descriptions, output specifications, usage examples, and DisTorch2 distributed loading explanations with allocation modes and strategies
 - **Note**: Documentation covers core ComfyUI-MultiGPU functionality only. Third-party custom node integrations (WanVideoWrapper, Florence2, etc.) have their own separate documentation.
