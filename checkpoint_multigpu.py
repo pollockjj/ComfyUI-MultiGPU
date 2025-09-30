@@ -1,8 +1,3 @@
-"""
-Advanced Checkpoint Loaders for MultiGPU
-Provides device-specific and DisTorch2 sharding for checkpoint components
-"""
-
 import torch
 import logging
 import hashlib
