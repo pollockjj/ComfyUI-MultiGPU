@@ -206,10 +206,7 @@ def check_cpu_memory_threshold(threshold_percent=CPU_MEMORY_THRESHOLD_PERCENT):
             multigpu_memory_log("cpu_monitor", f"skip_hysteresis:{current_usage:.1f}pct")
 
 def force_full_system_cleanup(reason="manual", force=True):
-    """
-    Mirror ComfyUI-Manager 'Free model and node cache' by setting both flags:
-    unload_models=True and free_memory=True
-    """
+    """Mirror ComfyUI-Manager 'Free model and node cache' by setting unload_models=True and free_memory=True flags."""
     vm = psutil.virtual_memory()
     pre_cpu = vm.used
     pre_models = len(mm.current_loaded_models)
@@ -246,9 +243,7 @@ if not hasattr(mm.unload_all_models, '_mgpu_eject_distorch_patched'):
     _mgpu_original_unload_all_models = mm.unload_all_models
     
     def _mgpu_patched_unload_all_models():
-        """
-        Patched mm.unload_all_models with comprehensive diagnostics and fixed path alignment.
-        """
+        """Patched mm.unload_all_models with selective ejection support and comprehensive diagnostics."""
 
         logger.mgpu_mm_log(f"[UNLOAD_START] Patched unload_all_models called - initial model count: {len(mm.current_loaded_models)}")
 

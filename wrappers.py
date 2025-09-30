@@ -16,18 +16,7 @@ logger = logging.getLogger("MultiGPU")
 # ============================================================================
 
 def _create_distorch_safetensor_v2_override(cls, device_param_name, device_setter_func, apply_device_kwarg_workaround):
-    """
-    Internal factory function - creates DisTorch 2.0 override class with parameterized behavior.
-    
-    Args:
-        cls: The base class to override
-        device_param_name: Parameter name ("compute_device" or "device")
-        device_setter_func: Function to call for device setting
-        apply_device_kwarg_workaround: If True, sets kwargs['device'] = 'default' for ComfyUI compatibility
-    
-    Returns:
-        Override class with specified behavior
-    """
+    """Internal factory function creating DisTorch2 override class with parameterized device selection behavior."""
     from .distorch_2 import (
         register_patched_safetensor_modelpatcher,
         safetensor_allocation_store,

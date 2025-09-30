@@ -35,11 +35,13 @@ if not logger.handlers:
     logger.setLevel(log_level)
 
 def mgpu_mm_log_method(self, msg):
+    """Add MultiGPU model management logging method to logger instance."""
     if MGPU_MM_LOG:
         self.info(f"[MultiGPU Model Management] {msg}")
 logger.mgpu_mm_log = mgpu_mm_log_method.__get__(logger, type(logger))
 
 def check_module_exists(module_path):
+    """Check if a custom node module exists in ComfyUI custom_nodes directory."""
     full_path = os.path.join(folder_paths.get_folder_paths("custom_nodes")[0], module_path)
     logger.debug(f"[MultiGPU] Checking for module at {full_path}")
     if not os.path.exists(full_path):
@@ -52,16 +54,19 @@ current_device = mm.get_torch_device()
 current_text_encoder_device = mm.text_encoder_device()
 
 def set_current_device(device):
+    """Set the current device context for MultiGPU operations."""
     global current_device
     current_device = device
     logger.debug(f"[MultiGPU Initialization] current_device set to: {device}")
 
 def set_current_text_encoder_device(device):
+    """Set the current text encoder device context for CLIP models."""
     global current_text_encoder_device
     current_text_encoder_device = device
     logger.debug(f"[MultiGPU Initialization] current_text_encoder_device set to: {device}")
 
 def get_torch_device_patched():
+    """Return MultiGPU-aware device selection for patched mm.get_torch_device."""
     device = None
     if (not is_accelerator_available() or mm.cpu_state == mm.CPUState.CPU or "cpu" in str(current_device).lower()):
         device = torch.device("cpu")
@@ -72,6 +77,7 @@ def get_torch_device_patched():
     return device
 
 def text_encoder_device_patched():
+    """Return MultiGPU-aware text encoder device for patched mm.text_encoder_device."""
     device = None
     if (not is_accelerator_available() or mm.cpu_state == mm.CPUState.CPU or "cpu" in str(current_text_encoder_device).lower()):
         device = torch.device("cpu")
@@ -191,6 +197,7 @@ logger.info(dash_line)
 registration_data = []
 
 def register_and_count(module_names, node_map):
+    """Register MultiGPU node wrappers for detected custom node modules."""
     found = False
     for name in module_names:
         if check_module_exists(name):

@@ -52,7 +52,6 @@ def create_safetensor_model_hash(model, caller):
     logger.debug(f"[MultiGPU DisTorch V2] Created hash for {caller}: {final_hash[:8]}...")
     return final_hash
 
-
 def register_patched_safetensor_modelpatcher():
     """Register and patch the ModelPatcher for distributed safetensor loading"""
     from comfy.model_patcher import wipe_lowvram_weight, move_weight_functions
@@ -216,12 +215,8 @@ def register_patched_safetensor_modelpatcher():
         comfy.model_patcher.ModelPatcher._distorch_patched = True
         logger.info("[MultiGPU Core Patching] Successfully patched ModelPatcher.partially_load")
 
-
 def _extract_clip_head_blocks(raw_block_list, compute_device):
-    """
-    Helper: Identify and pre-assign CLIP head blocks to compute device.
-    Returns (head_blocks, distributable_blocks, block_assignments, head_memory)
-    """
+    """Identify and pre-assign CLIP head blocks to compute device returning head_blocks, distributable_blocks, block_assignments, and head_memory."""
     head_keywords = ['embed', 'wte', 'wpe', 'token_embedding', 'position_embedding']
     head_blocks = []
     distributable_blocks = []
@@ -237,7 +232,6 @@ def _extract_clip_head_blocks(raw_block_list, compute_device):
             distributable_blocks.append((module_size, module_name, module_object, params))
     
     return head_blocks, distributable_blocks, block_assignments, head_memory
-
 
 def analyze_safetensor_loading(model_patcher, allocations_string, is_clip=False):
     """
@@ -463,7 +457,6 @@ def analyze_safetensor_loading(model_patcher, allocations_string, is_clip=False)
         "block_assignments": block_assignments
     }
 
-
 def parse_memory_string(mem_str):
     """Parses a memory string (e.g., '4.0g', '512M') and returns bytes."""
     mem_str = mem_str.strip().lower()
@@ -484,11 +477,7 @@ def parse_memory_string(mem_str):
         return val
 
 def calculate_fraction_from_byte_expert_string(model_patcher, byte_str):
-    """
-    Converts a user-provided byte string (e.g., "cuda:1,4gb;cpu,*") into a
-    fractional VRAM allocation string that the main assignment logic can use.
-    This function strictly respects device order and byte quotas.
-    """
+    """Convert byte allocation string (e.g. 'cuda:1,4gb;cpu,*') to fractional VRAM allocation string respecting device order and byte quotas."""
     raw_block_list = model_patcher._load_list()
     total_model_memory = sum(module_size for module_size, _, _, _ in raw_block_list)
     remaining_model_bytes = total_model_memory
@@ -547,10 +536,7 @@ def calculate_fraction_from_byte_expert_string(model_patcher, byte_str):
     return allocations_string
 
 def calculate_fraction_from_ratio_expert_string(model_patcher, ratio_str):
-    """
-    Converts a user-provided ratio string (which describes how to split the MODEL)
-    into a fraction string (which describes the fraction of DEVICE VRAM to use).
-    """
+    """Convert ratio allocation string (e.g. 'cuda:0,25%;cpu,75%') describing model split to fractional VRAM allocation string."""
     raw_block_list = model_patcher._load_list()
     total_model_memory = sum(module_size for module_size, _, _, _ in raw_block_list)
 

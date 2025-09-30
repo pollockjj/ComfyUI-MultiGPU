@@ -21,6 +21,7 @@ class DeviceSelectorMultiGPU:
     CATEGORY = "multigpu"
 
     def select_device(self, device):
+        """Select target device from available device list."""
         return (device,)
 
 
@@ -38,6 +39,7 @@ class HunyuanVideoEmbeddingsAdapter:
     CATEGORY = "multigpu"
 
     def adapt_embeddings(self, hyvid_embeds):
+        """Adapt HunyuanVideo embeddings to standard ComfyUI conditioning format."""
         cond = hyvid_embeds["prompt_embeds"]
         
         pooled_dict = {
@@ -73,6 +75,7 @@ class UnetLoaderGGUF:
     TITLE = "Unet Loader (GGUF)"
 
     def load_unet(self, unet_name, dequant_dtype=None, patch_dtype=None, patch_on_device=None):
+        """Load GGUF format UNet model."""
         original_loader = NODE_CLASS_MAPPINGS["UnetLoaderGGUF"]()
         return original_loader.load_unet(unet_name, dequant_dtype, patch_dtype, patch_on_device)
 
@@ -110,20 +113,24 @@ class CLIPLoaderGGUF:
 
     @classmethod
     def get_filename_list(s):
+        """Get combined list of CLIP and CLIP_GGUF model files."""
         files = []
         files += folder_paths.get_filename_list("clip")
         files += folder_paths.get_filename_list("clip_gguf")
         return sorted(files)
 
     def load_data(self, ckpt_paths):
+        """Load CLIP model data from checkpoint paths."""
         original_loader = NODE_CLASS_MAPPINGS["CLIPLoaderGGUF"]()
         return original_loader.load_data(ckpt_paths)
 
     def load_patcher(self, clip_paths, clip_type, clip_data):
+        """Create ModelPatcher for CLIP model."""
         original_loader = NODE_CLASS_MAPPINGS["CLIPLoaderGGUF"]()
         return original_loader.load_patcher(clip_paths, clip_type, clip_data)
 
     def load_clip(self, clip_name, type="stable_diffusion", device=None):
+        """Load CLIP model from GGUF or standard format."""
         original_loader = NODE_CLASS_MAPPINGS["CLIPLoaderGGUF"]()
         return original_loader.load_clip(clip_name, type)
 
@@ -144,6 +151,7 @@ class DualCLIPLoaderGGUF(CLIPLoaderGGUF):
     TITLE = "DualCLIPLoader (GGUF)"
 
     def load_clip(self, clip_name1, clip_name2, type, device=None):
+        """Load dual CLIP model configuration."""
         original_loader = NODE_CLASS_MAPPINGS["DualCLIPLoaderGGUF"]()
         clip = original_loader.load_clip(clip_name1, clip_name2, type)
         clip[0].patcher.load(force_patch_weights=True)
@@ -165,6 +173,7 @@ class TripleCLIPLoaderGGUF(CLIPLoaderGGUF):
     TITLE = "TripleCLIPLoader (GGUF)"
 
     def load_clip(self, clip_name1, clip_name2, clip_name3, type="sd3"):
+        """Load triple CLIP model configuration for SD3."""
         original_loader = NODE_CLASS_MAPPINGS["TripleCLIPLoaderGGUF"]()
         return original_loader.load_clip(clip_name1, clip_name2, clip_name3, type)
 
@@ -184,6 +193,7 @@ class QuadrupleCLIPLoaderGGUF(CLIPLoaderGGUF):
     TITLE = "QuadrupleCLIPLoader (GGUF)"
 
     def load_clip(self, clip_name1, clip_name2, clip_name3, clip_name4, type="stable_diffusion"):
+        """Load quadruple CLIP model configuration."""
         original_loader = NODE_CLASS_MAPPINGS["QuadrupleCLIPLoaderGGUF"]()
         return original_loader.load_clip(clip_name1, clip_name2, clip_name3, clip_name4, type)
 
@@ -207,12 +217,15 @@ class LTXVLoader:
     OUTPUT_NODE = False
 
     def load(self, ckpt_name, dtype):
+        """Load LTXV model and VAE with specified precision."""
         original_loader = NODE_CLASS_MAPPINGS["LTXVLoader"]()
         return original_loader.load(ckpt_name, dtype)
     def _load_unet(self, load_device, offload_device, weights, num_latent_channels, dtype, config=None ):
+        """Load LTXV UNet with device-specific configuration."""
         original_loader = NODE_CLASS_MAPPINGS["LTXVLoader"]()
         return original_loader._load_unet(load_device, offload_device, weights, num_latent_channels, dtype, config=None )
     def _load_vae(self, weights, config=None):
+        """Load LTXV VAE from weights."""
         original_loader = NODE_CLASS_MAPPINGS["LTXVLoader"]()
         return original_loader._load_vae(weights, config=None)
 
@@ -239,6 +252,7 @@ class Florence2ModelLoader:
     CATEGORY = "Florence2"
 
     def loadmodel(self, model, precision, attention, lora=None):
+        """Load Florence2 vision model with specified precision and attention mode."""
         original_loader = NODE_CLASS_MAPPINGS["Florence2ModelLoader"]()
         return original_loader.loadmodel(model, precision, attention, lora)
 
@@ -286,6 +300,7 @@ class DownloadAndLoadFlorence2Model:
     CATEGORY = "Florence2"
 
     def loadmodel(self, model, precision, attention, lora=None):
+        """Download and load Florence2 model from HuggingFace."""
         original_loader = NODE_CLASS_MAPPINGS["DownloadAndLoadFlorence2Model"]()
         return original_loader.loadmodel(model, precision, attention, lora)
 
@@ -301,6 +316,7 @@ class CheckpointLoaderNF4:
 
 
     def load_checkpoint(self, ckpt_name):
+        """Load checkpoint in NF4 quantized format."""
         original_loader = NODE_CLASS_MAPPINGS["CheckpointLoaderNF4"]()
         return original_loader.load_checkpoint(ckpt_name)
 
@@ -317,6 +333,7 @@ class LoadFluxControlNet:
     CATEGORY = "XLabsNodes"
 
     def loadmodel(self, model_name, controlnet_path):
+        """Load Flux ControlNet model."""
         original_loader = NODE_CLASS_MAPPINGS["LoadFluxControlNet"]()
         return original_loader.loadmodel(model_name, controlnet_path)
 
@@ -337,6 +354,7 @@ class MMAudioModelLoader:
     CATEGORY = "MMAudio"
 
     def loadmodel(self, mmaudio_model, base_precision):
+        """Load MMAudio model with specified precision."""
         original_loader = NODE_CLASS_MAPPINGS["MMAudioModelLoader"]()
         return original_loader.loadmodel(mmaudio_model, base_precision)
 
@@ -364,6 +382,7 @@ class MMAudioFeatureUtilsLoader:
     CATEGORY = "MMAudio"
 
     def loadmodel(self, vae_model, precision, synchformer_model, clip_model, mode, bigvgan_vocoder_model=None):
+        """Load MMAudio feature extraction utilities including VAE, Synchformer, and CLIP."""
         original_loader = NODE_CLASS_MAPPINGS["MMAudioFeatureUtilsLoader"]()
         return original_loader.loadmodel(vae_model, precision, synchformer_model, clip_model, mode, bigvgan_vocoder_model)
 
@@ -394,6 +413,7 @@ class MMAudioSampler:
     CATEGORY = "MMAudio"
 
     def sample(self, mmaudio_model, seed, feature_utils, duration, steps, cfg, prompt, negative_prompt, mask_away_clip, force_offload, images=None):
+        """Sample audio from MMAudio model with conditioning."""
         original_loader = NODE_CLASS_MAPPINGS["MMAudioSampler"]()
         return original_loader.sample(mmaudio_model, seed, feature_utils, duration, steps, cfg, prompt, negative_prompt, mask_away_clip, force_offload, images)
 
@@ -407,6 +427,7 @@ class PulidModelLoader:
     CATEGORY = "pulid"
 
     def load_model(self, pulid_file):
+        """Load PuLID identity preservation model."""
         original_loader = NODE_CLASS_MAPPINGS["PulidModelLoader"]()
         return original_loader.load_model(pulid_file)
 
@@ -424,6 +445,7 @@ class PulidInsightFaceLoader:
     CATEGORY = "pulid"
 
     def load_insightface(self, provider):
+        """Load InsightFace face analysis model for PuLID."""
         original_loader = NODE_CLASS_MAPPINGS["PulidInsightFaceLoader"]()
         return original_loader.load_insightface(provider)
 
@@ -439,6 +461,7 @@ class PulidEvaClipLoader:
     CATEGORY = "pulid"
 
     def load_eva_clip(self):
+        """Load EVA CLIP model for PuLID."""
         original_loader = NODE_CLASS_MAPPINGS["PulidEvaClipLoader"]()
         return original_loader.load_eva_clip()
 
@@ -473,6 +496,7 @@ class HyVideoModelLoader:
     CATEGORY = "HunyuanVideoWrapper"
 
     def loadmodel(self, model, base_precision, load_device, quantization, compile_args=None, attention_mode="sdpa", block_swap_args=None, lora=None, auto_cpu_offload=False):
+        """Load HunyuanVideo model with specified precision and quantization."""
         original_loader = NODE_CLASS_MAPPINGS["HyVideoModelLoader"]()
         return original_loader.loadmodel(model, base_precision, load_device, quantization, compile_args, attention_mode, block_swap_args, lora, auto_cpu_offload)
 
@@ -498,6 +522,7 @@ class HyVideoVAELoader:
     DESCRIPTION = "Loads Hunyuan VAE model from 'ComfyUI/models/vae'"
 
     def loadmodel(self, model_name, precision, compile_args=None):
+        """Load HunyuanVideo VAE model."""
         original_loader = NODE_CLASS_MAPPINGS["HyVideoVAELoader"]()
         return original_loader.loadmodel(model_name, precision, compile_args)
 
@@ -526,6 +551,7 @@ class DownloadAndLoadHyVideoTextEncoder:
     DESCRIPTION = "Loads Hunyuan text_encoder model from 'ComfyUI/models/LLM'"
 
     def loadmodel(self, llm_model, clip_model, precision,  apply_final_norm=False, hidden_state_skip_layer=2, quantization="disabled"):
+        """Download and load HunyuanVideo text encoder from HuggingFace."""
         original_loader = NODE_CLASS_MAPPINGS["DownloadAndLoadHyVideoTextEncoder"]()
         return original_loader.loadmodel(llm_model, clip_model, precision, apply_final_norm, hidden_state_skip_layer, quantization)
 
@@ -542,6 +568,7 @@ class UNetLoaderLP:
     TITLE = "UNet Loader (LP)"
 
     def load_unet(self, unet_name):
+        """Load UNet with low-precision LoRA flag for CPU storage optimization."""
         original_loader = NODE_CLASS_MAPPINGS["UNETLoader"]()
         out = original_loader.load_unet(unet_name)
         

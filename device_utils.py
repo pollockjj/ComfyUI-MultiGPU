@@ -1,9 +1,3 @@
-"""
-Device detection, management, and inspection utilities for ComfyUI-MultiGPU.
-Single source of truth for all device enumeration, compatibility checks, and VRAM management.
-Handles all device types supported by ComfyUI core.
-"""
-
 import torch
 import logging
 import hashlib
@@ -13,12 +7,7 @@ import gc
 
 logger = logging.getLogger("MultiGPU")
 
-# Module-level cache for device list (populated once on first call)
 _DEVICE_LIST_CACHE = None
-
-# ==========================================================================================
-# Device Detection and Management
-# ==========================================================================================
 
 def get_device_list():
     """
@@ -38,25 +27,19 @@ def get_device_list():
     """
     global _DEVICE_LIST_CACHE
     
-    # Return cached result if already populated
     if _DEVICE_LIST_CACHE is not None:
         return _DEVICE_LIST_CACHE
     
-    # First time - do the actual detection
     devs = []
     
-    # CPU is always physically present and can store tensors
     devs.append("cpu")
     
-    # CUDA devices (NVIDIA GPUs)
     if hasattr(torch, "cuda") and hasattr(torch.cuda, "is_available") and torch.cuda.is_available():
         device_count = torch.cuda.device_count()
         devs += [f"cuda:{i}" for i in range(device_count)]
         logger.debug(f"[MultiGPU_Device_Utils] Found {device_count} CUDA device(s)")
     
-    # XPU devices (Intel GPUs)
     try:
-        # Try to import intel extension first (may be required for XPU support)
         import intel_extension_for_pytorch as ipex
     except ImportError:
         pass
@@ -66,7 +49,6 @@ def get_device_list():
         devs += [f"xpu:{i}" for i in range(device_count)]
         logger.debug(f"[MultiGPU_Device_Utils] Found {device_count} XPU device(s)")
     
-    # NPU devices (Ascend NPUs from Huawei)
     try:
         import torch_npu
         if hasattr(torch, "npu") and hasattr(torch.npu, "is_available") and torch.npu.is_available():
@@ -76,7 +58,6 @@ def get_device_list():
     except ImportError:
         pass
     
-    # MLU devices (Cambricon MLUs)
     try:
         import torch_mlu
         if hasattr(torch, "mlu") and hasattr(torch.mlu, "is_available") and torch.mlu.is_available():
@@ -86,12 +67,10 @@ def get_device_list():
     except ImportError:
         pass
     
-    # MPS device (Apple Metal - single device only)
     if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
         devs.append("mps")
         logger.debug("[MultiGPU_Device_Utils] Found MPS device")
     
-    # DirectML devices (Windows DirectML for AMD/Intel/NVIDIA)
     try:
         import torch_directml
         adapter_count = torch_directml.device_count()
@@ -101,7 +80,6 @@ def get_device_list():
     except ImportError:
         pass
     
-    # IXUCA/CoreX devices (special accelerator)
     try:
         if hasattr(torch, "corex"):
             if hasattr(torch.corex, "device_count"):
@@ -114,115 +92,69 @@ def get_device_list():
     except ImportError:
         pass
     
-    # Cache the result for future calls
     _DEVICE_LIST_CACHE = devs
     
-    # Log only once when initially populated
     logger.debug(f"[MultiGPU_Device_Utils] Device list initialized: {devs}")
     
     return devs
 
 def is_accelerator_available():
-    """
-    Check if any accelerator device is available.
-    Used by patched functions to determine CPU fallback.
-    
-    Returns True if any GPU/accelerator is available, False otherwise.
-    """
-    # Check CUDA
+    """Check if any GPU or accelerator device is available including CUDA, XPU, NPU, MLU, MPS, DirectML, or CoreX."""
     if hasattr(torch, "cuda") and torch.cuda.is_available():
         return True
     
-    # Check XPU (Intel GPU)
     if hasattr(torch, "xpu") and hasattr(torch.xpu, "is_available") and torch.xpu.is_available():
         return True
     
-    # Check NPU (Ascend)
     try:
         import torch_npu
         if hasattr(torch, "npu") and hasattr(torch.npu, "is_available") and torch.npu.is_available():
             return True
     except ImportError:
         pass
-    
-    # Check MLU (Cambricon)
+
     try:
         import torch_mlu
         if hasattr(torch, "mlu") and hasattr(torch.mlu, "is_available") and torch.mlu.is_available():
             return True
     except ImportError:
         pass
-    
-    # Check MPS (Apple Metal)
+
     if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
         return True
-    
-    # Check DirectML
+
     try:
         import torch_directml
         if torch_directml.device_count() > 0:
             return True
     except ImportError:
         pass
-    
-    # Check CoreX/IXUCA
+
     if hasattr(torch, "corex"):
         return True
     
     return False
 
 def is_device_compatible(device_string):
-    """
-    Check if a device string represents a valid, available device.
-    
-    Args:
-        device_string: Device identifier like "cuda:0", "cpu", "xpu:1", etc.
-    
-    Returns:
-        True if the device is available, False otherwise.
-    """
+    """Check if a device string represents a valid available device."""
     available_devices = get_device_list()
     return device_string in available_devices
 
 def get_device_type(device_string):
-    """
-    Extract the device type from a device string.
-    
-    Args:
-        device_string: Device identifier like "cuda:0", "cpu", "xpu:1", etc.
-    
-    Returns:
-        Device type string (e.g., "cuda", "cpu", "xpu", "npu", "mlu", "mps", "directml", "corex")
-    """
+    """Extract device type from device string (e.g. 'cuda' from 'cuda:0')."""
     if ":" in device_string:
         return device_string.split(":")[0]
     return device_string
 
 def parse_device_string(device_string):
-    """
-    Parse a device string into type and index.
-
-    Args:
-        device_string: Device identifier like "cuda:0", "cpu", "xpu:1", etc.
-
-    Returns:
-        Tuple of (device_type, device_index) where index is None for non-indexed devices
-    """
+    """Parse device string into (device_type, device_index) tuple."""
     if ":" in device_string:
         parts = device_string.split(":")
         return parts[0], int(parts[1])
     return device_string, None
 
-# ==========================================================================================
-# VRAM Management (Multi-device cache clearing)
-# ==========================================================================================
-
 def soft_empty_cache_multigpu():
-    """
-    Replicate ComfyUI's cache clearing but for ALL devices in MultiGPU.
-    Uses context managers to ensure the calling thread's device context is restored.
-    """
-    # Import model management functions
+    """Clear allocator caches across all devices using context managers to preserve calling thread device context."""
     from .model_management_mgpu import multigpu_memory_log
     
     logger.mgpu_mm_log("soft_empty_cache_multigpu: starting GC and multi-device cache clear")
@@ -301,14 +233,7 @@ logger.info("[MultiGPU Core Patching] Patching mm.soft_empty_cache for Comprehen
 original_soft_empty_cache = mm.soft_empty_cache
 
 def soft_empty_cache_distorch2_patched(force=False):
-    """
-    Patched mm.soft_empty_cache.
-    - Prunes DisTorch store bookkeeping to avoid stale references
-    - Manages VRAM: if DisTorch2 models are active, clear allocator caches on all devices;
-      otherwise delegate to original mm.soft_empty_cache.
-    - Manages CPU RAM: adaptive threshold-based PromptExecutor cache reset;
-      and force-triggered reset when explicitly requested (mirrors ComfyUI 'Free memory' button).
-    """
+    """Patched mm.soft_empty_cache managing VRAM across all devices, CPU RAM with adaptive thresholding, and DisTorch store pruning."""
     from .model_management_mgpu import multigpu_memory_log, check_cpu_memory_threshold, trigger_executor_cache_reset
     from .distorch_2 import safetensor_allocation_store, create_safetensor_model_hash
     
@@ -364,15 +289,7 @@ mm.soft_empty_cache = soft_empty_cache_distorch2_patched
 # ==========================================================================================
 
 def comfyui_memory_load(tag):
-    """
-    Returns a single-line, pipe-delimited snapshot of system and device memory usage.
-
-    Format: "tag=<TAG>|cpu=<used_GiB>/<total_GiB>|<device>=<used_GiB>/<total_GiB>|..."
-    - CPU values represent system RAM via psutil.
-    - Device values represent VRAM via comfy.model_management across all non-CPU devices.
-    - Device identifiers use the torch device string from get_device_list() (e.g., 'cuda:0', 'xpu:0', 'mps').
-    - Values are in GiB with 2 decimals.
-    """
+    """Return single-line pipe-delimited snapshot of system and device memory usage in GiB."""
     # CPU RAM
     vm = psutil.virtual_memory()
     cpu_used_gib = vm.used / (1024.0 ** 3)

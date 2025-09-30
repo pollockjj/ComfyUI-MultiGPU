@@ -19,10 +19,7 @@ checkpoint_distorch_config = {}
 original_load_state_dict_guess_config = None
 
 def patch_load_state_dict_guess_config():
-    """
-    Monkey patch the load_state_dict_guess_config function to replace its logic
-    with a MultiGPU-aware implementation.
-    """
+    """Monkey patch comfy.sd.load_state_dict_guess_config with MultiGPU-aware checkpoint loading."""
     global original_load_state_dict_guess_config
     
     if original_load_state_dict_guess_config is not None:
@@ -36,7 +33,7 @@ def patch_load_state_dict_guess_config():
 def patched_load_state_dict_guess_config(sd, output_vae=True, output_clip=True, output_clipvision=False,
                                         embedding_directory=None, output_model=True, model_options={},
                                         te_model_options={}, metadata=None):
-    
+    """Patched checkpoint loader with MultiGPU and DisTorch2 device placement support."""
     from . import set_current_device, set_current_text_encoder_device, current_device, current_text_encoder_device
     
     sd_size = sum(p.numel() for p in sd.values() if hasattr(p, 'numel'))
