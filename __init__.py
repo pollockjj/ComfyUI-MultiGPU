@@ -111,7 +111,6 @@ from .nodes import (
     HyVideoVAELoader,
     DownloadAndLoadHyVideoTextEncoder,
     UNetLoaderLP,
-    FullCleanupMultiGPU,
 )
 
 from .wanvideo import (

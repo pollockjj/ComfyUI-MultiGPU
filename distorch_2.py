@@ -140,12 +140,7 @@ def register_patched_safetensor_modelpatcher():
             mem_counter = 0
 
             is_clip_model = getattr(self, 'is_clip', False)
-            if is_clip_model:
-                logger.debug(f"[MultiGPU DisTorch V2] Using CLIP-specific allocation for model {debug_hash[:8]} (HEAD PRESERVATION ENABLED)")
-                device_assignments = analyze_safetensor_loading_clip(self, allocations)
-            else:
-                logger.debug(f"[MultiGPU DisTorch V2] Using standard allocation for model {debug_hash[:8]} (UNET/VAE - UNTOUCHED)")
-                device_assignments = analyze_safetensor_loading(self, allocations)
+            device_assignments = analyze_safetensor_loading(self, allocations, is_clip=is_clip_model)
             
             model_original_dtype = comfy.utils.weight_dtype(self.model.state_dict())
             high_precision_loras = getattr(self.model, "_distorch_high_precision_loras", True)
@@ -222,10 +217,32 @@ def register_patched_safetensor_modelpatcher():
         logger.info("[MultiGPU Core Patching] Successfully patched ModelPatcher.partially_load")
 
 
-def analyze_safetensor_loading(model_patcher, allocations_string):
+def _extract_clip_head_blocks(raw_block_list, compute_device):
     """
-    Analyze and distribute safetensor model blocks across devices
-    Target for refactor back into one function once stability for CLIP is established.
+    Helper: Identify and pre-assign CLIP head blocks to compute device.
+    Returns (head_blocks, distributable_blocks, block_assignments, head_memory)
+    """
+    head_keywords = ['embed', 'wte', 'wpe', 'token_embedding', 'position_embedding']
+    head_blocks = []
+    distributable_blocks = []
+    head_memory = 0
+    block_assignments = {}
+    
+    for module_size, module_name, module_object, params in raw_block_list:
+        if any(kw in module_name.lower() for kw in head_keywords):
+            head_blocks.append((module_size, module_name, module_object, params))
+            block_assignments[module_name] = compute_device
+            head_memory += module_size
+        else:
+            distributable_blocks.append((module_size, module_name, module_object, params))
+    
+    return head_blocks, distributable_blocks, block_assignments, head_memory
+
+
+def analyze_safetensor_loading(model_patcher, allocations_string, is_clip=False):
+    """
+    Analyze and distribute safetensor model blocks across devices.
+    Supports CLIP head preservation when is_clip=True.
     """
     DEVICE_RATIOS_DISTORCH = {}
     device_table = {}
@@ -310,13 +327,23 @@ def analyze_safetensor_loading(model_patcher, allocations_string):
     total_memory = 0
 
     raw_block_list = model_patcher._load_list()
-
     total_memory = sum(module_size for module_size, _, _, _ in raw_block_list)
 
     MIN_BLOCK_THRESHOLD = total_memory * 0.0001
     logger.debug(f"[MultiGPU DisTorch V2] Total model memory: {total_memory} bytes")
     logger.debug(f"[MultiGPU DisTorch V2] Tiny block threshold (0.01%): {MIN_BLOCK_THRESHOLD} bytes")
 
+    # CLIP-specific: Extract head blocks and get pre-assignments
+    head_memory = 0
+    block_assignments = {}
+    if is_clip:
+        head_blocks, distributable_raw, block_assignments, head_memory = \
+            _extract_clip_head_blocks(raw_block_list, compute_device)
+        logger.info(f"[MultiGPU DisTorch V2 CLIP] Preserving {len(head_blocks)} head layer(s) ({head_memory/(1024**2):.2f} MB) on compute device: {compute_device}")
+    else:
+        distributable_raw = raw_block_list
+
+    # Build all_blocks list for summary (using full raw_block_list)
     all_blocks = []
     for module_size, module_name, module_object, params in raw_block_list:
         block_type = type(module_object).__name__
@@ -325,8 +352,13 @@ def analyze_safetensor_loading(model_patcher, allocations_string):
         memory_by_type[block_type] += module_size
         all_blocks.append((module_name, module_object, block_type, module_size))
 
-    block_list = [b for b in all_blocks if b[3] >= MIN_BLOCK_THRESHOLD]
-    tiny_block_list = [b for b in all_blocks if b[3] < MIN_BLOCK_THRESHOLD]
+    # Use distributable blocks for actual allocation (for CLIP, this excludes heads)
+    distributable_all_blocks = []
+    for module_size, module_name, module_object, params in distributable_raw:
+        distributable_all_blocks.append((module_name, module_object, type(module_object).__name__, module_size))
+
+    block_list = [b for b in distributable_all_blocks if b[3] >= MIN_BLOCK_THRESHOLD]
+    tiny_block_list = [b for b in distributable_all_blocks if b[3] < MIN_BLOCK_THRESHOLD]
     
     logger.debug(f"[MultiGPU DisTorch V2] Total blocks: {len(all_blocks)}")
     logger.debug(f"[MultiGPU DisTorch V2] Distributable blocks: {len(block_list)}")
@@ -356,6 +388,11 @@ def analyze_safetensor_loading(model_patcher, allocations_string):
         dev: device_table[dev]["alloc_gb"] * (1024**3)
         for dev in donor_devices
     }
+
+    # CLIP-specific: Adjust compute_device quota to account for locked head blocks
+    if is_clip and compute_device in donor_quotas and head_memory > 0:
+        donor_quotas[compute_device] = max(0, donor_quotas[compute_device] - head_memory)
+        logger.debug(f"[MultiGPU DisTorch V2 CLIP] Adjusted {compute_device} quota by -{head_memory/(1024**2):.2f} MB for head preservation")
 
     # Iterate from the TAIL of the model, assigning blocks to donors until their quotas are filled.
     for block_name, module, block_type, block_memory in reversed(block_list):
@@ -418,210 +455,6 @@ def analyze_safetensor_loading(model_patcher, allocations_string):
         mem_mb = device_memories[dev] / (1024 * 1024)
         mem_percent = (device_memories[dev] / total_memory) * 100 if total_memory > 0 else 0
         logger.info(fmt_assign.format(dev, str(len(dist_blocks)), f"{mem_mb:.2f}", f"{mem_percent:.1f}%"))
-    
-    logger.info(dash_line)
-
-    return {
-        "device_assignments": device_assignments,
-        "block_assignments": block_assignments
-    }
-
-
-def analyze_safetensor_loading_clip(model_patcher, allocations_string):
-    """
-    CLIP-SPECIFIC: A 1:1 clone of the working UNET allocation logic with the
-    single required modification to preserve head-blocks on the compute device.
-    All other logic and UX (logging, etc.) is identical to the original.
-    Target for refactor once stability for CLIP is established.
-    """
-    DEVICE_RATIOS_DISTORCH = {}
-    device_table = {}
-    distorch_alloc = allocations_string
-    virtual_vram_gb = 0.0
-
-    distorch_alloc, virtual_vram_str = allocations_string.split('#')
-
-    compute_device = virtual_vram_str.split(';')[0]
-
-    logger.info(f"[MultiGPU_DisTorch2_CLIP] CLIP Compute Device: {compute_device}")
-
-    if not distorch_alloc:
-        mode = "fraction"
-        logger.info("[MultiGPU_DisTorch2_CLIP] Expert String Examples:")
-        logger.info("  Direct(byte) Mode - cuda:0,500mb;cuda:1,3.0g;cpu,5gb* -> '*' cpu = over/underflow device, put 0.50gb on cuda0, 3.00gb on cuda1, and 5.00gb (or the rest) on cpu")
-        logger.info("  Ratio(%) Mode - cuda:0,8%;cuda:1,8%;cpu,4% -> 8:8:4 ratio, put 40% on cuda0, 40% on cuda1, and 20% on cpu")
-        distorch_alloc = calculate_safetensor_vvram_allocation(model_patcher, virtual_vram_str)
-
-    elif any(c in distorch_alloc.lower() for c in ['g', 'm', 'k', 'b']):
-        mode = "byte"
-        distorch_alloc = calculate_fraction_from_byte_expert_string(model_patcher, distorch_alloc)
-    elif "%" in distorch_alloc:
-        mode = "ratio"
-        distorch_alloc = calculate_fraction_from_ratio_expert_string(model_patcher, distorch_alloc)
-        
-    all_devices = get_device_list()
-    present_devices = {item.split(',')[0] for item in distorch_alloc.split(';') if ',' in item}
-    for device in all_devices:
-        if device not in present_devices:
-            distorch_alloc += f";{device},0.0"
-
-    logger.info(f"[MultiGPU_DisTorch2_CLIP] Final CLIP Allocation String:\n{distorch_alloc}")
-
-    eq_line = "=" * 50
-    dash_line = "-" * 50
-    fmt_assign = "{:<18}{:>7}{:>14}{:>10}"
-
-    for allocation in distorch_alloc.split(';'):
-        if ',' not in allocation:
-            continue
-        dev_name, fraction = allocation.split(',')
-        fraction = float(fraction)
-        total_mem_bytes = mm.get_total_memory(torch.device(dev_name))
-        alloc_gb = (total_mem_bytes * fraction) / (1024**3)
-        DEVICE_RATIOS_DISTORCH[dev_name] = alloc_gb
-        device_table[dev_name] = {
-            "fraction": fraction,
-            "total_gb": total_mem_bytes / (1024**3),
-            "alloc_gb": alloc_gb
-        }
-
-    logger.info(eq_line)
-    logger.info("    DisTorch2 CLIP Model Device Allocations")
-    logger.info(eq_line)
-    
-    fmt_rosetta = "{:<8}{:>9}{:>9}{:>11}{:>10}"
-    logger.info(fmt_rosetta.format("Device", "VRAM GB", "Dev %", "Model GB", "Dist %"))
-    logger.info(dash_line)
-
-    sorted_devices = sorted(device_table.keys(), key=lambda d: (d == "cpu", d))
-    
-    total_allocated_model_bytes = sum(d["alloc_gb"] * (1024**3) for d in device_table.values())
-
-    for dev in sorted_devices:
-        total_dev_gb = device_table[dev]["total_gb"]
-        alloc_fraction = device_table[dev]["fraction"]
-        alloc_gb = device_table[dev]["alloc_gb"]
-        
-        dist_ratio_percent = (alloc_gb * (1024**3) / total_allocated_model_bytes) * 100 if total_allocated_model_bytes > 0 else 0
-
-        logger.info(fmt_rosetta.format(
-            dev,
-            f"{total_dev_gb:.2f}",
-            f"{alloc_fraction*100:.1f}%",
-            f"{alloc_gb:.2f}",
-            f"{dist_ratio_percent:.1f}%"
-        ))
-    
-    logger.info(dash_line)
-
-    block_summary = {}
-    memory_by_type = defaultdict(int)
-
-    raw_block_list = model_patcher._load_list()
-    total_memory = sum(module_size for module_size, _, _, _ in raw_block_list)
-
-    # Split the model into head and distributable parts
-    head_keywords = ['embed', 'wte', 'wpe', 'token_embedding', 'position_embedding']
-    head_blocks = []
-    distributable_blocks_raw = []
-    head_memory = 0
-
-    for module_size, module_name, module_object, params in raw_block_list:
-        if any(keyword in module_name.lower() for keyword in head_keywords):
-            head_blocks.append((module_size, module_name, module_object, params))
-        else:
-            distributable_blocks_raw.append((module_size, module_name, module_object, params))
-
-    MIN_BLOCK_THRESHOLD = total_memory * 0.0001
-    all_blocks = []
-
-    for module_size, module_name, module_object, params in raw_block_list:
-        block_type = type(module_object).__name__
-        block_summary[block_type] = block_summary.get(block_type, 0) + 1
-        memory_by_type[block_type] += module_size
-        all_blocks.append((module_name, module_object, block_type, module_size))
-
-    # Use the distributable part for actual allocation logic
-    distributable_all_blocks = []
-    for module_size, module_name, module_object, params in distributable_blocks_raw:
-        distributable_all_blocks.append((module_name, module_object, type(module_object).__name__, module_size))
-
-    block_list = [b for b in distributable_all_blocks if b[3] >= MIN_BLOCK_THRESHOLD]
-    tiny_block_list = [b for b in distributable_all_blocks if b[3] < MIN_BLOCK_THRESHOLD]
-    
-    logger.info("    DisTorch2 CLIP Model Layer Distribution")
-    logger.info(dash_line)
-    fmt_layer = "{:<18}{:>7}{:>14}{:>10}"
-    logger.info(fmt_layer.format("Layer Type", "Layers", "Memory (MB)", "% Total"))
-    logger.info(dash_line)
-    
-    for layer_type, count in block_summary.items():
-        mem_mb = memory_by_type[layer_type] / (1024 * 1024)
-        mem_percent = (memory_by_type[layer_type] / total_memory) * 100 if total_memory > 0 else 0
-        logger.info(fmt_layer.format(layer_type[:18], str(count), f"{mem_mb:.2f}", f"{mem_percent:.1f}%"))
-    
-    logger.info(dash_line)
-
-    block_assignments = {}
-
-    # Pre-assign head blocks and calculate their memory usage
-    for module_size, module_name, module_object, params in head_blocks:
-        block_assignments[module_name] = compute_device
-        head_memory += module_size
-    if head_blocks:
-        logger.info(f"[MultiGPU_DisTorch2_CLIP] Preserving {len(head_blocks)} head layer(s) ({head_memory / (1024*1024):.2f} MB) on compute device: {compute_device}")
-    donor_devices = [d for d in sorted_devices]
-    donor_quotas = {
-        dev: device_table[dev]["alloc_gb"] * (1024**3)
-        for dev in donor_devices
-    }
-    # Adjust compute_device quota to account for the locked head
-    if compute_device in donor_quotas:
-        donor_quotas[compute_device] = max(0, donor_quotas[compute_device] - head_memory)
-
-    for block_name, module, block_type, block_memory in reversed(block_list):
-        assigned_to_donor = False
-        for donor in donor_devices:
-            if donor_quotas[donor] >= block_memory:
-                block_assignments[block_name] = donor
-                donor_quotas[donor] -= block_memory
-                assigned_to_donor = True
-                break # Move to the next block
-        
-        if not assigned_to_donor:
-            block_assignments[block_name] = compute_device
-
-    for block_name, module, block_type, block_memory in tiny_block_list:
-        block_assignments[block_name] = compute_device
-
-    device_assignments = {device: [] for device in DEVICE_RATIOS_DISTORCH.keys()}
-    for block_name, device in block_assignments.items():
-        # Find the block in the original list to get all its info
-        for b_name, b_module, b_type, b_mem in all_blocks:
-            if b_name == block_name:
-                device_assignments[device].append((b_name, b_module, b_type, b_mem))
-                break
-
-    logger.info("DisTorch2 CLIP Model Final Device/Layer Assignments")
-    logger.info(dash_line)
-    logger.info(fmt_assign.format("Device", "Layers", "Memory (MB)", "% Total"))
-    logger.info(dash_line)
-    
-    device_memories = defaultdict(int)
-    device_counts = defaultdict(int)
-    for device, blocks in device_assignments.items():
-        for b_name, b_module, b_type, b_mem in blocks:
-            device_memories[device] += b_mem
-            device_counts[device] += 1
-
-    sorted_assignments = sorted(device_memories.keys(), key=lambda d: (d == "cpu", d))
-
-    for dev in sorted_assignments:
-        if device_counts[dev] == 0:
-            continue
-        mem_mb = device_memories[dev] / (1024 * 1024)
-        mem_percent = (device_memories[dev] / total_memory) * 100 if total_memory > 0 else 0
-        logger.info(fmt_assign.format(dev, str(device_counts[dev]), f"{mem_mb:.2f}", f"{mem_percent:.1f}%"))
     
     logger.info(dash_line)
 
@@ -842,10 +675,3 @@ def calculate_safetensor_vvram_allocation(model_patcher, virtual_vram_str):
     
     allocations_string = ";".join(allocation_parts)
     return allocations_string
-
-# NOTE: All wrapper functions have been moved to wrappers.py for better organization.
-# This file (distorch_2.py) now contains ONLY backend logic:
-# - register_patched_safetensor_modelpatcher()
-# - analyze_safetensor_loading() and analyze_safetensor_loading_clip()
-# - calculate_safetensor_vvram_allocation()
-# - Allocation stores and model hash functions
