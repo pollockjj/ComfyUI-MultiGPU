@@ -20,7 +20,7 @@ from .model_management_mgpu import (
     force_full_system_cleanup,
 )
 
-MGPU_MM_LOG = True 
+MGPU_MM_LOG = False 
 DEBUG_LOG = False
 
 logger = logging.getLogger("MultiGPU")
