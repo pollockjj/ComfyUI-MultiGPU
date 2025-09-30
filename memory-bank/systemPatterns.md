@@ -94,27 +94,78 @@ def parse_ratio_allocation(allocation_string):
     return device_ratios
 ```
 
-### Selective Ejection Pipeline (Current)
-Updated to reflect current code (Phase 3 implemented without global sentinel):
-- Load-time flagging (per-model transient):
-  - In each DisTorch2 override, after the real loader returns:
-    - `out[0].model._mgpu_unload_distorch_model = (keep_loaded == False)`
-  - Purpose: mark this specific DisTorch model for ejection only when the user unchecked “keep loaded”.
-- Manager-parity cleanup trigger:
-  - `force_full_system_cleanup(reason, force=True)` sets:
-    - `unload_models=True`, `free_memory=True` on PromptQueue (exactly what Manager’s “Free model and node cache” does).
-- Selective unloading:
-  - `mm.unload_all_models` is patched (`_mgpu_patched_unload_all_models` in `model_management_mgpu.py`):
-    - Splits `mm.current_loaded_models` into `models_to_unload` (flag==True) and `kept_models` (flag==False).
-    - If any are flagged, unloads only those and resets `mm.current_loaded_models = kept_models`.
-    - Note: If no models are flagged, the current code delegates to the original `unload_all_models()` (this is under review; see “Hardened Rule” below).
-- Multi-device VRAM cache + CPU reset:
-  - `mm.soft_empty_cache` is patched to `soft_empty_cache_distorch2_patched`:
-    - Detects DisTorch2-active state and clears allocator caches on all devices via `soft_empty_cache_multigpu()`
-    - Adaptive CPU memory reset (threshold-based), and optional forced `PromptExecutor.reset()` when `force=True` for Manager parity.
+### Selective Ejection Pipeline (v2.5.0 - VERIFIED WORKING)
 
-Hardened Rule (target behavior to restore):
-- If `models_to_unload` is empty, `unload_all_models` should be a strict no-op (do not delegate to the original). Retained models must never be ejected when no flags are set. This will be re-applied during the rediscovery step.
+**Load-time Flagging** (per-model transient):
+```python
+# In DisTorch2 wrapper after real loader returns
+if hasattr(out[0], 'model') and hasattr(out[0].model, '_mgpu_keep_loaded'):
+    keep_loaded = out[0].model._mgpu_keep_loaded
+    out[0].model._mgpu_unload_distorch_model = (not keep_loaded)
+```
+Purpose: Mark specific DisTorch models for ejection when user unchecks "keep loaded"
+
+**Manager-Parity Cleanup Trigger**:
+```python
+def force_full_system_cleanup(reason="manual", force=True):
+    pq.set_flag("unload_models", True)  # Exactly what Manager's
+    pq.set_flag("free_memory", True)    # "Free model and node cache" does
+```
+
+**Selective Unloading** (patched `mm.unload_all_models`):
+```python
+def _mgpu_patched_unload_all_models():
+    # Categorize models by flag
+    models_to_unload = [lm for lm in mm.current_loaded_models 
+                        if getattr(lm.model, '_mgpu_unload_distorch_model', False)]
+    kept_models = [lm for lm in mm.current_loaded_models
+                   if not getattr(lm.model, '_mgpu_unload_distorch_model', False)]
+    
+    if kept_models:
+        # Selective unload: eject flagged, retain others
+        for lm in models_to_unload:
+            lm.model_unload(unpatch_weights=True)
+        
+        # Add GC anchors to prevent premature collection
+        for lm in kept_models:
+            add_retention_anchor(lm.model, "keep_loaded_protection")
+        
+        # Rebuild with kept models only
+        mm.current_loaded_models = kept_models
+    else:
+        # No models to keep - standard cleanup
+        _mgpu_original_unload_all_models()
+```
+
+**Multi-Device VRAM + CPU Management** (patched `mm.soft_empty_cache`):
+```python
+def soft_empty_cache_distorch2_patched(force=False):
+    # 1. Detect DisTorch2 activity
+    is_distorch_active = any(model_hash in safetensor_allocation_store 
+                            for model in mm.current_loaded_models)
+    
+    # 2. VRAM allocator management
+    if is_distorch_active:
+        soft_empty_cache_multigpu()  # Clear all device caches
+    else:
+        original_soft_empty_cache(force)  # Standard single-device
+    
+    # 3. Adaptive CPU memory management
+    check_cpu_memory_threshold()
+    
+    # 4. Forced executor reset (Manager parity)
+    if force:
+        trigger_executor_cache_reset(reason="forced_soft_empty", force=True)
+```
+
+**Verified Working** (Production Logs 2025-09-30):
+```
+[CATEGORIZE_SUMMARY] kept_models: 2, models_to_unload: 1, total: 3
+[SELECTIVE_UNLOAD] Proceeding with selective unload: retaining 2, unloading 1
+[UNLOAD_EXECUTE] Unloading model: Flux
+[REMAINING_MODEL] 0: AutoencodingEngine  
+[REMAINING_MODEL] 1: FluxClipModel_
+```
 
 ### Device Detection & Management
 
@@ -294,6 +345,58 @@ def benchmark_allocation_performance(model, hardware_config, allocation_configs)
         performance_ratio = distributed_time / baseline_time
         assert performance_ratio < expected_slowdown_threshold(hardware_config)
 ```
+
+## Recent Refactorings (v2.5.0)
+
+### DisTorch2 Allocation Consolidation (-179 lines)
+**Problem**: 85% code duplication between `analyze_safetensor_loading()` and `analyze_safetensor_loading_clip()`
+
+**Solution**: Unified function with CLIP support flag
+```python
+def _extract_clip_head_blocks(raw_block_list, compute_device):
+    """Helper: Identify and pre-assign CLIP head blocks to compute device"""
+    head_keywords = ['embed', 'wte', 'wpe', 'token_embedding', 'position_embedding']
+    head_blocks = []
+    distributable_blocks = []
+    block_assignments = {}
+    
+    for module_size, module_name, module_object, params in raw_block_list:
+        if any(kw in module_name.lower() for kw in head_keywords):
+            head_blocks.append((module_size, module_name, module_object, params))
+            block_assignments[module_name] = compute_device
+        else:
+            distributable_blocks.append((module_size, module_name, module_object, params))
+    
+    return head_blocks, distributable_blocks, block_assignments, head_memory
+
+def analyze_safetensor_loading(model_patcher, allocations_string, is_clip=False):
+    """Unified allocation function with CLIP head preservation support"""
+    # Common allocation logic...
+    
+    if is_clip:
+        head_blocks, distributable_raw, block_assignments, head_memory = \
+            _extract_clip_head_blocks(raw_block_list, compute_device)
+        # Adjust compute_device quota for head blocks
+        donor_quotas[compute_device] -= head_memory
+    else:
+        distributable_raw = raw_block_list
+        block_assignments = {}
+    
+    # Continue with unified distribution logic...
+```
+
+**Benefits**:
+- Single source of truth for allocation
+- CLIP special case isolated in 20-line helper
+- Easier to maintain and debug
+- Same behavior, cleaner architecture
+
+### Production Cleanup (-40 lines)
+**Removed**: Diagnostic instrumentation wrapper `_mgpu_instrumented_soft_empty_cache()`
+
+**Rationale**: Pure debug logging with no production function - removed to clean codebase
+
+**Result**: Clear separation between device_utils.py (functional) and model_management_mgpu.py (lifecycle)
 
 ## Module Architecture (Post-Refactoring)
 

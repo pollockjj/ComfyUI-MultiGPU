@@ -237,45 +237,6 @@ def force_full_system_cleanup(reason="manual", force=True):
     return summary
 
 # ==========================================================================================
-# Core Patching: soft_empty_cache (Instrumentation)
-# ==========================================================================================
-
-if not hasattr(mm.soft_empty_cache, '_mgpu_instrumented'):
-    logger.info("[MultiGPU Core Patching] Instrumenting mm.soft_empty_cache for diagnostics")
-    
-    _mgpu_original_soft_empty_cache = mm.soft_empty_cache
-    
-    def _mgpu_instrumented_soft_empty_cache(force=False):
-        """Instrumented soft_empty_cache to track what it does to mm.current_loaded_models"""
-        models_before = len(mm.current_loaded_models)
-        logger.mgpu_mm_log(f"[SOFT_EMPTY_ENTRY] Original mm.soft_empty_cache called, models_before={models_before}, force={force}")
-        
-        # Log the models present before calling original
-        for i, lm in enumerate(mm.current_loaded_models):
-            mp = lm.model
-            inner_model = getattr(mp, 'model', None)
-            model_name = type(inner_model).__name__ if inner_model else "None"
-            logger.mgpu_mm_log(f"[SOFT_EMPTY_ENTRY] Model {i} before: {model_name} (lm_id=0x{id(lm):x})")
-        
-        # Call original
-        result = _mgpu_original_soft_empty_cache(force)
-        
-        # Check what happened to models
-        models_after = len(mm.current_loaded_models)
-        logger.mgpu_mm_log(f"[SOFT_EMPTY_EXIT] Original mm.soft_empty_cache returned, models_after={models_after} (delta={models_after - models_before})")
-        
-        if models_after != models_before:
-            logger.mgpu_mm_log(f"[SOFT_EMPTY_CULPRIT] Original mm.soft_empty_cache MODIFIED mm.current_loaded_models: {models_before} → {models_after}")
-            
-        return result
-    
-    mm.soft_empty_cache = _mgpu_instrumented_soft_empty_cache
-    mm.soft_empty_cache._mgpu_instrumented = True
-    logger.info("[MultiGPU Core Patching] mm.soft_empty_cache instrumented successfully")
-else:
-    logger.debug("[MultiGPU Core Patching] mm.soft_empty_cache already instrumented - skipping")
-
-# ==========================================================================================
 # Core Patching: unload_all_models
 # ==========================================================================================
 
