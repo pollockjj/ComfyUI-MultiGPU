@@ -74,33 +74,78 @@ def register_patched_safetensor_modelpatcher():
             original_loaded_model_memory_required = mm.LoadedModel.model_memory_required
 
             def patched_loaded_model_memory_required(self, device):
-                """Drive unload behavior purely by unload_distorch_model flag"""
+                """Truth table for memory reporting:
+                   eject_models=0, is_distorch=0: return original
+                   eject_models=0, is_distorch=1: return original - virtual_vram_gb_bytes
+                   eject_models=1, is_distorch=0: mutually exclusive (shouldn't occur)
+                   eject_models=1, is_distorch=1: return MAX memory to force eviction"""
                 multigpu_memory_log("unload_distorch_model_memory_check", "start")
-                logger.mgpu_mm_log(f"[IS_DISTORCH_MODEL] Memory assessment requested for model on device: {device}")
-
-                # Check if this is a DisTorch model with unload_distorch_model flag
-                is_distorch_model = hasattr(getattr(getattr(self, 'model', None), 'model', None), '_mgpu_unload_distorch_model')
-
                 model_name = type(getattr(getattr(self, 'model', None), 'model', None)).__name__ if getattr(getattr(self, 'model', None), 'model', None) else "Unknown"
-                logger.mgpu_mm_log(f"[IS_DISTORCH_MODEL] DisTorch model: {model_name}, is_distorch_model={is_distorch_model}")
+                logger.mgpu_mm_log(f"[MEM_REPORT][{model_name}] Memory assessment requested for model on device: {device}")
 
-                if is_distorch_model:
-                    if self.model.model._mgpu_unload_distorch_model:
-                        total_device_memory = mm.get_total_memory(device)
-                        memory_gb = total_device_memory / (1024**3)
-                        logger.mgpu_mm_log(f"[IS_DISTORCH_MODEL] _mgpu_unload_distorch_model=True - Reporting MAX memory ({memory_gb:.2f}GB) to force complete eviction")
-                        return total_device_memory
-                    else:
-                        logger.mgpu_mm_log("[IS_DISTORCH_MODEL] _mgpu_unload_distorch_model=False - Reporting 0 bytes (prevents eviction)")
-                        return 0
-
-                # Not a DisTorch model - use original behavior
-                logger.mgpu_mm_log("[IS_DISTORCH_MODEL] Non-DisTorch model - Using original Comfy memory calculation")
+                # GET ORIGINAL MEMORY REQUIREMENT
                 original_result = original_loaded_model_memory_required(self, device)
                 original_gb = original_result / (1024**3) if original_result else 0
-                logger.mgpu_mm_log(f"[IS_DISTORCH_MODEL] Original calculation returned: {original_gb:.2f}GB")
-                multigpu_memory_log("keep_loaded_memory_check", "end")
-                return original_result
+
+                # CHECK FOR EJECT_MODELS PROPERTY
+                has_eject_models = hasattr(getattr(getattr(self, 'model', None), 'model', None), '_mgpu_eject_models')
+                logger.mgpu_mm_log(f"[MEM_REPORT][{model_name}] Original needs: {original_gb:.2f}GB, has_eject_models={has_eject_models}")
+
+                # CHECK IF DISTORCH MODEL WITH VIRTUAL VRAM PROPERTY
+                is_distorch_model = hasattr(getattr(getattr(self, 'model', None), 'model', None), '_mgpu_virtual_vram_gb')
+
+                # TRUTH TABLE APPLICATION
+                if has_eject_models:
+                    if not is_distorch_model:
+                        logger.mgpu_mm_log(f"[MEM_REPORT][{model_name}] ERROR: eject_models=1 but not DisTorch (mutually exclusive)")
+                    # eject_models=1, is_distorch=1: RETURN MAX MEMORY TO FORCE EVICTION
+                    logger.mgpu_mm_log(f"[MEM_REPORT][{model_name}] eject_models=1, is_distorch={is_distorch_model} → FORCING EVICTION WITH MAX MEMORY")
+
+                    # DISABLED: Manual ejection should happen automatically when MAX memory is returned
+                    DISABLE_MANUAL_EJECTION = True  # TODO: Remove this once auto-eviction confirmed
+                    if not DISABLE_MANUAL_EJECTION:
+                        logger.mgpu_mm_log(f"======= DIRECT MODEL EJECTION START[{model_name}] =======")
+                        logger.mgpu_mm_log(f"[DIRECT_EJECTION][{model_name}] Current loaded models count: {len(mm.current_loaded_models)}")
+
+                        # DIRECTLY UNLOAD ALL MODELS
+                        models_unloaded = []
+                        for i, lm in enumerate(mm.current_loaded_models):
+                            model_name_to_eject = type(getattr(lm.model, 'model', lm.model)).__name__ if lm.model else 'Unknown'
+                            logger.mgpu_mm_log(f"[DIRECT_EJECTION][{model_name}] UNLOADING MODEL {i+1}/{len(mm.current_loaded_models)}: {model_name_to_eject}")
+                            try:
+                                lm.model_unload(unpatch_weights=True)
+                                models_unloaded.append(model_name_to_eject)
+                                logger.mgpu_mm_log(f"[DIRECT_EJECTION][{model_name}] SUCCESSFULLY UNLOADED: {model_name_to_eject}")
+                            except Exception as e:
+                                logger.mgpu_mm_log(f"[DIRECT_EJECTION][{model_name}] ERROR unloading {model_name_to_eject}: {e}")
+
+                        mm.current_loaded_models = []
+                        logger.mgpu_mm_log(f"[DIRECT_EJECTION][{model_name}] Models unloaded: {models_unloaded}")
+                        logger.mgpu_mm_log(f"======= DIRECT MODEL EJECTION COMPLETE[{model_name}] =======")
+                        multigpu_memory_log("eject_models_post", "complete")
+
+                    # RETURN MAX MEMORY - Should trigger auto-eviction by Comfy Core
+                    total_device_memory = mm.get_total_memory(device)
+                    max_gb = total_device_memory / (1024**3)
+                    logger.mgpu_mm_log(f"[MEM_REPORT][{model_name}] Returning MAX memory ({max_gb:.2f}GB) for auto-eviction by Comfy Core")
+                    return total_device_memory
+
+                elif is_distorch_model:
+                    # eject_models=0, is_distorch=1: SUBTRACT VIRTUAL VRAM FROM ORIGINAL
+                    virtual_vram_gb = getattr(getattr(self, 'model', None), 'model', None)._mgpu_virtual_vram_gb
+                    virtual_vram_bytes = virtual_vram_gb * (1024**3)
+                    adjusted_result = max(0, original_result - virtual_vram_bytes)
+                    adjusted_gb = adjusted_result / (1024**3) if adjusted_result else 0
+
+                    logger.mgpu_mm_log(f"[MEM_REPORT][{model_name}] eject_models=0, is_distorch=1 → adjusted {original_gb:.2f}GB - {virtual_vram_gb:.2f}GB = {adjusted_gb:.2f}GB (DisTorch allocation)")
+                    multigpu_memory_log("distorch_allocation", "reported")
+                    return adjusted_result
+
+                else:
+                    # eject_models=0, is_distorch=0: RETURN ORIGINAL
+                    logger.mgpu_mm_log(f"[MEM_REPORT][{model_name}] eject_models=0, is_distorch=0 → returning original {original_gb:.2f}GB")
+                    multigpu_memory_log("keep_loaded_memory_check", "end")
+                    return original_result
 
             mm.LoadedModel.model_memory_required = patched_loaded_model_memory_required
 

@@ -37,7 +37,7 @@ def _create_distorch_safetensor_v2_override(cls, device_param_name, device_sette
             inputs["optional"]["virtual_vram_gb"] = ("FLOAT", {"default": 4.0, "min": 0.0, "max": 128.0, "step": 0.1})
             inputs["optional"]["donor_device"] = (devices, {"default": "cpu"})
             inputs["optional"]["expert_mode_allocations"] = ("STRING", {"multiline": False, "default": ""})
-            inputs["optional"]["keep_loaded"] = ("BOOLEAN", {"default": True})
+            inputs["optional"]["eject_models"] = ("BOOLEAN", {"default": True})
             return inputs
 
         CATEGORY = "multigpu/distorch_2"
@@ -45,10 +45,10 @@ def _create_distorch_safetensor_v2_override(cls, device_param_name, device_sette
         TITLE = f"{cls.TITLE if hasattr(cls, 'TITLE') else cls.__name__} (DisTorch2)"
 
         @classmethod
-        def IS_CHANGED(s, *args, virtual_vram_gb=4.0, donor_device="cpu", 
-                       expert_mode_allocations="", keep_loaded=True, **kwargs):
+        def IS_CHANGED(s, *args, virtual_vram_gb=4.0, donor_device="cpu",
+                       expert_mode_allocations="", eject_models=True, **kwargs):
             device_value = kwargs.get(device_param_name)
-            settings_str = f"{device_value}{virtual_vram_gb}{donor_device}{expert_mode_allocations}{keep_loaded}"
+            settings_str = f"{device_value}{virtual_vram_gb}{donor_device}{expert_mode_allocations}{eject_models}"
             current_hash = hashlib.sha256(settings_str.encode()).hexdigest()
 
             if not hasattr(cls, '_last_hash'):
@@ -60,19 +60,40 @@ def _create_distorch_safetensor_v2_override(cls, device_param_name, device_sette
             return current_hash
 
         def override(self, *args, virtual_vram_gb=4.0, donor_device="cpu",
-                     expert_mode_allocations="", keep_loaded=True, **kwargs):
-            
+                     expert_mode_allocations="", eject_models=True, **kwargs):
+
             device_value = kwargs.get(device_param_name)
-            unload_distorch_model = not keep_loaded
+
+            import comfy.model_management as mm
+
+            if eject_models:
+                logger.mgpu_mm_log(f"[EJECT_MODELS_SETUP] eject_models=True - marking all loaded models for eviction, device target: {device_value}")
+                ejection_count = 0
+                for i, lm in enumerate(mm.current_loaded_models):
+                    # Set _mgpu_unload_distorch_model=True on all models to force Comfy Core eviction
+                    model_name = type(getattr(lm.model, 'model', lm.model)).__name__ if lm.model else 'Unknown'
+
+                    if hasattr(lm.model, 'model') and lm.model.model is not None:
+                        lm.model.model._mgpu_unload_distorch_model = True
+                        logger.mgpu_mm_log(f"[EJECT_MARKED] Model {i}: {model_name} (id=0x{id(lm):x}) → marked for eviction")
+                        ejection_count += 1
+                    elif lm.model is not None:
+                        lm.model._mgpu_unload_distorch_model = True
+                        logger.mgpu_mm_log(f"[EJECT_MARKED] Model {i}: {model_name} (direct patcher) → marked for eviction")
+                        ejection_count += 1
+
+                logger.mgpu_mm_log(f"[EJECT_MODELS_SETUP_COMPLETE] Marked {ejection_count} models for Comfy Core eviction during load_models_gpu")
+            else:
+                logger.mgpu_mm_log(f"[EJECT_MODELS_SETUP] eject_models=False - loading without eviction")
 
             if device_value is not None:
                 device_setter_func(device_value)
 
-            # Strip MultiGPU-specific parameters before calling original function
-            clean_kwargs = {k: v for k, v in kwargs.items() 
-                           if k not in [device_param_name, 'virtual_vram_gb', 
-                                        'donor_device', 'expert_mode_allocations', 
-                                        'keep_loaded']}
+            # Strip MultiGPU-specific parameters before calling original function (REMOVE eject_models, keep_loaded and virtual_vram_gb since we handle them above)
+            clean_kwargs = {k: v for k, v in kwargs.items()
+                           if k not in [device_param_name, 'virtual_vram_gb',
+                                        'donor_device', 'expert_mode_allocations',
+                                        'eject_models']}
             
             if apply_device_kwarg_workaround:
                 clean_kwargs['device'] = 'default'
@@ -106,7 +127,7 @@ def _create_distorch_safetensor_v2_override(cls, device_param_name, device_sette
                 logger.debug(f"[MultiGPU DisTorch V2] Stored allocation for model {model_hash[:8]}: {full_allocation}")
 
             logger.info(f"[MultiGPU DisTorch V2] Full allocation string: {full_allocation}")
-            logger.mgpu_mm_log(f"[FLAG_SET_START] Setting '_mgpu_unload_distorch_model' to: {unload_distorch_model} (keep_loaded={keep_loaded})")
+            logger.mgpu_mm_log(f"[MODEL_SETUP] Setting DisTorch model properties: virtual_vram_gb={virtual_vram_gb}")
 
             if hasattr(out[0], 'model'):
                 mp = out[0]
@@ -115,16 +136,19 @@ def _create_distorch_safetensor_v2_override(cls, device_param_name, device_sette
                 inner_model_id = id(inner_model) if inner_model else None
                 inner_model_name = type(inner_model).__name__ if inner_model else "None"
                 inner_id_str = f"0x{inner_model_id:x}" if inner_model_id is not None else "None"
-                
+
                 logger.mgpu_mm_log(f"[OBJECT_CHAIN_SET] ModelPatcher: mp_id=0x{mp_id:x}, inner_model_id={inner_id_str}, inner_model_type={inner_model_name}")
-                
-                mp._mgpu_unload_distorch_model = unload_distorch_model
-                logger.mgpu_mm_log(f"[FLAG_SET_LOCATION] Set on ModelPatcher (mp_id=0x{mp_id:x}): mp._mgpu_unload_distorch_model = {unload_distorch_model}")
-                
+
+                # SET VIRTUAL VRAM PROPERTY FOR MEMORY CALCULATION
                 if inner_model:
-                    inner_model._mgpu_unload_distorch_model = unload_distorch_model
-                    logger.mgpu_mm_log(f"[FLAG_SET_COMPAT] Also set on inner model (inner_model_id=0x{inner_model_id:x}) for compatibility")
-                    
+                    inner_model._mgpu_virtual_vram_gb = virtual_vram_gb
+                    logger.mgpu_mm_log(f"[VIRTUAL_VRAM_SET] Set _mgpu_virtual_vram_gb={virtual_vram_gb}GB on inner model (id=0x{inner_model_id:x}) for memory assessment")
+
+                # SET EJECT MODELS PROPERTY IF ENABLED
+                if eject_models and inner_model:
+                    inner_model._mgpu_eject_models = True
+                    logger.mgpu_mm_log(f"[EJECT_FLAG_SET] Set _mgpu_eject_models=True on inner model (id=0x{inner_model_id:x}) - will trigger ejection during load_models_gpu")
+
             elif hasattr(out[0], 'patcher') and hasattr(out[0].patcher, 'model'):
                 mp = out[0].patcher
                 mp_id = id(mp)
@@ -132,19 +156,13 @@ def _create_distorch_safetensor_v2_override(cls, device_param_name, device_sette
                 inner_model_id = id(inner_model) if inner_model else None
                 inner_model_name = type(inner_model).__name__ if inner_model else "None"
                 inner_id_str = f"0x{inner_model_id:x}" if inner_model_id is not None else "None"
-                
-                logger.mgpu_mm_log(f"[OBJECT_CHAIN_SET] ModelPatcher via patcher: mp_id=0x{mp_id:x}, inner_model_id={inner_id_str}, inner_model_type={inner_model_name}")
-                
-                mp._mgpu_unload_distorch_model = unload_distorch_model
-                logger.mgpu_mm_log(f"[FLAG_SET_LOCATION] Set on ModelPatcher (mp_id=0x{mp_id:x}): mp._mgpu_unload_distorch_model = {unload_distorch_model}")
-                
-                if inner_model:
-                    inner_model._mgpu_unload_distorch_model = unload_distorch_model
-                    logger.mgpu_mm_log(f"[FLAG_SET_COMPAT] Also set on inner model (inner_model_id=0x{inner_model_id:x}) for compatibility")
 
-            if unload_distorch_model:
-                logger.mgpu_mm_log("[FLAG_TRIGGER] unload_distorch_model=True, triggering full system cleanup")
-                force_full_system_cleanup(reason="policy_every_load", force=True)
+                logger.mgpu_mm_log(f"[OBJECT_CHAIN_SET] ModelPatcher via patcher: mp_id=0x{mp_id:x}, inner_model_id={inner_id_str}, inner_model_type={inner_model_name}")
+
+                # SET VIRTUAL VRAM PROPERTY FOR MEMORY CALCULATION
+                if inner_model:
+                    inner_model._mgpu_virtual_vram_gb = virtual_vram_gb
+                    logger.mgpu_mm_log(f"[VIRTUAL_VRAM_SET] Set _mgpu_virtual_vram_gb={virtual_vram_gb}GB on inner model (id=0x{inner_model_id:x}) for memory assessment")
 
             return out
 
