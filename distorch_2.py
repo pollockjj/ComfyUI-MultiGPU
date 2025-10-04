@@ -254,7 +254,7 @@ def register_patched_safetensor_modelpatcher():
                         pass
 
                     if current_module_device is not None and str(current_module_device) != str(block_target_device):
-                        logger.info(f"[MultiGPU DisTorch V2] Moving already patched {module_name} to {block_target_device}")
+                        logger.debug(f"[MultiGPU DisTorch V2] Moving already patched {module_name} to {block_target_device}")
                         module_object.to(block_target_device)
 
                     mem_counter += module_size
