@@ -58,51 +58,149 @@ def register_patched_safetensor_modelpatcher():
     # Patch ComfyUI's ModelPatcher
     if not hasattr(comfy.model_patcher.ModelPatcher, '_distorch_patched'):
 
-        # Patch LoadedModel.model_memory_required to drive behavior purely by Phase 2 = unload_distorch_model flag
-        from comfy.model_management import current_loaded_models
 
-        original_loaded_model_memory_required = None
-        for cls in current_loaded_models.__class__.__mro__:
-            if hasattr(cls, 'model_memory_required'):
-                original_loaded_model_memory_required = cls.model_memory_required
-                break
+        # PATCH load_models_gpu with correct memory calculations per model flags
+        original_load_models_gpu = mm.load_models_gpu
 
-        if original_loaded_model_memory_required is None:
-            # Global patch of LoadedModel class if available
-            import comfy.model_management as mm
+        def patched_load_models_gpu(models, memory_required=0, force_patch_weights=False, minimum_memory_required=None, force_full_load=False):
+            from comfy.model_management import cleanup_models_gc, get_free_memory, free_memory, current_loaded_models
+            from comfy.model_management import VRAMState, vram_state, lowvram_available, MIN_WEIGHT_MEMORY_RATIO
+            from comfy.model_management import minimum_inference_memory, extra_reserved_memory, is_device_cpu
+            
+            multigpu_memory_log("load_models_gpu_top_level", "start")
 
-            original_loaded_model_memory_required = mm.LoadedModel.model_memory_required
+            cleanup_models_gc()
 
-            def patched_loaded_model_memory_required(self, device):
-                """Drive unload behavior purely by unload_distorch_model flag"""
-                multigpu_memory_log("unload_distorch_model_memory_check", "start")
-                logger.mgpu_mm_log(f"[IS_DISTORCH_MODEL] Memory assessment requested for model on device: {device}")
+            inference_memory = minimum_inference_memory()
+            extra_reserved_mem = extra_reserved_memory()
+            memory_required_total = memory_required + extra_reserved_mem
+            extra_mem = max(inference_memory, memory_required_total)
+            if minimum_memory_required is None:
+                minimum_memory_required = extra_mem
+            else:
+                minimum_memory_required = max(inference_memory, minimum_memory_required + extra_reserved_mem)
 
-                # Check if this is a DisTorch model with unload_distorch_model flag
-                is_distorch_model = hasattr(getattr(getattr(self, 'model', None), 'model', None), '_mgpu_unload_distorch_model')
+            models_temp = set()
+            for m in models:
+                models_temp.add(m)
+                for mm_patch in m.model_patches_models():
+                    models_temp.add(mm_patch)
 
-                model_name = type(getattr(getattr(self, 'model', None), 'model', None)).__name__ if getattr(getattr(self, 'model', None), 'model', None) else "Unknown"
-                logger.mgpu_mm_log(f"[IS_DISTORCH_MODEL] DisTorch model: {model_name}, is_distorch_model={is_distorch_model}")
+            models = models_temp
 
-                if is_distorch_model:
-                    if self.model.model._mgpu_unload_distorch_model:
+            models_to_load = []
+
+            for x in models:
+                loaded_model = mm.LoadedModel(x)
+                try:
+                    loaded_model_index = current_loaded_models.index(loaded_model)
+                except:
+                    loaded_model_index = None
+
+                if loaded_model_index is not None:
+                    loaded = current_loaded_models[loaded_model_index]
+                    loaded.currently_used = True
+                    models_to_load.append(loaded)
+                else:
+                    if hasattr(x, "model"):
+                        logging.info(f"Requested to load {x.model.__class__.__name__}")
+                    models_to_load.append(loaded_model)
+
+            for loaded_model in models_to_load:
+                to_unload = []
+                for i in range(len(current_loaded_models)):
+                    if loaded_model.model.is_clone(current_loaded_models[i].model):
+                        to_unload = [i] + to_unload
+                for i in to_unload:
+                    model_to_unload = current_loaded_models.pop(i)
+                    model_to_unload.model.detach(unpatch_all=False)
+                    model_to_unload.model_finalizer.detach()
+
+            # DisTorch Processing
+            total_memory_required = {}
+            eject_device = None
+
+            for loaded_model in models_to_load:
+                device = loaded_model.device
+                base_memory = loaded_model.model_memory_required(device)
+
+                # Check DisTorch flags
+                is_distorch = hasattr(loaded_model.model.model, '_mgpu_virtual_vram_gb')
+                has_eject = hasattr(loaded_model.model.model, '_mgpu_eject_models')
+
+                if has_eject:
+                    eject_device = device
+                    logger.mgpu_mm_log("DisTorch eject_models=True, is_distorch=True - MAX memory eviction")
+
+                if is_distorch:
+                    # is_distorch=True: use compute device allocation size
+                    virtual_vram_gb = loaded_model.model.model._mgpu_virtual_vram_gb
+                    virtual_vram_bytes = virtual_vram_gb * (1024**3)
+                    adjusted_memory = max(0, base_memory - virtual_vram_bytes)
+                    total_memory_required[device] = total_memory_required.get(device, 0) + adjusted_memory
+                    logger.mgpu_mm_log(f"DisTorch is_distorch=True, model adjusted {(base_memory - virtual_vram_bytes)/(1024**3):.2f}GB for device {device}")
+                else:
+                    # is_distorch=False: use full model size
+                    total_memory_required[device] = total_memory_required.get(device, 0) + base_memory
+                    logger.mgpu_mm_log(f"[LOAD_MODELS_GPU] Standard model {(base_memory)/(1024**3):.2f}GB for device {device}")
+
+            for device in total_memory_required:
+                if device != torch.device("cpu"):
+                    requested_mem = total_memory_required[device] * 1.1 + extra_mem
+                    logger.mgpu_mm_log(f"[FREE_MEMORY_CALL] Device {device}: requesting {requested_mem/(1024**3):.2f}GB = {total_memory_required[device]/(1024**3):.2f}GB * 1.1 + {extra_mem/(1024**3):.2f}GB inference")
+            
+            
+            multigpu_memory_log("free_memory", "pre")
+
+            for device in total_memory_required:
+                if device != torch.device("cpu"):
+                    if device == eject_device:
                         total_device_memory = mm.get_total_memory(device)
-                        memory_gb = total_device_memory / (1024**3)
-                        logger.mgpu_mm_log(f"[IS_DISTORCH_MODEL] _mgpu_unload_distorch_model=True - Reporting MAX memory ({memory_gb:.2f}GB) to force complete eviction")
-                        return total_device_memory
+                        logger.mgpu_mm_log(f"[LOAD_MODELS_GPU] eject_models=1, is_distorch=1 → using MAX memory ({total_device_memory/(1024**3):.2f}GB) for eviction")
+                        free_memory(total_device_memory,device)
                     else:
-                        logger.mgpu_mm_log("[IS_DISTORCH_MODEL] _mgpu_unload_distorch_model=False - Reporting 0 bytes (prevents eviction)")
-                        return 0
+                        logger.mgpu_mm_log(f"[LOAD_MODELS_GPU] eject_models=0, using Comfy Core Computed memory ({(total_memory_required[device] * 1.1 + extra_mem)/(1024**3):.2f}GB) for eviction")
+                        free_memory(total_memory_required[device] * 1.1 + extra_mem, device)
+            
+            multigpu_memory_log("free_memory/minimum_memory_required", "post/pre")
 
-                # Not a DisTorch model - use original behavior
-                logger.mgpu_mm_log("[IS_DISTORCH_MODEL] Non-DisTorch model - Using original Comfy memory calculation")
-                original_result = original_loaded_model_memory_required(self, device)
-                original_gb = original_result / (1024**3) if original_result else 0
-                logger.mgpu_mm_log(f"[IS_DISTORCH_MODEL] Original calculation returned: {original_gb:.2f}GB")
-                multigpu_memory_log("keep_loaded_memory_check", "end")
-                return original_result
+            for device in total_memory_required:
+                if device != torch.device("cpu"):
+                    free_mem = get_free_memory(device)
+                    free_mem_gb = free_mem / (1024**3)
+                    min_required_gb = minimum_memory_required / (1024**3)
+                    logger.mgpu_mm_log(f"[MIN_MEMORY_CHECK] Device {device}: free={free_mem_gb:.2f}GB, required={min_required_gb:.2f}GB, will_evict={free_mem < minimum_memory_required}")
 
-            mm.LoadedModel.model_memory_required = patched_loaded_model_memory_required
+                    if free_mem < minimum_memory_required:
+                        models_l = free_memory(minimum_memory_required, device)
+                        logger.mgpu_mm_log(f"[EVICTION] Device {device}: unloaded {len(models_l)} models due to insufficient memory")
+                        logging.info("{} models unloaded.".format(len(models_l)))
+
+            multigpu_memory_log("minimum_memory_required", "post")
+
+            for loaded_model in models_to_load:
+                model = loaded_model.model
+                torch_dev = model.load_device
+                if is_device_cpu(torch_dev):
+                    vram_set_state = VRAMState.DISABLED
+                else:
+                    vram_set_state = vram_state
+                lowvram_model_memory = 0
+                if lowvram_available and (vram_set_state == VRAMState.LOW_VRAM or vram_set_state == VRAMState.NORMAL_VRAM) and not force_full_load:
+                    loaded_memory = loaded_model.model_loaded_memory()
+                    current_free_mem = get_free_memory(torch_dev) + loaded_memory
+
+                    lowvram_model_memory = max(128 * 1024 * 1024, (current_free_mem - minimum_memory_required), min(current_free_mem * MIN_WEIGHT_MEMORY_RATIO, current_free_mem - minimum_inference_memory()))
+                    lowvram_model_memory = max(0.1, lowvram_model_memory - loaded_memory)
+
+                if vram_set_state == VRAMState.NO_VRAM:
+                    lowvram_model_memory = 0.1
+
+                loaded_model.model_load(lowvram_model_memory, force_patch_weights=force_patch_weights)
+                current_loaded_models.insert(0, loaded_model)
+
+        # Replace the module function
+        mm.load_models_gpu = patched_load_models_gpu
 
         original_partially_load = comfy.model_patcher.ModelPatcher.partially_load
 

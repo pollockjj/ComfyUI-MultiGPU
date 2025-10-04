@@ -21,7 +21,7 @@ from .model_management_mgpu import (
 )
 
 WEB_DIRECTORY = "./web"
-MGPU_MM_LOG = False 
+MGPU_MM_LOG = False
 DEBUG_LOG = False
 
 logger = logging.getLogger("MultiGPU")
@@ -85,12 +85,12 @@ def text_encoder_device_patched():
     else:
         devs = set(get_device_list())
         device = torch.device(current_text_encoder_device) if str(current_text_encoder_device) in devs else torch.device("cpu")
-    logger.debug(f"[MultiGPU Core Patching] text_encoder_device_patched returning device: {device} (current_text_encoder_device={current_text_encoder_device})")
+    logger.info(f"[MultiGPU Core Patching] text_encoder_device_patched returning device: {device} (current_text_encoder_device={current_text_encoder_device})")
     return device
 
 logger.info(f"[MultiGPU Core Patching] Patching mm.get_torch_device and mm.text_encoder_device")
-logger.debug(f"[MultiGPU DEBUG] Initial current_device: {current_device}")
-logger.debug(f"[MultiGPU DEBUG] Initial current_text_encoder_device: {current_text_encoder_device}")
+logger.info(f"[MultiGPU DEBUG] Initial current_device: {current_device}")
+logger.info(f"[MultiGPU DEBUG] Initial current_text_encoder_device: {current_text_encoder_device}")
 mm.get_torch_device = get_torch_device_patched
 mm.text_encoder_device = text_encoder_device_patched
 
