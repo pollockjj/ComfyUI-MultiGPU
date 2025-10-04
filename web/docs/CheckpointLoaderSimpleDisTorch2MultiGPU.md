@@ -13,7 +13,7 @@ This node automatically detects models located in the `ComfyUI/models/checkpoint
 | `virtual_vram_gb` | `FLOAT` | Amount of virtual VRAM in gigabytes to allocate for distributed tensor management (default: 4.0, range: 0.0-128.0). |
 | `donor_device` | `STRING` | Device to donate VRAM from when allocating virtual memory (default: 'cpu'). |
 | `expert_mode_allocations` | `STRING` | Advanced allocation string for expert users to manually specify device/ratio distributions (e.g., 'cuda:0,50%;cpu,*'). |
-| `keep_loaded` | `BOOLEAN` | Whether to keep the model loaded when triggering memory cleanup operations (default: true). |
+| `eject_models` | `BOOLEAN` | Whether to unload ALL models from the target device before loading this model, enabling deterministic model eviction for testing and memory management (default: true). |
 
 ## Outputs
 

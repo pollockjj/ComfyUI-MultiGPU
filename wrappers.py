@@ -15,7 +15,7 @@ logger = logging.getLogger("MultiGPU")
 # DISTORCH V2 SAFETENSOR WRAPPERS (DisTorch2 for .safetensors and .gguf)
 # ============================================================================
 
-def _create_distorch_safetensor_v2_override(cls, device_param_name, device_setter_func, apply_device_kwarg_workaround):
+def _create_distorch_safetensor_v2_override(cls, device_param_name, device_setter_func, apply_device_kwarg_workaround, eject_models_default=True):
     """Internal factory function creating DisTorch2 override class with parameterized device selection behavior."""
     from .distorch_2 import (
         register_patched_safetensor_modelpatcher,
@@ -37,7 +37,7 @@ def _create_distorch_safetensor_v2_override(cls, device_param_name, device_sette
             inputs["optional"]["virtual_vram_gb"] = ("FLOAT", {"default": 4.0, "min": 0.0, "max": 128.0, "step": 0.1})
             inputs["optional"]["donor_device"] = (devices, {"default": "cpu"})
             inputs["optional"]["expert_mode_allocations"] = ("STRING", {"multiline": False, "default": ""})
-            inputs["optional"]["eject_models"] = ("BOOLEAN", {"default": True})
+            inputs["optional"]["eject_models"] = ("BOOLEAN", {"default": eject_models_default})
             return inputs
 
         CATEGORY = "multigpu/distorch_2"
@@ -46,7 +46,7 @@ def _create_distorch_safetensor_v2_override(cls, device_param_name, device_sette
 
         @classmethod
         def IS_CHANGED(s, *args, virtual_vram_gb=4.0, donor_device="cpu",
-                       expert_mode_allocations="", eject_models=True, **kwargs):
+                       expert_mode_allocations="", eject_models=eject_models_default, **kwargs):
             device_value = kwargs.get(device_param_name)
             settings_str = f"{device_value}{virtual_vram_gb}{donor_device}{expert_mode_allocations}{eject_models}"
             current_hash = hashlib.sha256(settings_str.encode()).hexdigest()
@@ -60,7 +60,7 @@ def _create_distorch_safetensor_v2_override(cls, device_param_name, device_sette
             return current_hash
 
         def override(self, *args, virtual_vram_gb=4.0, donor_device="cpu",
-                     expert_mode_allocations="", eject_models=True, **kwargs):
+                     expert_mode_allocations="", eject_models=eject_models_default, **kwargs):
 
             device_value = kwargs.get(device_param_name)
 
@@ -89,7 +89,7 @@ def _create_distorch_safetensor_v2_override(cls, device_param_name, device_sette
             if device_value is not None:
                 device_setter_func(device_value)
 
-            # Strip MultiGPU-specific parameters before calling original function (REMOVE eject_models, keep_loaded and virtual_vram_gb since we handle them above)
+            # Strip MultiGPU-specific parameters before calling original function (REMOVE eject_models, eject_models and virtual_vram_gb since we handle them above)
             clean_kwargs = {k: v for k, v in kwargs.items()
                            if k not in [device_param_name, 'virtual_vram_gb',
                                         'donor_device', 'expert_mode_allocations',
@@ -187,7 +187,8 @@ def override_class_with_distorch_safetensor_v2_clip(cls):
         cls,
         device_param_name="device",
         device_setter_func=set_current_text_encoder_device,
-        apply_device_kwarg_workaround=True
+        apply_device_kwarg_workaround=True,
+        eject_models_default=False  # CLIP defaults to False
     )
 
 
@@ -198,7 +199,8 @@ def override_class_with_distorch_safetensor_v2_clip_no_device(cls):
         cls,
         device_param_name="device",
         device_setter_func=set_current_text_encoder_device,
-        apply_device_kwarg_workaround=False
+        apply_device_kwarg_workaround=False,
+        eject_models_default=False  # CLIP defaults to False
     )
 
 
