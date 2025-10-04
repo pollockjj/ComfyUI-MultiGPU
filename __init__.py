@@ -21,7 +21,7 @@ from .model_management_mgpu import (
 )
 
 WEB_DIRECTORY = "./web"
-MGPU_MM_LOG = False 
+MGPU_MM_LOG = True 
 DEBUG_LOG = False
 
 logger = logging.getLogger("MultiGPU")

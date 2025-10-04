@@ -194,7 +194,7 @@ def register_patched_safetensor_modelpatcher():
 
                 # Step 4: Move to ultimate destination based on DisTorch assignment
                 if block_target_device != device_to:
-                    logger.info(f"[MultiGPU DisTorch V2] Moving {module_name} from {device_to} to {block_target_device}")
+                    logger.debug(f"[MultiGPU DisTorch V2] Moving {module_name} from {device_to} to {block_target_device}")
                     module_object.to(block_target_device)
                     module_object.comfy_cast_weights = True
 
