@@ -64,7 +64,7 @@ def set_current_text_encoder_device(device):
     """Set the current text encoder device context for CLIP models."""
     global current_text_encoder_device
     current_text_encoder_device = device
-    logger.debug(f"[MultiGPU Initialization] current_text_encoder_device set to: {device}")
+    logger.info(f"[MultiGPU Initialization] current_text_encoder_device set to: {device}")
 
 def get_torch_device_patched():
     """Return MultiGPU-aware device selection for patched mm.get_torch_device."""
@@ -77,22 +77,37 @@ def get_torch_device_patched():
     logger.debug(f"[MultiGPU Core Patching] get_torch_device_patched returning device: {device} (current_device={current_device})")
     return device
 
-def text_encoder_device_patched():
-    """Return MultiGPU-aware text encoder device for patched mm.text_encoder_device."""
+def _get_patched_text_encoder_device():
+    """Internal helper to get the patched text encoder device."""
     device = None
     if (not is_accelerator_available() or mm.cpu_state == mm.CPUState.CPU or "cpu" in str(current_text_encoder_device).lower()):
         device = torch.device("cpu")
+        logger.info(f"[_get_patched_text_encoder_device] Condition met: accelerator not available, CPU state, or 'cpu' in current device. Returning CPU.")
     else:
         devs = set(get_device_list())
-        device = torch.device(current_text_encoder_device) if str(current_text_encoder_device) in devs else torch.device("cpu")
-    logger.debug(f"[MultiGPU Core Patching] text_encoder_device_patched returning device: {device} (current_text_encoder_device={current_text_encoder_device})")
+        is_current_in_devs = str(current_text_encoder_device) in devs
+        device = torch.device(current_text_encoder_device) if is_current_in_devs else torch.device("cpu")
+        logger.info(f"[_get_patched_text_encoder_device] Available devices: {devs}. Current text encoder device: {current_text_encoder_device}. Is in list: {is_current_in_devs}. Returning: {device}")
     return device
 
-logger.info(f"[MultiGPU Core Patching] Patching mm.get_torch_device and mm.text_encoder_device")
-logger.debug(f"[MultiGPU DEBUG] Initial current_device: {current_device}")
-logger.debug(f"[MultiGPU DEBUG] Initial current_text_encoder_device: {current_text_encoder_device}")
+def text_encoder_device_patched():
+    """Return MultiGPU-aware text encoder device for patched mm.text_encoder_device."""
+    device = _get_patched_text_encoder_device()
+    logger.info(f"[MultiGPU Core Patching] text_encoder_device_patched returning device: {device} (current_text_encoder_device={current_text_encoder_device})")
+    return device
+
+def text_encoder_initial_device_patched(load_device, offload_device, model_size=0):
+    """Return MultiGPU-aware initial text encoder device for patched mm.text_encoder_initial_device."""
+    device = _get_patched_text_encoder_device()
+    logger.info(f"[MultiGPU Core Patching] text_encoder_initial_device_patched returning device: {device} (ignoring original args: load_device='{load_device}', offload_device='{offload_device}', model_size='{model_size}')")
+    return device
+
+logger.info(f"[MultiGPU Core Patching] Patching mm.get_torch_device, mm.text_encoder_device, and mm.text_encoder_initial_device")
+logger.info(f"[MultiGPU INFO] Initial current_device: {current_device}")
+logger.info(f"[MultiGPU INFO] Initial current_text_encoder_device: {current_text_encoder_device}")
 mm.get_torch_device = get_torch_device_patched
 mm.text_encoder_device = text_encoder_device_patched
+mm.text_encoder_initial_device = text_encoder_initial_device_patched
 
 from .nodes import (
     DeviceSelectorMultiGPU,
