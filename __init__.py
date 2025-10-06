@@ -21,7 +21,7 @@ from .model_management_mgpu import (
 )
 
 WEB_DIRECTORY = "./web"
-MGPU_MM_LOG = False
+MGPU_MM_LOG = True
 DEBUG_LOG = False
 
 logger = logging.getLogger("MultiGPU")
@@ -95,8 +95,6 @@ mm.get_torch_device = get_torch_device_patched
 mm.text_encoder_device = text_encoder_device_patched
 
 from .nodes import (
-    DeviceSelectorMultiGPU,
-    HunyuanVideoEmbeddingsAdapter,
     UnetLoaderGGUF,
     UnetLoaderGGUFAdvanced,
     CLIPLoaderGGUF,
@@ -114,21 +112,11 @@ from .nodes import (
     PulidModelLoader,
     PulidInsightFaceLoader,
     PulidEvaClipLoader,
-    HyVideoModelLoader,
-    HyVideoVAELoader,
-    DownloadAndLoadHyVideoTextEncoder,
     UNetLoaderLP,
 )
 
 from .wanvideo import (
-    WanVideoModelLoader,
-    WanVideoModelLoader_2,
-    WanVideoVAELoader,
     LoadWanVideoT5TextEncoder,
-    LoadWanVideoClipTextEncoder,
-    WanVideoTextEncode,
-    WanVideoBlockSwap,
-    WanVideoSampler
 )
 
 from .wrappers import (
@@ -158,8 +146,6 @@ from .checkpoint_multigpu import (
 )
 
 NODE_CLASS_MAPPINGS = {
-    "DeviceSelectorMultiGPU": DeviceSelectorMultiGPU,
-    "HunyuanVideoEmbeddingsAdapter": HunyuanVideoEmbeddingsAdapter,
     "CheckpointLoaderAdvancedMultiGPU": CheckpointLoaderAdvancedMultiGPU,
     "CheckpointLoaderAdvancedDisTorch2MultiGPU": CheckpointLoaderAdvancedDisTorch2MultiGPU,
     "UNetLoaderLP": UNetLoaderLP,
@@ -266,22 +252,8 @@ pulid_nodes = {
 }
 register_and_count(["PuLID_ComfyUI", "pulid_comfyui"], pulid_nodes)
 
-hunyuan_nodes = {
-    "HyVideoModelLoaderMultiGPU": override_class(HyVideoModelLoader),
-    "HyVideoVAELoaderMultiGPU": override_class(HyVideoVAELoader),
-    "DownloadAndLoadHyVideoTextEncoderMultiGPU": override_class(DownloadAndLoadHyVideoTextEncoder)
-}
-register_and_count(["ComfyUI-HunyuanVideoWrapper", "comfyui-hunyuanvideowrapper"], hunyuan_nodes)
-
 wanvideo_nodes = {
-    "WanVideoModelLoaderMultiGPU": WanVideoModelLoader,
-    "WanVideoModelLoaderMultiGPU_2": WanVideoModelLoader_2,
-    "WanVideoVAELoaderMultiGPU": WanVideoVAELoader,
-    "LoadWanVideoT5TextEncoderMultiGPU": LoadWanVideoT5TextEncoder,
-    "LoadWanVideoClipTextEncoderMultiGPU": LoadWanVideoClipTextEncoder,
-    "WanVideoTextEncodeMultiGPU": WanVideoTextEncode,
-    "WanVideoBlockSwapMultiGPU": WanVideoBlockSwap,
-    "WanVideoSamplerMultiGPU": WanVideoSampler
+    "LoadWanVideoT5TextEncoderMultiGPU": LoadWanVideoT5TextEncoder
 }
 register_and_count(["ComfyUI-WanVideoWrapper", "comfyui-wanvideowrapper"], wanvideo_nodes)
 
