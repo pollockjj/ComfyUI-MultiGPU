@@ -117,6 +117,7 @@ from .nodes import (
 
 from .wanvideo import (
     LoadWanVideoT5TextEncoder,
+    WanVideoTextEncode,
 )
 
 from .wrappers import (
@@ -253,7 +254,8 @@ pulid_nodes = {
 register_and_count(["PuLID_ComfyUI", "pulid_comfyui"], pulid_nodes)
 
 wanvideo_nodes = {
-    "LoadWanVideoT5TextEncoderMultiGPU": LoadWanVideoT5TextEncoder
+    "LoadWanVideoT5TextEncoderMultiGPU": LoadWanVideoT5TextEncoder,
+    "WanVideoTextEncodeMultiGPU": WanVideoTextEncode
 }
 register_and_count(["ComfyUI-WanVideoWrapper", "comfyui-wanvideowrapper"], wanvideo_nodes)
 
