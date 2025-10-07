@@ -1,29 +1,8 @@
-""" 
-    WanVideoControlnetLoader, controlnet/nodes.py
-    FantasyTalkingModelLoader, fantasytalking/nodes.py
-    MultiTalkModelLoader, multitalk/nodes.py
-    Wav2VecModelLoader, multitalk/nodes.py
-    WanVideoSetBlockSwap, nodes.py
-    WanVideoBlockList, nodes.py
-    WanVideoTextEncodeCached, nodes.py
-  X WanVideoTextEncode, nodes.py
-    WanVideoTextEncodeSingle, nodes.py
-    WanVideoClipVisionEncode, nodes.py
-  X WanVideoImageToVideoEncode, nodes.py
-    WanVideoVACEEncode, nodes.py
-  X WanVideoDecode, nodes.py
-    WanVideoImageClipEncode, nodes_deprecated.py
-    WanVideoModelLoader, nodes_model_loading.py
-  X WanVideoVAELoader, nodes_model_loading.py
-    WanVideoLoraBlockEdit, nodes_model_loading.py
-  X WanVideoTinyVAELoader, nodes_model_loading.py
-    WanVideoBlockSwap, nodes_model_loading.py
-    WanVideoVRAMManagement, nodes_model_loading.py
-    WanVideoTorchCompileSettings, nodes_model_loading.py
-  X LoadWanVideoT5TextEncoder, nodes_model_loading.py
-    LoadWanVideoClipTextEncoder, nodes_model_loading.py
-    WanVideoUni3C_ControlnetLoader, uni3c/nodes.py 
-    """
+"""WanVideoWrapper integration helpers.
+
+For the current progress checklist and outstanding tasks, see
+`.github/instructions/ComfyUI-MultiGPU.instructions.md`.
+"""
 
 
 
@@ -561,8 +540,8 @@ class WanVideoModelLoader:
                   fantasytalking_model=None, multitalk_model=None, fantasyportrait_model=None, 
                   rms_norm_function="default"):
         from . import set_current_device
-        
-        logger.info(f"[MultiGPU WanVideoWrapper][WanVideoModelLoaderMultiGPU] User selected device: {compute_device}")
+
+    logger.info(f"[MultiGPU WanVideoWrapper][WanVideoModelLoaderMultiGPU] User selected device: {compute_device}")
         
         selected_device = torch.device(compute_device)
         
@@ -574,7 +553,7 @@ class WanVideoModelLoader:
         loader_module = inspect.getmodule(original_loader)
         
         if loader_module:
-            logger.info(f"[MultiGPU WanVideoWrapper][WanVideoModelLoaderMultiGPU] Patching '{loader_module.__name__}' to use device: {selected_device}")
+            logger.debug(f"[MultiGPU WanVideoWrapper][WanVideoModelLoaderMultiGPU] Patching '{loader_module.__name__}' to use device: {selected_device}")
             
             # Store original values to restore later if needed, though it's less critical in this workflow
             original_module_device = getattr(loader_module, 'device', None)
@@ -586,7 +565,7 @@ class WanVideoModelLoader:
             if compute_device == "cpu":
                 setattr(loader_module, 'offload_device', selected_device)
 
-            logger.info(f"[MultiGPU WanVideoWrapper][WanVideoModelLoaderMultiGPU] Device patching complete. Calling original loader...")
+            logger.debug("[MultiGPU WanVideoWrapper][WanVideoModelLoaderMultiGPU] Device patching complete. Calling original loader...")
             
             # Call the original loader function with all the arguments it expects
             result = original_loader.loadmodel(
@@ -634,18 +613,39 @@ class WanVideoSampler:
     
     def process(self, model, compute_device, **kwargs):
         from . import set_current_device
-        
-        logger.info(f"[MultiGPU WanVideoSampler] Received request to process on: {compute_device}")
 
-        # Set the global device context for the sampler's operations
+    logger.info(f"[MultiGPU WanVideoSampler] Received request to process on: {compute_device}")
+
+        # Resolve the target device and update the global sampler context
+        target_device = None
         if compute_device:
-            set_current_device(torch.device(compute_device))
-
-        # The model is already on the correct device thanks to the patched loader.
-        # We no longer need to patch the model here. We just need to call the original sampler.
-        logger.info("[MultiGPU WanVideoSampler] Model is pre-configured. Calling original sampler.")
+            target_device = torch.device(compute_device)
+            set_current_device(target_device)
+        else:
+            target_device = mm.get_torch_device()
 
         original_sampler = NODE_CLASS_MAPPINGS["WanVideoSampler"]()
-        
-        # The original sampler will internally use mm.get_torch_device(), which is now correctly set.
-        return original_sampler.process(model=model, **kwargs)
+        sampler_module = inspect.getmodule(original_sampler)
+
+        original_module_device = None
+        if sampler_module is not None:
+            original_module_device = getattr(sampler_module, "device", None)
+            setattr(sampler_module, "device", target_device)
+
+            # Align offload device when running on CPU so intermediate tensors stay colocated.
+            if compute_device == "cpu":
+                setattr(sampler_module, "offload_device", target_device)
+
+            if original_module_device != target_device:
+                logger.debug(
+                    f"[MultiGPU WanVideoSampler] Patched sampler module device: {original_module_device} -> {target_device}"
+                )
+        else:
+            logger.error("[MultiGPU WanVideoSampler] Unable to resolve sampler module for device patching.")
+
+        try:
+            # The original sampler will internally use mm.get_torch_device(), which is now correctly set.
+            return original_sampler.process(model=model, **kwargs)
+        finally:
+            if sampler_module is not None and original_module_device is not None:
+                setattr(sampler_module, "device", original_module_device)
