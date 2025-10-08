@@ -132,7 +132,7 @@ All workflows have been tested on a 2x 3090 + 1060ti linux setup, a 4070 win 11 
 - [Hunyuan GGUF Example](https://github.com/pollockjj/ComfyUI-MultiGPU/blob/main/examples/distorch2/hunyuan_gguf_DisTorch2.json)
 - [LTX Video Text-to-Video](https://github.com/pollockjj/ComfyUI-MultiGPU/blob/main/examples/distorch2/ltxv_text_to_video_MultiGPU.json)
 - [Qwen Image Basic Example](https://github.com/pollockjj/ComfyUI-MultiGPU/blob/main/examples/distorch2/qwen_image_basic_example_DisTorch2.json)
-- [WanVideo 2.2 Example](https://github.com/pollockjj/ComfyUI-MultiGPU/blob/main/examples/distorch2/wan2_2_example_DisTorch2.json)
+- [WanVideo 2.2 Example](https://github.com/pollockjj/ComfyUI-MultiGPU/blob/main/examples/distorch2/wan2_2_DisTorch2.json)
 
 ### WanVideoWrapper
 
