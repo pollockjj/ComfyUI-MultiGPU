@@ -213,6 +213,8 @@ from .nodes import (
 from .wanvideo import (
     LoadWanVideoT5TextEncoder,
     WanVideoTextEncode,
+    WanVideoTextEncodeCached,
+    WanVideoTextEncodeSingle,
     WanVideoVAELoader,
     WanVideoTinyVAELoader,
     WanVideoBlockSwap,
@@ -358,6 +360,8 @@ register_and_count(["PuLID_ComfyUI", "pulid_comfyui"], pulid_nodes)
 wanvideo_nodes = {
     "LoadWanVideoT5TextEncoderMultiGPU": LoadWanVideoT5TextEncoder,
     "WanVideoTextEncodeMultiGPU": WanVideoTextEncode,
+    "WanVideoTextEncodeCachedMultiGPU": WanVideoTextEncodeCached,
+    "WanVideoTextEncodeSingleMultiGPU": WanVideoTextEncodeSingle,
     "WanVideoVAELoaderMultiGPU": WanVideoVAELoader,
     "WanVideoTinyVAELoaderMultiGPU": WanVideoTinyVAELoader,
     "WanVideoBlockSwapMultiGPU": WanVideoBlockSwap,
