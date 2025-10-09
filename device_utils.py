@@ -17,7 +17,7 @@ def get_device_list():
     
     Returns a comprehensive list of all available devices across all types:
     - CPU (always available)
-    - CUDA devices (NVIDIA GPUs)
+    - CUDA devices (NVIDIA GPUs + AMD w/ ROCm GPUs)
     - XPU devices (Intel GPUs)
     - NPU devices (Ascend NPUs from Huawei)
     - MLU devices (Cambricon MLUs)
