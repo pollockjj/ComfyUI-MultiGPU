@@ -18,6 +18,23 @@ import importlib.util
 logger = logging.getLogger("MultiGPU")
 
 
+scheduler_list = [
+    "unipc", "unipc/beta",
+    "dpm++", "dpm++/beta",
+    "dpm++_sde", "dpm++_sde/beta",
+    "euler", "euler/beta",
+    "deis",
+    "lcm", "lcm/beta",
+    "res_multistep",
+    "flowmatch_causvid",
+    "flowmatch_distill",
+    "flowmatch_pusa",
+    "multitalk",
+    "sa_ode_stable"
+]
+
+rope_functions = ["default", "comfy", "comfy_chunked"]
+
 class WanVideoModelLoader:
     @classmethod
     def INPUT_TYPES(s):
@@ -59,31 +76,109 @@ class WanVideoModelLoader:
     FUNCTION = "loadmodel"
     CATEGORY = "multigpu/WanVideoWrapper"
 
-    def loadmodel(self, model, base_precision, compute_device, quantization, load_device,
-                  compile_args=None, attention_mode="sdpa", block_swap_args=None, lora=None, 
-                  vram_management_args=None, extra_model=None, vace_model=None,
-                  fantasytalking_model=None, multitalk_model=None, fantasyportrait_model=None, 
-                  rms_norm_function="default"):
+    def loadmodel(self, model, base_precision, compute_device, quantization, load_device, **kwargs):
         from . import set_current_device
+
+        original_loader = NODE_CLASS_MAPPINGS["WanVideoModelLoader"]()
+        loader_module = inspect.getmodule(original_loader)
+        original_module_device = loader_module.device
 
         set_current_device(compute_device)      
         compute_device_to_be_patched = mm.get_torch_device()
 
-        original_loader = NODE_CLASS_MAPPINGS["WanVideoModelLoader"]()
-        loader_module = inspect.getmodule(original_loader)
-
-        original_module_device = loader_module.device
-
         loader_module.device = compute_device_to_be_patched
 
-        result = original_loader.loadmodel(model, base_precision, load_device, quantization, compile_args, attention_mode, block_swap_args, lora, vram_management_args, extra_model=extra_model, 
-            vace_model=vace_model, fantasytalking_model=fantasytalking_model, multitalk_model=multitalk_model, fantasyportrait_model=fantasyportrait_model, rms_norm_function=rms_norm_function,)
-
-        loader_module.device = original_module_device
+        result = original_loader.loadmodel(model, base_precision, load_device, quantization, **kwargs,)
 
         patcher = result[0]
 
-        return (patcher, compute_device)
+        try:
+            return (patcher, compute_device)
+
+        finally:
+            loader_module.device = original_module_device
+
+class WanVideoSampler:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "model": ("WANVIDEOMODEL",),
+                "compute_device": ("MULTIGPUDEVICE",),
+                "image_embeds": ("WANVIDIMAGE_EMBEDS", ),
+                "steps": ("INT", {"default": 30, "min": 1}),
+                "cfg": ("FLOAT", {"default": 6.0, "min": 0.0, "max": 30.0, "step": 0.01}),
+                "shift": ("FLOAT", {"default": 5.0, "min": 0.0, "max": 1000.0, "step": 0.01}),
+                "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff}),
+                "force_offload": ("BOOLEAN", {"default": True, "tooltip": "Moves the model to the offload device after sampling"}),
+                "scheduler": (scheduler_list, {"default": "unipc",}),
+                "riflex_freq_index": ("INT", {"default": 0, "min": 0, "max": 1000, "step": 1, "tooltip": "Frequency index for RIFLEX, disabled when 0, default 6. Allows for new frames to be generated after without looping"}),
+            },
+            "optional": {
+                "text_embeds": ("WANVIDEOTEXTEMBEDS", ),
+                "samples": ("LATENT", {"tooltip": "init Latents to use for video2video process"} ),
+                "denoise_strength": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01}),
+                "feta_args": ("FETAARGS", ),
+                "context_options": ("WANVIDCONTEXT", ),
+                "cache_args": ("CACHEARGS", ),
+                "flowedit_args": ("FLOWEDITARGS", ),
+                "batched_cfg": ("BOOLEAN", {"default": False, "tooltip": "Batch cond and uncond for faster sampling, possibly faster on some hardware, uses more memory"}),
+                "slg_args": ("SLGARGS", ),
+                "rope_function": (rope_functions, {"default": "comfy", "tooltip": "Comfy's RoPE implementation doesn't use complex numbers and can thus be compiled, that should be a lot faster when using torch.compile. Chunked version has reduced peak VRAM usage when not using torch.compile"}),
+                "loop_args": ("LOOPARGS", ),
+                "experimental_args": ("EXPERIMENTALARGS", ),
+                "sigmas": ("SIGMAS", ),
+                "unianimate_poses": ("UNIANIMATE_POSE", ),
+                "fantasytalking_embeds": ("FANTASYTALKING_EMBEDS", ),
+                "uni3c_embeds": ("UNI3C_EMBEDS", ),
+                "multitalk_embeds": ("MULTITALK_EMBEDS", ),
+                "freeinit_args": ("FREEINITARGS", ),
+                "start_step": ("INT", {"default": 0, "min": 0, "max": 10000, "step": 1, "tooltip": "Start step for the sampling, 0 means full sampling, otherwise samples only from this step"}),
+                "end_step": ("INT", {"default": -1, "min": -1, "max": 10000, "step": 1, "tooltip": "End step for the sampling, -1 means full sampling, otherwise samples only until this step"}),
+                "add_noise_to_samples": ("BOOLEAN", {"default": False, "tooltip": "Add noise to the samples before sampling, needed for video2video sampling when starting from clean video"}),
+            }
+        }
+    
+    RETURN_TYPES = ("LATENT", "LATENT",)
+    RETURN_NAMES = ("samples", "denoised_samples",)
+    FUNCTION = "process"
+    CATEGORY = "multigpu/WanVideoWrapper"
+    DESCRIPTION = "MultiGPU-aware sampler that ensures correct device for each model"
+    
+    def process(self, model, compute_device, **kwargs):
+        from . import set_current_device
+        
+        original_sampler = NODE_CLASS_MAPPINGS["WanVideoSampler"]()
+        sampler_module = inspect.getmodule(original_sampler)
+
+        original_module_device = sampler_module.device
+        original_module_offload_device = sampler_module.offload_device
+
+        set_current_device(compute_device)
+        compute_device_to_be_patched = mm.get_torch_device()
+        sampler_module.device = compute_device_to_be_patched
+
+        transformer = model.model.diffusion_model
+        transformer_options = model.model_options.get("transformer_options", {})
+        block_swap_args = transformer_options.get("block_swap_args")
+
+        multi_gpu_block_swap = block_swap_args is not None and "swap_device" in block_swap_args
+        offload_device_to_be_patched = None
+        if multi_gpu_block_swap:
+            swap_label = block_swap_args.get("swap_device")
+            logger.info(f"[MultiGPU WanVideoWrapper][WanVideoSamplerMultiGPU] block swap enabled, swap device: {swap_label}")
+            offload_device_to_be_patched = torch.device(str(swap_label))
+            sampler_module.offload_device = offload_device_to_be_patched
+
+        if transformer is not None and offload_device_to_be_patched is not None:
+            transformer.offload_device = offload_device_to_be_patched
+            transformer.cache_device = offload_device_to_be_patched
+
+        try:
+            return original_sampler.process(model, **kwargs)
+        finally:
+            sampler_module.device = original_module_device
+            sampler_module.offload_device = original_module_offload_device
 
 class WanVideoTextEncode:
     @classmethod
@@ -117,20 +212,13 @@ class WanVideoTextEncode:
         else:
             device = "gpu"
 
-        if t5 is not None:
-            text_encoder = t5[0]
-        else:
-            text_encoder = None
-
-        logger.info(f"[MultiGPU WanVideoWrapper][WanVideoTextEncodeMulitiGPU] current_device set to: {load_device}")
-        logger.info(f"[MultiGPU WanVideoWrapper][WanVideoTextEncodeMulitiGPU] device set to: {device}")
+        text_encoder = t5[0]
 
         original_encoder = NODE_CLASS_MAPPINGS["WanVideoTextEncode"]()
         prompt_embeds_dict = original_encoder.process(positive_prompt, negative_prompt, text_encoder, force_offload, model_to_offload, use_disk_cache, device)
         return (prompt_embeds_dict)
 
     def parse_prompt_weights(self, prompt):
-        """Extract text and weights from prompts with (text:weight) format"""
         original_parser = NODE_CLASS_MAPPINGS["WanVideoTextEncode"]()
         return original_parser.parse_prompt_weights(prompt)
 
@@ -161,16 +249,12 @@ class LoadWanVideoT5TextEncoder:
     def loadmodel(self, model_name, precision, device=None, quantization="disabled"):
         from . import set_current_device
 
-        if device is not None:
-            set_current_device(device)
+        set_current_device(device)
         
         if device == "cpu":
             load_device = "offload_device"
         else:
             load_device = "main_device"
-
-        logger.info(f"[MultiGPU WanVideoWrapper][LoadWanVideoT5TextEncoder] current_device set to: {device}")
-        logger.info(f"[MultiGPU WanVideoWrapper][LoadWanVideoT5TextEncoder] load_device set to: {load_device}")
 
         original_loader = NODE_CLASS_MAPPINGS["LoadWanVideoT5TextEncoder"]()
         text_encoder = original_loader.loadmodel(model_name, precision, load_device, quantization)
@@ -210,16 +294,12 @@ class WanVideoTextEncodeCached:
     def process(self, model_name, precision, positive_prompt, negative_prompt, quantization='disabled', use_disk_cache=True, load_device=None, extender_args=None):
         from . import set_current_device
 
-        if load_device is not None:
-            set_current_device(load_device)
+        set_current_device(load_device)
 
         if load_device == "cpu":
             device = "cpu"
         else:
             device = "gpu"
-
-        logger.info(f"[MultiGPU WanVideoWrapper][WanVideoTextEncodeCachedMulitiGPU] current_device set to: {load_device}")
-        logger.info(f"[MultiGPU WanVideoWrapper][WanVideoTextEncodeCachedMulitiGPU] device set to: {device}")
 
         original_encoder = NODE_CLASS_MAPPINGS["WanVideoTextEncodeCached"]()
         prompt_embeds_dict, negative_text_embeds, positive_prompt_out = original_encoder.process(model_name, precision, positive_prompt, negative_prompt, quantization, use_disk_cache, device, extender_args)
@@ -250,21 +330,14 @@ class WanVideoTextEncodeSingle:
     def process(self, prompt, t5=None, load_device=None, force_offload=True, model_to_offload=None, use_disk_cache=False):
         from . import set_current_device
 
-        if load_device is not None:
-            set_current_device(load_device)
+        set_current_device(load_device)
 
         if load_device == "cpu":
             device = "cpu"
         else:
             device = "gpu"
 
-        if t5 is not None:
-            text_encoder = t5[0]
-        else:
-            text_encoder = None
-
-        logger.info(f"[MultiGPU WanVideoWrapper][WanVideoTextEncodeSingleMulitiGPU] current_device set to: {load_device}")
-        logger.info(f"[MultiGPU WanVideoWrapper][WanVideoTextEncodeSingleMulitiGPU] device set to: {device}")
+        text_encoder = t5[0]
 
         original_encoder = NODE_CLASS_MAPPINGS["WanVideoTextEncodeSingle"]()
         prompt_embeds_dict = original_encoder.process(prompt, text_encoder, force_offload, model_to_offload, use_disk_cache, device)
@@ -297,15 +370,11 @@ class WanVideoVAELoader:
     def loadmodel(self, model_name, load_device=None, precision="fp16", compile_args=None):
         from . import set_current_device
 
-        if load_device is not None:
-            set_current_device(load_device)
-
-        logger.info(f"[MultiGPU WanVideoWrapper][WanVideoVAELoaderMultiGPU] load_device set to: {load_device}")
+        set_current_device(load_device)
 
         original_loader = NODE_CLASS_MAPPINGS["WanVideoVAELoader"]()
         vae_model = original_loader.loadmodel(model_name, precision, compile_args)
 
-        # Return both the VAE model AND the selected device for device propagation
         return vae_model, load_device
 
 class WanVideoTinyVAELoader:
@@ -333,15 +402,11 @@ class WanVideoTinyVAELoader:
     def loadmodel(self, model_name, load_device=None, precision="fp16", parallel=False):
         from . import set_current_device
 
-        if load_device is not None:
-            set_current_device(load_device)
-
-        logger.info(f"[MultiGPU WanVideoWrapper][WanVideoTinyVAELoader] load_device set to: {load_device}")
+        set_current_device(load_device)
 
         original_loader = NODE_CLASS_MAPPINGS["WanVideoTinyVAELoader"]()
         vae_model = original_loader.loadmodel(model_name, precision, parallel)
 
-        # Return both the VAE model AND the selected device for device propagation
         return vae_model, load_device
 
 
@@ -369,8 +434,7 @@ class WanVideoBlockSwap:
 
     def setargs(self, swap_device=None, **kwargs):
         block_swap_config = dict(kwargs)
-        if swap_device is not None:
-            block_swap_config["swap_device"] = str(swap_device)
+        block_swap_config["swap_device"] = str(swap_device)
         return (block_swap_config,)
 
 class WanVideoImageToVideoEncode:
@@ -622,86 +686,3 @@ class WanVideoDecode:
         return (decode,)
 
 
-class WanVideoSampler:
-    @classmethod
-    def INPUT_TYPES(s):
-        # Get original inputs and add our device input
-        original_types = NODE_CLASS_MAPPINGS["WanVideoSampler"].INPUT_TYPES()
-        original_types["required"]["compute_device"] = ("MULTIGPUDEVICE",)
-        return original_types
-    
-    RETURN_TYPES = ("LATENT", "LATENT",)
-    RETURN_NAMES = ("samples", "denoised_samples",)
-    FUNCTION = "process"
-    CATEGORY = "multigpu/WanVideoWrapper"
-    DESCRIPTION = "MultiGPU-aware sampler that ensures correct device for each model"
-    
-    def process(self, model, compute_device, **kwargs):
-        from . import set_current_device
-        logger.info(
-            f"[MultiGPU WanVideoSampler] Received request to process on: {compute_device}"
-        )
-
-        patcher = model
-        transformer = None
-        if hasattr(patcher, "model"):
-            transformer = getattr(patcher.model, "diffusion_model", None)
-
-        if compute_device:
-            target_device = torch.device(compute_device)
-            set_current_device(target_device)
-        else:
-            target_device = mm.get_torch_device()
-
-        normalized_swap_device = None
-        transformer_options = {}
-        if hasattr(patcher, "model_options"):
-            transformer_options = patcher.model_options.get("transformer_options", {})
-        block_swap_args = transformer_options.get("block_swap_args") if transformer_options else None
-        if block_swap_args:
-            swap_label = block_swap_args.get("resolved_swap_device") or block_swap_args.get("swap_device")
-            if swap_label:
-                try:
-                    normalized_swap_device = torch.device(str(swap_label))
-                except (TypeError, ValueError):
-                    logger.warning(
-                        "[MultiGPU WanVideoSampler] Invalid swap device '%s', leaving sampler offload unchanged",
-                        swap_label,
-                    )
-                    normalized_swap_device = None
-
-        original_sampler = NODE_CLASS_MAPPINGS["WanVideoSampler"]()
-        sampler_module = inspect.getmodule(original_sampler)
-
-        original_module_device = None
-        original_module_offload = None
-        had_sampler_offload_attr = False
-        if sampler_module is not None:
-            original_module_device = getattr(sampler_module, "device", None)
-            had_sampler_offload_attr = hasattr(sampler_module, "offload_device")
-            original_module_offload = getattr(sampler_module, "offload_device", None)
-            setattr(sampler_module, "device", target_device)
-            if normalized_swap_device is not None:
-                setattr(sampler_module, "offload_device", normalized_swap_device)
-            elif compute_device == "cpu":
-                setattr(sampler_module, "offload_device", target_device)
-        else:
-            logger.error("[MultiGPU WanVideoSampler] Unable to resolve sampler module for device patching.")
-
-        if transformer is not None and normalized_swap_device is not None:
-            transformer.offload_device = normalized_swap_device
-            transformer.cache_device = normalized_swap_device
-
-        try:
-            return original_sampler.process(model=patcher, **kwargs)
-        finally:
-            if sampler_module is not None:
-                if original_module_device is not None:
-                    setattr(sampler_module, "device", original_module_device)
-                if had_sampler_offload_attr:
-                    setattr(sampler_module, "offload_device", original_module_offload)
-                else:
-                    try:
-                        delattr(sampler_module, "offload_device")
-                    except AttributeError:
-                        pass
