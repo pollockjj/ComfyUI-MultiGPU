@@ -261,7 +261,6 @@ class LoadWanVideoT5TextEncoder:
 
         return text_encoder, device
 
-
 class WanVideoTextEncodeCached:
     @classmethod
     def INPUT_TYPES(s):
@@ -408,7 +407,6 @@ class WanVideoTinyVAELoader:
         vae_model = original_loader.loadmodel(model_name, precision, parallel)
 
         return vae_model, load_device
-
 
 class WanVideoBlockSwap:
     @classmethod
@@ -665,24 +663,15 @@ class WanVideoDecode:
     def decode(self, vae, load_device, samples, enable_vae_tiling, tile_x, tile_y, tile_stride_x, tile_stride_y, normalization="default"):
         from . import set_current_device
 
+        original_decode = NODE_CLASS_MAPPINGS["WanVideoDecode"]()
+        decode_module = inspect.getmodule(original_decode)
+        original_module_device = decode_module.device
+
         set_current_device(load_device)      
         compute_device_to_be_patched = mm.get_torch_device()
-        
-        logger.info(f"[MultiGPU WanVideoWrapper][WanVideoDecodeMultiGPU] load device: {load_device}")
+        decode_module.device = compute_device_to_be_patched
 
-        original_loader = NODE_CLASS_MAPPINGS["WanVideoDecode"]()
-        loader_module = inspect.getmodule(original_loader)
-
-        original_module_device = loader_module.device
-
-        loader_module.device = compute_device_to_be_patched
-
-        result = original_loader.decode(vae[0], samples, enable_vae_tiling, tile_x, tile_y, tile_stride_x, tile_stride_y, normalization)
-
-        loader_module.device = original_module_device
-
-        decode = result[0]
-
-        return (decode,)
-
-
+        try:
+            return original_decode.decode(vae[0], samples, enable_vae_tiling, tile_x, tile_y, tile_stride_x, tile_stride_y, normalization)
+        finally:
+            decode_module.device = original_module_device
