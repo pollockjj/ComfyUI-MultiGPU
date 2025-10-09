@@ -546,3 +546,89 @@ class WanVideoDecode:
             return original_decode.decode(vae[0], samples, enable_vae_tiling, tile_x, tile_y, tile_stride_x, tile_stride_y, normalization)
         finally:
             decode_module.device = original_module_device
+
+
+class WanVideoVACEEncode:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {"required": {
+            "vae": ("WANVAE",),
+            "load_device": ("MULTIGPUDEVICE",),
+            "width": ("INT", {"default": 832, "min": 64, "max": 8096, "step": 8, "tooltip": "Width of the image to encode"}),
+            "height": ("INT", {"default": 480, "min": 64, "max": 8096, "step": 8, "tooltip": "Height of the image to encode"}),
+            "num_frames": ("INT", {"default": 81, "min": 1, "max": 10000, "step": 4, "tooltip": "Number of frames to encode"}),
+            "strength": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 10.0, "step": 0.001}),
+            "vace_start_percent": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.01, "tooltip": "Start percent of the steps to apply VACE"}),
+            "vace_end_percent": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01, "tooltip": "End percent of the steps to apply VACE"}),
+            },
+            "optional": {
+                "input_frames": ("IMAGE",),
+                "ref_images": ("IMAGE",),
+                "input_masks": ("MASK",),
+                "prev_vace_embeds": ("WANVIDIMAGE_EMBEDS",),
+                "tiled_vae": ("BOOLEAN", {"default": False, "tooltip": "Use tiled VAE encoding for reduced memory use"}),
+            },
+        }
+
+    RETURN_TYPES = ("WANVIDIMAGE_EMBEDS", )
+    RETURN_NAMES = ("vace_embeds",)
+    FUNCTION = "process"
+    CATEGORY = "multigpu/WanVideoWrapper"
+
+    def process(self, vae, load_device, width, height, num_frames, strength, vace_start_percent, vace_end_percent, input_frames=None, ref_images=None, input_masks=None, prev_vace_embeds=None, tiled_vae=False):
+        from . import set_current_device
+
+        original_encode = NODE_CLASS_MAPPINGS["WanVideoVACEEncode"]()
+        encode_module = inspect.getmodule(original_encode)
+        original_module_device = encode_module.device
+
+        set_current_device(load_device)
+        compute_device_to_be_patched = mm.get_torch_device()
+        encode_module.device = compute_device_to_be_patched
+
+        try:
+            return original_encode.process(vae[0], width, height, num_frames, strength, vace_start_percent, vace_end_percent, input_frames, ref_images, input_masks, prev_vace_embeds, tiled_vae)
+        finally:
+            encode_module.device = original_module_device
+
+
+class WanVideoEncode:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {"required": {
+                    "vae": ("WANVAE",),
+                    "load_device": ("MULTIGPUDEVICE",),
+                    "image": ("IMAGE",),
+                    "enable_vae_tiling": ("BOOLEAN", {"default": False, "tooltip": "Drastically reduces memory use but may introduce seams"}),
+                    "tile_x": ("INT", {"default": 272, "min": 64, "max": 2048, "step": 1, "tooltip": "Tile size in pixels, smaller values use less VRAM, may introduce more seams"}),
+                    "tile_y": ("INT", {"default": 272, "min": 64, "max": 2048, "step": 1, "tooltip": "Tile size in pixels, smaller values use less VRAM, may introduce more seams"}),
+                    "tile_stride_x": ("INT", {"default": 144, "min": 32, "max": 2048, "step": 32, "tooltip": "Tile stride in pixels, smaller values use less VRAM, may introduce more seams"}),
+                    "tile_stride_y": ("INT", {"default": 128, "min": 32, "max": 2048, "step": 32, "tooltip": "Tile stride height in pixels, smaller values use less VRAM, may introduce more seams"}),
+                    },
+                    "optional": {
+                        "noise_aug_strength": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 10.0, "step": 0.001, "tooltip": "Strength of noise augmentation, helpful for leapfusion I2V where some noise can add motion and give sharper results"}),
+                        "latent_strength": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 10.0, "step": 0.001, "tooltip": "Additional latent multiplier, helpful for leapfusion I2V where lower values allow for more motion"}),
+                        "mask": ("MASK", ),
+                    }
+                }
+
+    RETURN_TYPES = ("LATENT",)
+    RETURN_NAMES = ("samples",)
+    FUNCTION = "encode"
+    CATEGORY = "multigpu/WanVideoWrapper"
+
+    def encode(self, vae, load_device, image, enable_vae_tiling, tile_x, tile_y, tile_stride_x, tile_stride_y, noise_aug_strength=0.0, latent_strength=1.0, mask=None):
+        from . import set_current_device
+
+        original_encode = NODE_CLASS_MAPPINGS["WanVideoEncode"]()
+        encode_module = inspect.getmodule(original_encode)
+        original_module_device = encode_module.device
+
+        set_current_device(load_device)
+        compute_device_to_be_patched = mm.get_torch_device()
+        encode_module.device = compute_device_to_be_patched
+
+        try:
+            return original_encode.encode(vae[0], image, enable_vae_tiling, tile_x, tile_y, tile_stride_x, tile_stride_y, noise_aug_strength, latent_strength, mask)
+        finally:
+            encode_module.device = original_module_device

@@ -222,6 +222,8 @@ from .wanvideo import (
     WanVideoDecode,
     WanVideoModelLoader,
     WanVideoSampler,
+    WanVideoVACEEncode,
+    WanVideoEncode,
 )
 
 from .wrappers import (
@@ -368,7 +370,9 @@ wanvideo_nodes = {
     "WanVideoImageToVideoEncodeMultiGPU": WanVideoImageToVideoEncode,
     "WanVideoDecodeMultiGPU": WanVideoDecode,
     "WanVideoModelLoaderMultiGPU": WanVideoModelLoader,
-    "WanVideoSamplerMultiGPU": WanVideoSampler
+    "WanVideoSamplerMultiGPU": WanVideoSampler,
+    "WanVideoVACEEncodeMultiGPU": WanVideoVACEEncode,
+    "WanVideoEncodeMultiGPU": WanVideoEncode,
 }
 register_and_count(["ComfyUI-WanVideoWrapper", "comfyui-wanvideowrapper"], wanvideo_nodes)
 
