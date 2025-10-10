@@ -17,7 +17,7 @@ def get_device_list():
     
     Returns a comprehensive list of all available devices across all types:
     - CPU (always available)
-    - CUDA devices (NVIDIA GPUs)
+    - CUDA devices (NVIDIA GPUs + AMD w/ ROCm GPUs)
     - XPU devices (Intel GPUs)
     - NPU devices (Ascend NPUs from Huawei)
     - MLU devices (Cambricon MLUs)
@@ -237,32 +237,28 @@ def soft_empty_cache_distorch2_patched(force=False):
     from .model_management_mgpu import multigpu_memory_log, check_cpu_memory_threshold, trigger_executor_cache_reset
     from .distorch_2 import safetensor_allocation_store, create_safetensor_model_hash
     
-    multigpu_memory_log("patched_soft_empty", f"start:force={force}")
     is_distorch_active = False
 
     # Detect DisTorch2-managed models
-    logger.mgpu_mm_log(f"[DETECT_DEBUG] Checking DisTorch2 active status - loaded models: {len(mm.current_loaded_models)}, store entries: {len(safetensor_allocation_store)}")
+    # logger.mgpu_mm_log(f"[DETECT_DEBUG] Checking DisTorch2 active status - loaded models: {len(mm.current_loaded_models)}, store entries: {len(safetensor_allocation_store)}")
     
     for i, lm in enumerate(mm.current_loaded_models):
         mp = lm.model  # weakref call to ModelPatcher
         if mp is not None:
-            try:
-                model_hash = create_safetensor_model_hash(mp, "cache_patch_check")
-                in_store = model_hash in safetensor_allocation_store
-                alloc_value = safetensor_allocation_store.get(model_hash, "")
-                model_name = type(getattr(mp, 'model', mp)).__name__
-                unload_distorch_model = getattr(getattr(mp, 'model', None), '_mgpu_unload_distorch_model', False)
-                
-                logger.mgpu_mm_log(f"[DETECT_DEBUG] Model {i}: {model_name}, hash={model_hash[:8]}, in_store={in_store}, alloc_value='{alloc_value}', unload_distorch_model={unload_distorch_model}")
-                
-                if in_store and alloc_value:
-                    is_distorch_active = True
-                    logger.mgpu_mm_log(f"[DETECT_DEBUG] DisTorch2 ACTIVE detected on model: {model_name}")
-                    break
-            except Exception as e:
-                logger.mgpu_mm_log(f"[DETECT_DEBUG] Model {i}: Error during detection - {e}")
+            model_hash = create_safetensor_model_hash(mp, "cache_patch_check")
+            in_store = model_hash in safetensor_allocation_store
+            alloc_value = safetensor_allocation_store.get(model_hash, "")
+            model_name = type(getattr(mp, 'model', mp)).__name__
+            unload_distorch_model = getattr(getattr(mp, 'model', None), '_mgpu_unload_distorch_model', False)
+            
+            #logger.mgpu_mm_log(f"[DETECT_DEBUG] Model {i}: {model_name}, hash={model_hash[:8]}, in_store={in_store}, alloc_value='{alloc_value}', unload_distorch_model={unload_distorch_model}")
+            
+            if in_store and alloc_value:
+                is_distorch_active = True
+                #logger.mgpu_mm_log(f"[DETECT_DEBUG] DisTorch2 ACTIVE detected on model: {model_name}")
+                break
     
-    logger.mgpu_mm_log(f"[DETECT_DEBUG] Final DisTorch2 active status: {is_distorch_active}")
+    #logger.mgpu_mm_log(f"[DETECT_DEBUG] Final DisTorch2 active status: {is_distorch_active}")
 
     # Phase 2: adaptive CPU memory management
     check_cpu_memory_threshold()
@@ -272,7 +268,6 @@ def soft_empty_cache_distorch2_patched(force=False):
         logger.mgpu_mm_log("DisTorch2 active: clearing allocator caches on all devices (VRAM)")
         soft_empty_cache_multigpu()
     else:
-        logger.mgpu_mm_log("DisTorch2 not active: delegating allocator cache clear (VRAM) to original mm.soft_empty_cache")
         original_soft_empty_cache(force)
         # Optional: return CPU heap to OS (not part of Comfy Core)
 
@@ -280,7 +275,6 @@ def soft_empty_cache_distorch2_patched(force=False):
     if force:
         logger.mgpu_mm_log("Force flag active: triggering executor cache reset (CPU)")
         trigger_executor_cache_reset(reason="forced_soft_empty", force=True)
-    multigpu_memory_log("patched_soft_empty", "end")
 
 mm.soft_empty_cache = soft_empty_cache_distorch2_patched
 

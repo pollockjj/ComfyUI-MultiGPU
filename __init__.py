@@ -3,6 +3,8 @@ import logging
 import weakref
 import os
 import copy
+import json
+from datetime import datetime
 from pathlib import Path
 import folder_paths
 import comfy.model_management as mm
@@ -21,11 +23,21 @@ from .model_management_mgpu import (
 )
 
 WEB_DIRECTORY = "./web"
-MGPU_MM_LOG = False
+MGPU_MM_LOG = True
 DEBUG_LOG = False
 
 logger = logging.getLogger("MultiGPU")
 logger.propagate = False
+
+FOCUS_LOG_LEVEL = logging.INFO + 5
+logging.addLevelName(FOCUS_LOG_LEVEL, "FOCUS")
+
+if not hasattr(logging.Logger, "focus"):
+    def focus(self, message, *args, **kwargs):
+        if self.isEnabledFor(FOCUS_LOG_LEVEL):
+            self._log(FOCUS_LOG_LEVEL, message, args, **kwargs)
+
+    logging.Logger.focus = focus  # type: ignore[attr-defined]
 
 if not logger.handlers:
     log_level = logging.DEBUG if DEBUG_LOG else logging.INFO
@@ -35,10 +47,93 @@ if not logger.handlers:
     logger.addHandler(handler)
     logger.setLevel(log_level)
 
+    json_log_path = os.environ.get("MGPU_JSON_LOG_PATH")
+    json_static_fields = {}
+    if json_log_path:
+        try:
+            json_static_fields = json.loads(os.environ.get("MGPU_JSON_STATIC_FIELDS", "{}"))
+        except json.JSONDecodeError:
+            json_static_fields = {}
+
+        level_aliases = {
+            "CRITICAL": logging.CRITICAL,
+            "ERROR": logging.ERROR,
+            "WARNING": logging.WARNING,
+            "FOCUS": FOCUS_LOG_LEVEL,
+            "INFO": logging.INFO,
+            "DEBUG": logging.DEBUG,
+        }
+
+        json_min_level = FOCUS_LOG_LEVEL
+        configured_min_level = os.environ.get("MGPU_JSON_MIN_LEVEL")
+        if configured_min_level:
+            value = configured_min_level.strip()
+            upper_value = value.upper()
+            if upper_value in level_aliases:
+                json_min_level = level_aliases[upper_value]
+            else:
+                try:
+                    json_min_level = int(value)
+                except ValueError:
+                    json_min_level = FOCUS_LOG_LEVEL
+
+        class JsonLineFileHandler(logging.Handler):
+            def __init__(self, path, static_fields, min_level, overwrite):
+                super().__init__()
+                self.path = Path(path)
+                self.path.parent.mkdir(parents=True, exist_ok=True)
+                self.static_fields = static_fields
+                self.setLevel(min_level)
+                if overwrite:
+                    try:
+                        with self.path.open("w", encoding="utf-8") as handle:
+                            handle.write("")
+                    except OSError:
+                        pass
+
+            def emit(self, record):
+                message = record.getMessage()
+                category = None
+                if message.startswith("[") and "]" in message:
+                    bracket_split = message.split("]", 1)
+                    category = bracket_split[0].strip("[]")
+                payload = {
+                    "timestamp": datetime.utcnow().isoformat() + "Z",
+                    "level": record.levelname,
+                    "name": record.name,
+                    "message": message,
+                }
+                if category:
+                    payload["event_category"] = category
+                if hasattr(record, "mgpu_context") and isinstance(record.mgpu_context, dict):
+                    payload.update(record.mgpu_context)
+                workflow_id = os.environ.get("MGPU_JSON_WORKFLOW")
+                prompt_id = os.environ.get("MGPU_JSON_PROMPT")
+                if workflow_id:
+                    payload.setdefault("workflow_id", workflow_id)
+                if prompt_id:
+                    payload.setdefault("prompt_id", prompt_id)
+                if self.static_fields:
+                    payload.update(self.static_fields)
+                try:
+                    with self.path.open("a", encoding="utf-8") as handle:
+                        handle.write(json.dumps(payload, ensure_ascii=True) + "\n")
+                except OSError:
+                    # Fail silently for JSON logging so primary logging continues.
+                    pass
+
+        overwrite_value = os.environ.get("MGPU_JSON_OVERWRITE", "true").strip().lower()
+        overwrite_enabled = overwrite_value not in {"0", "false", "no"}
+
+        logger.addHandler(JsonLineFileHandler(json_log_path, json_static_fields, json_min_level, overwrite_enabled))
+
 def mgpu_mm_log_method(self, msg):
     """Add MultiGPU model management logging method to logger instance."""
     if MGPU_MM_LOG:
-        self.info(f"[MultiGPU Model Management] {msg}")
+        self.focus(
+            f"[MultiGPU Model Management] {msg}",
+            extra={"mgpu_context": {"component": "model_management"}},
+        )
 logger.mgpu_mm_log = mgpu_mm_log_method.__get__(logger, type(logger))
 
 def check_module_exists(module_path):
@@ -95,8 +190,6 @@ mm.get_torch_device = get_torch_device_patched
 mm.text_encoder_device = text_encoder_device_patched
 
 from .nodes import (
-    DeviceSelectorMultiGPU,
-    HunyuanVideoEmbeddingsAdapter,
     UnetLoaderGGUF,
     UnetLoaderGGUFAdvanced,
     CLIPLoaderGGUF,
@@ -114,21 +207,30 @@ from .nodes import (
     PulidModelLoader,
     PulidInsightFaceLoader,
     PulidEvaClipLoader,
-    HyVideoModelLoader,
-    HyVideoVAELoader,
-    DownloadAndLoadHyVideoTextEncoder,
     UNetLoaderLP,
 )
 
 from .wanvideo import (
-    WanVideoModelLoader,
-    WanVideoModelLoader_2,
-    WanVideoVAELoader,
     LoadWanVideoT5TextEncoder,
-    LoadWanVideoClipTextEncoder,
     WanVideoTextEncode,
+    WanVideoTextEncodeCached,
+    WanVideoTextEncodeSingle,
+    WanVideoVAELoader,
+    WanVideoTinyVAELoader,
     WanVideoBlockSwap,
-    WanVideoSampler
+    WanVideoImageToVideoEncode,
+    WanVideoDecode,
+    WanVideoModelLoader,
+    WanVideoSampler,
+    WanVideoVACEEncode,
+    WanVideoEncode,
+    LoadWanVideoClipTextEncoder,
+    WanVideoClipVisionEncode,
+    WanVideoControlnetLoader,
+    FantasyTalkingModelLoader,
+    Wav2VecModelLoader,
+    WanVideoUni3C_ControlnetLoader,
+    DownloadAndLoadWav2VecModel,
 )
 
 from .wrappers import (
@@ -158,8 +260,6 @@ from .checkpoint_multigpu import (
 )
 
 NODE_CLASS_MAPPINGS = {
-    "DeviceSelectorMultiGPU": DeviceSelectorMultiGPU,
-    "HunyuanVideoEmbeddingsAdapter": HunyuanVideoEmbeddingsAdapter,
     "CheckpointLoaderAdvancedMultiGPU": CheckpointLoaderAdvancedMultiGPU,
     "CheckpointLoaderAdvancedDisTorch2MultiGPU": CheckpointLoaderAdvancedDisTorch2MultiGPU,
     "UNetLoaderLP": UNetLoaderLP,
@@ -266,22 +366,27 @@ pulid_nodes = {
 }
 register_and_count(["PuLID_ComfyUI", "pulid_comfyui"], pulid_nodes)
 
-hunyuan_nodes = {
-    "HyVideoModelLoaderMultiGPU": override_class(HyVideoModelLoader),
-    "HyVideoVAELoaderMultiGPU": override_class(HyVideoVAELoader),
-    "DownloadAndLoadHyVideoTextEncoderMultiGPU": override_class(DownloadAndLoadHyVideoTextEncoder)
-}
-register_and_count(["ComfyUI-HunyuanVideoWrapper", "comfyui-hunyuanvideowrapper"], hunyuan_nodes)
-
 wanvideo_nodes = {
-    "WanVideoModelLoaderMultiGPU": WanVideoModelLoader,
-    "WanVideoModelLoaderMultiGPU_2": WanVideoModelLoader_2,
-    "WanVideoVAELoaderMultiGPU": WanVideoVAELoader,
     "LoadWanVideoT5TextEncoderMultiGPU": LoadWanVideoT5TextEncoder,
-    "LoadWanVideoClipTextEncoderMultiGPU": LoadWanVideoClipTextEncoder,
     "WanVideoTextEncodeMultiGPU": WanVideoTextEncode,
+    "WanVideoTextEncodeCachedMultiGPU": WanVideoTextEncodeCached,
+    "WanVideoTextEncodeSingleMultiGPU": WanVideoTextEncodeSingle,
+    "WanVideoVAELoaderMultiGPU": WanVideoVAELoader,
+    "WanVideoTinyVAELoaderMultiGPU": WanVideoTinyVAELoader,
     "WanVideoBlockSwapMultiGPU": WanVideoBlockSwap,
-    "WanVideoSamplerMultiGPU": WanVideoSampler
+    "WanVideoImageToVideoEncodeMultiGPU": WanVideoImageToVideoEncode,
+    "WanVideoDecodeMultiGPU": WanVideoDecode,
+    "WanVideoModelLoaderMultiGPU": WanVideoModelLoader,
+    "WanVideoSamplerMultiGPU": WanVideoSampler,
+    "WanVideoVACEEncodeMultiGPU": WanVideoVACEEncode,
+    "WanVideoEncodeMultiGPU": WanVideoEncode,
+    "LoadWanVideoClipTextEncoderMultiGPU": LoadWanVideoClipTextEncoder,
+    "WanVideoClipVisionEncodeMultiGPU": WanVideoClipVisionEncode,
+    "WanVideoControlnetLoaderMultiGPU": WanVideoControlnetLoader,
+    "FantasyTalkingModelLoaderMultiGPU": FantasyTalkingModelLoader,
+    "Wav2VecModelLoaderMultiGPU": Wav2VecModelLoader,
+    "WanVideoUni3C_ControlnetLoaderMultiGPU": WanVideoUni3C_ControlnetLoader,
+    "DownloadAndLoadWav2VecModelMultiGPU": DownloadAndLoadWav2VecModel,
 }
 register_and_count(["ComfyUI-WanVideoWrapper", "comfyui-wanvideowrapper"], wanvideo_nodes)
 
