@@ -1,8 +1,8 @@
 {
   "id": "c6e410bc-5e2c-460b-ae81-c91b6094fbb1",
   "revision": 0,
-  "last_node_id": 70,
-  "last_link_id": 80,
+  "last_node_id": 75,
+  "last_link_id": 88,
   "nodes": [
     {
       "id": 50,
@@ -16,7 +16,7 @@
         200
       ],
       "flags": {},
-      "order": 16,
+      "order": 12,
       "mode": 2,
       "inputs": [
         {
@@ -36,6 +36,8 @@
         }
       ],
       "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.3.64",
         "Node name for S&R": "CLIPTextEncode"
       },
       "widgets_values": [
@@ -71,6 +73,8 @@
         }
       ],
       "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.3.64",
         "Node name for S&R": "CLIPLoader"
       },
       "widgets_values": [
@@ -116,7 +120,7 @@
         200
       ],
       "flags": {},
-      "order": 15,
+      "order": 11,
       "mode": 2,
       "inputs": [
         {
@@ -136,115 +140,12 @@
         }
       ],
       "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.3.64",
         "Node name for S&R": "CLIPTextEncode"
       },
       "widgets_values": [
         "high quality nature video featuring a red panda balancing on a bamboo stem while a bird lands on it's head, on the background there is a waterfall"
-      ],
-      "color": "#432",
-      "bgcolor": "#653"
-    },
-    {
-      "id": 53,
-      "type": "Note",
-      "pos": [
-        531.5562133789062,
-        -1014.3677978515625
-      ],
-      "size": [
-        324.64129638671875,
-        159.47401428222656
-      ],
-      "flags": {},
-      "order": 2,
-      "mode": 0,
-      "inputs": [],
-      "outputs": [],
-      "properties": {},
-      "widgets_values": [
-        "TeaCache could be considered to be sort of an automated step skipper \n\nThe relative l1 threshold -value determines how aggressive this is, higher values are faster but quality suffers more. Very first steps should NEVER be skipped with this model or it kills the motion. When using the pre-calculated coefficients, the treshold value should be much higher than with the default coefficients."
-      ],
-      "color": "#432",
-      "bgcolor": "#653"
-    },
-    {
-      "id": 54,
-      "type": "Note",
-      "pos": [
-        1278.7947998046875,
-        -1137.541748046875
-      ],
-      "size": [
-        327.61932373046875,
-        88
-      ],
-      "flags": {},
-      "order": 3,
-      "mode": 0,
-      "inputs": [],
-      "outputs": [],
-      "properties": {},
-      "widgets_values": [
-        "Enhance-a-video can increase the fidelity of the results, too high values lead to noisy results."
-      ],
-      "color": "#432",
-      "bgcolor": "#653"
-    },
-    {
-      "id": 35,
-      "type": "WanVideoTorchCompileSettings",
-      "pos": [
-        222.5817413330078,
-        -677.6240844726562
-      ],
-      "size": [
-        390.5999755859375,
-        202
-      ],
-      "flags": {},
-      "order": 4,
-      "mode": 0,
-      "inputs": [],
-      "outputs": [
-        {
-          "name": "torch_compile_args",
-          "type": "WANCOMPILEARGS",
-          "slot_index": 0,
-          "links": []
-        }
-      ],
-      "properties": {
-        "Node name for S&R": "WanVideoTorchCompileSettings"
-      },
-      "widgets_values": [
-        "inductor",
-        false,
-        "default",
-        false,
-        64,
-        true,
-        128
-      ]
-    },
-    {
-      "id": 44,
-      "type": "Note",
-      "pos": [
-        -98.58364868164062,
-        -675.3411254882812
-      ],
-      "size": [
-        303.0501403808594,
-        88
-      ],
-      "flags": {},
-      "order": 5,
-      "mode": 0,
-      "inputs": [],
-      "outputs": [],
-      "properties": {},
-      "widgets_values": [
-        "If you have Triton installed, connect this for ~30% speed increase"
       ],
       "color": "#432",
       "bgcolor": "#653"
@@ -261,7 +162,7 @@
         46
       ],
       "flags": {},
-      "order": 19,
+      "order": 15,
       "mode": 2,
       "inputs": [
         {
@@ -284,45 +185,11 @@
         }
       ],
       "properties": {
+        "cnr_id": "ComfyUI-WanVideoWrapper",
+        "ver": "76ea2aa6a664edbd553799f78d6bafdd23e34dc6",
         "Node name for S&R": "WanVideoTextEmbedBridge"
       },
       "widgets_values": []
-    },
-    {
-      "id": 60,
-      "type": "LoadWanVideoT5TextEncoderMultiGPU",
-      "pos": [
-        272.1676025390625,
-        -32.73524856567383
-      ],
-      "size": [
-        344.07952880859375,
-        130
-      ],
-      "flags": {},
-      "order": 6,
-      "mode": 0,
-      "inputs": [],
-      "outputs": [
-        {
-          "name": "wan_t5_model",
-          "type": "WANTEXTENCODER",
-          "links": [
-            63
-          ]
-        }
-      ],
-      "properties": {
-        "Node name for S&R": "LoadWanVideoT5TextEncoderMultiGPU"
-      },
-      "widgets_values": [
-        "umt5-xxl-enc-bf16.safetensors",
-        "bf16",
-        "cpu",
-        "disabled"
-      ],
-      "color": "#233",
-      "bgcolor": "#355"
     },
     {
       "id": 52,
@@ -336,7 +203,7 @@
         178
       ],
       "flags": {},
-      "order": 7,
+      "order": 2,
       "mode": 0,
       "inputs": [],
       "outputs": [
@@ -349,6 +216,8 @@
         }
       ],
       "properties": {
+        "cnr_id": "ComfyUI-WanVideoWrapper",
+        "ver": "76ea2aa6a664edbd553799f78d6bafdd23e34dc6",
         "Node name for S&R": "WanVideoTeaCache"
       },
       "widgets_values": [
@@ -372,7 +241,7 @@
         126
       ],
       "flags": {},
-      "order": 8,
+      "order": 3,
       "mode": 0,
       "inputs": [
         {
@@ -398,6 +267,8 @@
         }
       ],
       "properties": {
+        "cnr_id": "ComfyUI-WanVideoWrapper",
+        "ver": "76ea2aa6a664edbd553799f78d6bafdd23e34dc6",
         "Node name for S&R": "WanVideoEmptyEmbeds"
       },
       "widgets_values": [
@@ -405,56 +276,6 @@
         480,
         81
       ]
-    },
-    {
-      "id": 61,
-      "type": "WanVideoTextEncodeMultiGPU",
-      "pos": [
-        712.607177734375,
-        -10.148613929748535
-      ],
-      "size": [
-        400,
-        234
-      ],
-      "flags": {},
-      "order": 17,
-      "mode": 0,
-      "inputs": [
-        {
-          "name": "t5",
-          "shape": 7,
-          "type": "WANTEXTENCODER",
-          "link": 63
-        },
-        {
-          "name": "model_to_offload",
-          "shape": 7,
-          "type": "WANVIDEOMODEL",
-          "link": null
-        }
-      ],
-      "outputs": [
-        {
-          "name": "text_embeds",
-          "type": "WANVIDEOTEXTEMBEDS",
-          "links": [
-            69
-          ]
-        }
-      ],
-      "properties": {
-        "Node name for S&R": "WanVideoTextEncodeMultiGPU"
-      },
-      "widgets_values": [
-        "high quality nature video featuring a red panda balancing on a bamboo stem while a bird lands on it's head, on the background there is a waterfall",
-        "色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走",
-        "cpu",
-        false,
-        false
-      ],
-      "color": "#233",
-      "bgcolor": "#355"
     },
     {
       "id": 55,
@@ -468,7 +289,7 @@
         106
       ],
       "flags": {},
-      "order": 9,
+      "order": 4,
       "mode": 0,
       "inputs": [],
       "outputs": [
@@ -481,6 +302,8 @@
         }
       ],
       "properties": {
+        "cnr_id": "ComfyUI-WanVideoWrapper",
+        "ver": "76ea2aa6a664edbd553799f78d6bafdd23e34dc6",
         "Node name for S&R": "WanVideoEnhanceAVideo"
       },
       "widgets_values": [
@@ -490,18 +313,240 @@
       ]
     },
     {
-      "id": 64,
-      "type": "WanVideoModelLoaderMultiGPU",
+      "id": 66,
+      "type": "WanVideoSetBlockSwap",
       "pos": [
-        327.9969177246094,
-        -373.866455078125
+        824.3810424804688,
+        -377.044189453125
       ],
       "size": [
-        351.6673889160156,
-        294.30389404296875
+        201.76815795898438,
+        46
       ],
       "flags": {},
-      "order": 10,
+      "order": 14,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model",
+          "type": "WANVIDEOMODEL",
+          "link": 84
+        },
+        {
+          "name": "block_swap_args",
+          "shape": 7,
+          "type": "BLOCKSWAPARGS",
+          "link": 72
+        }
+      ],
+      "outputs": [
+        {
+          "name": "model",
+          "type": "WANVIDEOMODEL",
+          "links": []
+        }
+      ],
+      "properties": {
+        "cnr_id": "ComfyUI-WanVideoWrapper",
+        "ver": "7e290c67bff1f906cdab84523018573f6c9d4d7f",
+        "Node name for S&R": "WanVideoSetBlockSwap"
+      },
+      "widgets_values": [],
+      "color": "#223",
+      "bgcolor": "#335"
+    },
+    {
+      "id": 69,
+      "type": "GetImageSizeAndCount",
+      "pos": [
+        1655.0137939453125,
+        -260.44696044921875
+      ],
+      "size": [
+        240.41265869140625,
+        86
+      ],
+      "flags": {},
+      "order": 18,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "image",
+          "type": "IMAGE",
+          "link": 88
+        }
+      ],
+      "outputs": [
+        {
+          "name": "image",
+          "type": "IMAGE",
+          "links": [
+            78
+          ]
+        },
+        {
+          "label": "width",
+          "name": "width",
+          "type": "INT",
+          "links": null
+        },
+        {
+          "label": "height",
+          "name": "height",
+          "type": "INT",
+          "links": null
+        },
+        {
+          "label": "count",
+          "name": "count",
+          "type": "INT",
+          "links": null
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfyui-kjnodes",
+        "ver": "a6b867b63a29ca48ddb15c589e17a9f2d8530d57",
+        "Node name for S&R": "GetImageSizeAndCount"
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 70,
+      "type": "VHS_VideoCombine",
+      "pos": [
+        1994.4910888671875,
+        -545.2236328125
+      ],
+      "size": [
+        698.6392211914062,
+        334
+      ],
+      "flags": {},
+      "order": 19,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 78
+        },
+        {
+          "name": "audio",
+          "shape": 7,
+          "type": "AUDIO",
+          "link": null
+        },
+        {
+          "name": "meta_batch",
+          "shape": 7,
+          "type": "VHS_BatchManager",
+          "link": null
+        },
+        {
+          "name": "vae",
+          "shape": 7,
+          "type": "VAE",
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "Filenames",
+          "type": "VHS_FILENAMES",
+          "links": null
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfyui-videohelpersuite",
+        "ver": "0a75c7958fe320efcb052f1d9f8451fd20c730a8",
+        "Node name for S&R": "VHS_VideoCombine"
+      },
+      "widgets_values": {
+        "frame_rate": 16,
+        "loop_count": 0,
+        "filename_prefix": "WanVideo2_1_T2V",
+        "format": "video/h264-mp4",
+        "pix_fmt": "yuv420p",
+        "crf": 19,
+        "save_metadata": true,
+        "trim_to_audio": false,
+        "pingpong": false,
+        "save_output": true,
+        "videopreview": {
+          "hidden": false,
+          "paused": false,
+          "params": {
+            "filename": "WanVideo2_1_T2V_00020.mp4",
+            "subfolder": "",
+            "type": "output",
+            "format": "video/h264-mp4",
+            "frame_rate": 16,
+            "workflow": "WanVideo2_1_T2V_00020.png",
+            "fullpath": "/home/johnj/ComfyUI/output/WanVideo2_1_T2V_00020.mp4"
+          }
+        }
+      }
+    },
+    {
+      "id": 62,
+      "type": "WanVideoVAELoaderMultiGPU",
+      "pos": [
+        1324.779052734375,
+        -796.8985595703125
+      ],
+      "size": [
+        294.1841735839844,
+        126
+      ],
+      "flags": {},
+      "order": 5,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "compile_args",
+          "shape": 7,
+          "type": "WANCOMPILEARGS",
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "vae",
+          "type": "WANVAE",
+          "links": []
+        },
+        {
+          "name": "load_device",
+          "type": "MULTIGPUDEVICE",
+          "links": null
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfyui-multigpu",
+        "ver": "15ff29c63b816a5d4139557730da6b4dae2840cf",
+        "Node name for S&R": "WanVideoVAELoaderMultiGPU"
+      },
+      "widgets_values": [
+        "wan_2.1_vae.safetensors",
+        "cuda:0",
+        "bf16"
+      ],
+      "color": "#008181",
+      "bgcolor": "rgba(24,24,27,.9)"
+    },
+    {
+      "id": 72,
+      "type": "WanVideoModelLoaderMultiGPU",
+      "pos": [
+        313.96173095703125,
+        -443.1802978515625
+      ],
+      "size": [
+        325.787109375,
+        342
+      ],
+      "flags": {},
+      "order": 6,
       "mode": 0,
       "inputs": [
         {
@@ -529,7 +574,7 @@
           "link": null
         },
         {
-          "name": "vace_model",
+          "name": "extra_model",
           "shape": 7,
           "type": "VACEPATH",
           "link": null
@@ -545,6 +590,12 @@
           "shape": 7,
           "type": "MULTITALKMODEL",
           "link": null
+        },
+        {
+          "name": "fantasyportrait_model",
+          "shape": 7,
+          "type": "FANTASYPORTRAITMODEL",
+          "link": null
         }
       ],
       "outputs": [
@@ -552,66 +603,227 @@
           "name": "model",
           "type": "WANVIDEOMODEL",
           "links": [
-            75
+            82,
+            84
+          ]
+        },
+        {
+          "name": "compute_device",
+          "type": "MULTIGPUDEVICE",
+          "links": [
+            83
           ]
         }
       ],
       "properties": {
+        "cnr_id": "comfyui-multigpu",
+        "ver": "db931d66c31acbcfce26f29babfb552509e586aa",
         "Node name for S&R": "WanVideoModelLoaderMultiGPU"
       },
       "widgets_values": [
         "wan2.1_t2v_1.3B_bf16.safetensors",
         "bf16",
         "disabled",
+        "offload_device",
         "cuda:0",
-        "sageattn"
+        "sdpa",
+        "default"
       ],
-      "color": "#233",
-      "bgcolor": "#355"
+      "color": "#008181",
+      "bgcolor": "rgba(24,24,27,.9)"
     },
     {
-      "id": 66,
-      "type": "WanVideoSetBlockSwap",
+      "id": 60,
+      "type": "LoadWanVideoT5TextEncoderMultiGPU",
       "pos": [
-        824.3810424804688,
-        -377.044189453125
+        272.1676025390625,
+        -32.73524856567383
       ],
       "size": [
-        201.76815795898438,
-        46
+        344.07952880859375,
+        150
       ],
       "flags": {},
-      "order": 18,
+      "order": 7,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "wan_t5_model",
+          "type": "WANTEXTENCODER",
+          "links": [
+            63
+          ]
+        },
+        {
+          "name": "load_device",
+          "type": "MULTIGPUDEVICE",
+          "links": null
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfyui-multigpu",
+        "ver": "15ff29c63b816a5d4139557730da6b4dae2840cf",
+        "Node name for S&R": "LoadWanVideoT5TextEncoderMultiGPU"
+      },
+      "widgets_values": [
+        "umt5-xxl-enc-bf16.safetensors",
+        "bf16",
+        "cuda:0",
+        "disabled"
+      ],
+      "color": "#008181",
+      "bgcolor": "rgba(24,24,27,.9)"
+    },
+    {
+      "id": 61,
+      "type": "WanVideoTextEncodeMultiGPU",
+      "pos": [
+        712.607177734375,
+        -10.148613929748535
+      ],
+      "size": [
+        400,
+        234
+      ],
+      "flags": {},
+      "order": 13,
       "mode": 0,
       "inputs": [
         {
-          "name": "model",
-          "type": "WANVIDEOMODEL",
-          "link": 75
+          "name": "t5",
+          "shape": 7,
+          "type": "WANTEXTENCODER",
+          "link": 63
         },
         {
-          "name": "block_swap_args",
+          "name": "load_device",
           "shape": 7,
-          "type": "BLOCKSWAPARGS",
-          "link": 72
+          "type": "MULTIGPUDEVICE",
+          "link": null
+        },
+        {
+          "name": "model_to_offload",
+          "shape": 7,
+          "type": "WANVIDEOMODEL",
+          "link": null
         }
       ],
       "outputs": [
         {
-          "name": "model",
-          "type": "WANVIDEOMODEL",
+          "name": "text_embeds",
+          "type": "WANVIDEOTEXTEMBEDS",
           "links": [
-            76
+            69
           ]
         }
       ],
       "properties": {
-        "Node name for S&R": "WanVideoSetBlockSwap",
-        "cnr_id": "ComfyUI-WanVideoWrapper",
-        "ver": "7e290c67bff1f906cdab84523018573f6c9d4d7f"
+        "cnr_id": "comfyui-multigpu",
+        "ver": "15ff29c63b816a5d4139557730da6b4dae2840cf",
+        "Node name for S&R": "WanVideoTextEncodeMultiGPU"
       },
-      "color": "#223",
-      "bgcolor": "#335"
+      "widgets_values": [
+        "A towering technological monolith in a cyberpunk cityscape at night, with \"DisTorch 2\" emblazoned across its surface in massive neon blue-green mixed with purple letters that illuminate the surrounding buildings. The text occupies the central third of the frame, crafted from glowing plasma tubes and crackling energy. The model file suffix \"now with .safetensors!\" in same stying but smaller font directly underneath. Rain-slicked streets below reflect the brilliant signage, while holographic advertisements and flying vehicles populate the background. Moody atmospheric lighting, heavy contrast, photorealistic textures, cinematic color grading. ",
+        "色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走",
+        "cpu",
+        false
+      ],
+      "color": "#008181",
+      "bgcolor": "rgba(24,24,27,.9)"
+    },
+    {
+      "id": 65,
+      "type": "WanVideoBlockSwapMultiGPU",
+      "pos": [
+        -41.53060531616211,
+        -427.4794616699219
+      ],
+      "size": [
+        292.8716735839844,
+        226
+      ],
+      "flags": {},
+      "order": 8,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "block_swap_args",
+          "type": "BLOCKSWAPARGS",
+          "links": [
+            72
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfyui-multigpu",
+        "ver": "15ff29c63b816a5d4139557730da6b4dae2840cf",
+        "Node name for S&R": "WanVideoBlockSwapMultiGPU"
+      },
+      "widgets_values": [
+        5,
+        "cuda:2",
+        "cpu",
+        false,
+        false,
+        false,
+        0,
+        "cuda:1"
+      ],
+      "color": "#008181",
+      "bgcolor": "rgba(24,24,27,.9)"
+    },
+    {
+      "id": 74,
+      "type": "WanVideoVAELoaderMultiGPU",
+      "pos": [
+        1695.74169921875,
+        -860.8320922851562
+      ],
+      "size": [
+        294.1841735839844,
+        126
+      ],
+      "flags": {},
+      "order": 9,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "compile_args",
+          "shape": 7,
+          "type": "WANCOMPILEARGS",
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "vae",
+          "type": "WANVAE",
+          "links": [
+            85
+          ]
+        },
+        {
+          "name": "load_device",
+          "type": "MULTIGPUDEVICE",
+          "links": [
+            86
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfyui-multigpu",
+        "ver": "db931d66c31acbcfce26f29babfb552509e586aa",
+        "Node name for S&R": "WanVideoVAELoaderMultiGPU"
+      },
+      "widgets_values": [
+        "wan_2.1_vae.safetensors",
+        "cuda:0",
+        "bf16"
+      ],
+      "color": "#008181",
+      "bgcolor": "rgba(24,24,27,.9)"
     },
     {
       "id": 63,
@@ -622,16 +834,21 @@
       ],
       "size": [
         327.80859375,
-        902
+        922
       ],
       "flags": {},
-      "order": 20,
+      "order": 16,
       "mode": 0,
       "inputs": [
         {
           "name": "model",
           "type": "WANVIDEOMODEL",
-          "link": 76
+          "link": 82
+        },
+        {
+          "name": "compute_device",
+          "type": "MULTIGPUDEVICE",
+          "link": 83
         },
         {
           "name": "image_embeds",
@@ -734,7 +951,7 @@
           "name": "samples",
           "type": "LATENT",
           "links": [
-            80
+            87
           ]
         },
         {
@@ -744,13 +961,15 @@
         }
       ],
       "properties": {
+        "cnr_id": "comfyui-multigpu",
+        "ver": "15ff29c63b816a5d4139557730da6b4dae2840cf",
         "Node name for S&R": "WanVideoSamplerMultiGPU"
       },
       "widgets_values": [
         25,
         6,
         5,
-        43,
+        47,
         "increment",
         false,
         "unipc",
@@ -762,176 +981,53 @@
         -1,
         false
       ],
-      "color": "#233",
-      "bgcolor": "#355"
+      "color": "#008181",
+      "bgcolor": "rgba(24,24,27,.9)"
     },
     {
-      "id": 65,
-      "type": "WanVideoBlockSwapMultiGPU",
+      "id": 75,
+      "type": "WanVideoDecodeMultiGPU",
       "pos": [
-        -41.53060531616211,
-        -427.4794616699219
+        1667.2755126953125,
+        -590.3536376953125
       ],
       "size": [
-        292.8716735839844,
-        202
+        271.8716735839844,
+        218
       ],
       "flags": {},
-      "order": 11,
-      "mode": 0,
-      "inputs": [],
-      "outputs": [
-        {
-          "name": "block_swap_args",
-          "type": "BLOCKSWAPARGS",
-          "links": [
-            72
-          ]
-        }
-      ],
-      "properties": {
-        "Node name for S&R": "WanVideoBlockSwapMultiGPU"
-      },
-      "widgets_values": [
-        5,
-        "cuda:2",
-        "cpu",
-        false,
-        false,
-        false,
-        0
-      ],
-      "color": "#233",
-      "bgcolor": "#355"
-    },
-    {
-      "id": 42,
-      "type": "Note",
-      "pos": [
-        -391.3414001464844,
-        -423.716064453125
-      ],
-      "size": [
-        314.96246337890625,
-        152.77333068847656
-      ],
-      "flags": {},
-      "order": 12,
-      "mode": 0,
-      "inputs": [],
-      "outputs": [],
-      "properties": {},
-      "widgets_values": [
-        "Adjust the blocks to swap based on your VRAM, this is a tradeoff between speed and memory usage.\n"
-      ],
-      "color": "#432",
-      "bgcolor": "#653"
-    },
-    {
-      "id": 36,
-      "type": "Note",
-      "pos": [
-        723.7317504882812,
-        -597.3093872070312
-      ],
-      "size": [
-        374.3061828613281,
-        171.9547576904297
-      ],
-      "flags": {},
-      "order": 13,
-      "mode": 0,
-      "inputs": [],
-      "outputs": [],
-      "properties": {},
-      "widgets_values": [
-        "\nSageattn if you have it installed can be used for almost double inference speed"
-      ],
-      "color": "#432",
-      "bgcolor": "#653"
-    },
-    {
-      "id": 62,
-      "type": "WanVideoVAELoaderMultiGPU",
-      "pos": [
-        1324.779052734375,
-        -796.8985595703125
-      ],
-      "size": [
-        294.1841735839844,
-        106
-      ],
-      "flags": {},
-      "order": 14,
-      "mode": 0,
-      "inputs": [
-        {
-          "name": "compile_args",
-          "shape": 7,
-          "type": "WANCOMPILEARGS",
-          "link": null
-        }
-      ],
-      "outputs": [
-        {
-          "name": "vae",
-          "type": "WANVAE",
-          "links": [
-            79
-          ]
-        }
-      ],
-      "properties": {
-        "Node name for S&R": "WanVideoVAELoaderMultiGPU"
-      },
-      "widgets_values": [
-        "wan_2.1_vae.safetensors",
-        "cuda:0",
-        "bf16"
-      ],
-      "color": "#233",
-      "bgcolor": "#355"
-    },
-    {
-      "id": 68,
-      "type": "WanVideoDecode",
-      "pos": [
-        1645.92236328125,
-        -533.2974853515625
-      ],
-      "size": [
-        315,
-        198
-      ],
-      "flags": {},
-      "order": 21,
+      "order": 17,
       "mode": 0,
       "inputs": [
         {
           "name": "vae",
           "type": "WANVAE",
-          "link": 79
+          "link": 85
+        },
+        {
+          "name": "load_device",
+          "type": "MULTIGPUDEVICE",
+          "link": 86
         },
         {
           "name": "samples",
           "type": "LATENT",
-          "link": 80
+          "link": 87
         }
       ],
       "outputs": [
         {
           "name": "images",
           "type": "IMAGE",
-          "slot_index": 0,
           "links": [
-            77
+            88
           ]
         }
       ],
       "properties": {
-        "Node name for S&R": "WanVideoDecode",
-        "cnr_id": "ComfyUI-WanVideoWrapper",
-        "ver": "998a69cc0acbec503001b8b0ce0a5d5404420e1e"
+        "cnr_id": "comfyui-multigpu",
+        "ver": "db931d66c31acbcfce26f29babfb552509e586aa",
+        "Node name for S&R": "WanVideoDecodeMultiGPU"
       },
       "widgets_values": [
         false,
@@ -941,139 +1037,46 @@
         128,
         "default"
       ],
-      "color": "#322",
-      "bgcolor": "#533"
+      "color": "#008181",
+      "bgcolor": "rgba(24,24,27,.9)"
     },
     {
-      "id": 69,
-      "type": "GetImageSizeAndCount",
+      "id": 35,
+      "type": "WanVideoTorchCompileSettings",
       "pos": [
-        1655.0137939453125,
-        -260.44696044921875
+        352.3750915527344,
+        -817.9258422851562
       ],
       "size": [
-        240.41265869140625,
-        86
+        390.5999755859375,
+        202
       ],
       "flags": {},
-      "order": 22,
+      "order": 10,
       "mode": 0,
-      "inputs": [
-        {
-          "name": "image",
-          "type": "IMAGE",
-          "link": 77
-        }
-      ],
+      "inputs": [],
       "outputs": [
         {
-          "name": "image",
-          "type": "IMAGE",
-          "links": [
-            78
-          ]
-        },
-        {
-          "label": "832 width",
-          "name": "width",
-          "type": "INT",
-          "links": null
-        },
-        {
-          "label": "480 height",
-          "name": "height",
-          "type": "INT",
-          "links": null
-        },
-        {
-          "label": "81 count",
-          "name": "count",
-          "type": "INT",
-          "links": null
+          "name": "torch_compile_args",
+          "type": "WANCOMPILEARGS",
+          "slot_index": 0,
+          "links": []
         }
       ],
       "properties": {
-        "Node name for S&R": "GetImageSizeAndCount",
-        "cnr_id": "comfyui-kjnodes",
-        "ver": "a6b867b63a29ca48ddb15c589e17a9f2d8530d57"
-      }
-    },
-    {
-      "id": 70,
-      "type": "VHS_VideoCombine",
-      "pos": [
-        1994.4910888671875,
-        -545.2236328125
-      ],
-      "size": [
-        698.6392211914062,
-        739.5226440429688
-      ],
-      "flags": {},
-      "order": 23,
-      "mode": 0,
-      "inputs": [
-        {
-          "name": "images",
-          "type": "IMAGE",
-          "link": 78
-        },
-        {
-          "name": "audio",
-          "shape": 7,
-          "type": "AUDIO",
-          "link": null
-        },
-        {
-          "name": "meta_batch",
-          "shape": 7,
-          "type": "VHS_BatchManager",
-          "link": null
-        },
-        {
-          "name": "vae",
-          "shape": 7,
-          "type": "VAE",
-          "link": null
-        }
-      ],
-      "outputs": [
-        {
-          "name": "Filenames",
-          "type": "VHS_FILENAMES",
-          "links": null
-        }
-      ],
-      "properties": {
-        "Node name for S&R": "VHS_VideoCombine",
-        "cnr_id": "comfyui-videohelpersuite",
-        "ver": "0a75c7958fe320efcb052f1d9f8451fd20c730a8"
+        "cnr_id": "ComfyUI-WanVideoWrapper",
+        "ver": "76ea2aa6a664edbd553799f78d6bafdd23e34dc6",
+        "Node name for S&R": "WanVideoTorchCompileSettings"
       },
-      "widgets_values": {
-        "frame_rate": 16,
-        "loop_count": 0,
-        "filename_prefix": "WanVideo2_1_T2V",
-        "format": "video/h264-mp4",
-        "pix_fmt": "yuv420p",
-        "crf": 19,
-        "save_metadata": true,
-        "trim_to_audio": false,
-        "pingpong": false,
-        "save_output": true,
-        "videopreview": {
-          "hidden": false,
-          "paused": false,
-          "params": {
-            "filename": "WanVideo2_1_T2V_00020.mp4",
-            "subfolder": "",
-            "type": "output",
-            "format": "video/h264-mp4",
-            "frame_rate": 16,
-            "workflow": "WanVideo2_1_T2V_00020.png",
-            "fullpath": "/home/johnj/ComfyUI/output/WanVideo2_1_T2V_00020.mp4"
-          }
-        }
-      }
+      "widgets_values": [
+        "inductor",
+        false,
+        "default",
+        false,
+        64,
+        true,
+        128
+      ]
     }
   ],
   "links": [
@@ -1122,7 +1125,7 @@
       52,
       0,
       63,
-      6,
+      7,
       "CACHEARGS"
     ],
     [
@@ -1130,7 +1133,7 @@
       37,
       0,
       63,
-      1,
+      2,
       "WANVIDIMAGE_EMBEDS"
     ],
     [
@@ -1138,7 +1141,7 @@
       61,
       0,
       63,
-      2,
+      3,
       "WANVIDEOTEXTEMBEDS"
     ],
     [
@@ -1146,7 +1149,7 @@
       55,
       0,
       63,
-      4,
+      5,
       "FETAARGS"
     ],
     [
@@ -1158,30 +1161,6 @@
       "BLOCKSWAPARGS"
     ],
     [
-      75,
-      64,
-      0,
-      66,
-      0,
-      "WANVIDEOMODEL"
-    ],
-    [
-      76,
-      66,
-      0,
-      63,
-      0,
-      "WANVIDEOMODEL"
-    ],
-    [
-      77,
-      68,
-      0,
-      69,
-      0,
-      "IMAGE"
-    ],
-    [
       78,
       69,
       0,
@@ -1190,20 +1169,60 @@
       "IMAGE"
     ],
     [
-      79,
-      62,
+      82,
+      72,
       0,
-      68,
+      63,
+      0,
+      "WANVIDEOMODEL"
+    ],
+    [
+      83,
+      72,
+      1,
+      63,
+      1,
+      "MULTIGPUDEVICE"
+    ],
+    [
+      84,
+      72,
+      0,
+      66,
+      0,
+      "WANVIDEOMODEL"
+    ],
+    [
+      85,
+      74,
+      0,
+      75,
       0,
       "WANVAE"
     ],
     [
-      80,
+      86,
+      74,
+      1,
+      75,
+      1,
+      "MULTIGPUDEVICE"
+    ],
+    [
+      87,
       63,
       0,
-      68,
-      1,
+      75,
+      2,
       "LATENT"
+    ],
+    [
+      88,
+      75,
+      0,
+      69,
+      0,
+      "IMAGE"
     ]
   ],
   "groups": [
@@ -1224,12 +1243,13 @@
   "config": {},
   "extra": {
     "ds": {
-      "scale": 0.683013455365071,
+      "scale": 0.620921323059155,
       "offset": [
-        229.36183362138223,
-        1440.040160715665
+        949.2262021137265,
+        1175.3792206745793
       ]
     },
+    "frontendVersion": "1.27.10",
     "node_versions": {
       "ComfyUI-WanVideoWrapper": "5a2383621a05825d0d0437781afcb8552d9590fd",
       "comfy-core": "0.3.26",
@@ -1238,8 +1258,7 @@
     "VHS_latentpreview": false,
     "VHS_latentpreviewrate": 0,
     "VHS_MetadataImage": true,
-    "VHS_KeepIntermediate": true,
-    "frontendVersion": "1.23.4"
+    "VHS_KeepIntermediate": true
   },
   "version": 0.4
 }
