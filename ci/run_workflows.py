@@ -20,11 +20,13 @@ DEFAULT_WORKFLOW_TIMEOUT = int(os.environ.get("COMFYUI_WORKFLOW_TIMEOUT", "900")
 
 
 class ComfyWorkflowRunner:
-    def __init__(self, host: str, port: int, connect_timeout: int, workflow_timeout: int) -> None:
+    def __init__(self, host: str, port: int, connect_timeout: int, workflow_timeout: int, secure: bool = False) -> None:
         self.host = host
         self.port = port
-        self.base_http = f"http://{host}:{port}"
-        self.base_ws = f"ws://{host}:{port}/ws"
+        protocol_http = "https" if secure else "http"
+        protocol_ws = "wss" if secure else "ws"
+        self.base_http = f"{protocol_http}://{host}:{port}"
+        self.base_ws = f"{protocol_ws}://{host}:{port}/ws"
         self.connect_timeout = connect_timeout
         self.workflow_timeout = workflow_timeout
         self.client_id = str(uuid.uuid4())
@@ -179,6 +181,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--connect-timeout", type=int, default=DEFAULT_CONNECT_TIMEOUT, help="Seconds to wait for the server to come online")
     parser.add_argument("--workflow-timeout", type=int, default=DEFAULT_WORKFLOW_TIMEOUT, help="Seconds to wait for each workflow to finish")
     parser.add_argument("--fail-fast", action="store_true", help="Stop on first workflow failure")
+    parser.add_argument("--secure", action="store_true", help="Use secure HTTPS/WSS connections (default: insecure for localhost)")
     return parser.parse_args()
 
 
@@ -189,6 +192,7 @@ def main() -> int:
         port=args.port,
         connect_timeout=args.connect_timeout,
         workflow_timeout=args.workflow_timeout,
+        secure=args.secure,
     )
     success = runner.run_suite(args.workflows, fail_fast=args.fail_fast)
     return 0 if success else 1
