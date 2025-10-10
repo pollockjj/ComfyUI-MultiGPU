@@ -857,7 +857,7 @@ class WanVideoUni3C_ControlnetLoader:
     FUNCTION = "loadmodel"
     CATEGORY = "multigpu/WanVideoWrapper"
 
-    def loadmodel(self, model, base_precision, load_device, quantization, attention_mode, compile_args=None):
+    def loadmodel(self, model, base_precision, load_device, device, quantization, attention_mode, compile_args=None):
         from . import set_current_device
 
         set_current_device(device)
