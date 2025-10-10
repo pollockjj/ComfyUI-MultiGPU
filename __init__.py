@@ -226,11 +226,11 @@ from .wanvideo import (
     WanVideoEncode,
     LoadWanVideoClipTextEncoder,
     WanVideoClipVisionEncode,
-    WanVideoControlnetLoaderMultiGPU,
-    FantasyTalkingModelLoaderMultiGPU,
-    Wav2VecModelLoaderMultiGPU,
-    WanVideoUni3C_ControlnetLoaderMultiGPU,
-    DownloadAndLoadWav2VecModelMultiGPU,
+    WanVideoControlnetLoader,
+    FantasyTalkingModelLoader,
+    Wav2VecModelLoader,
+    WanVideoUni3C_ControlnetLoader,
+    DownloadAndLoadWav2VecModel,
 )
 
 from .wrappers import (
@@ -382,11 +382,11 @@ wanvideo_nodes = {
     "WanVideoEncodeMultiGPU": WanVideoEncode,
     "LoadWanVideoClipTextEncoderMultiGPU": LoadWanVideoClipTextEncoder,
     "WanVideoClipVisionEncodeMultiGPU": WanVideoClipVisionEncode,
-    "WanVideoControlnetLoaderMultiGPU": WanVideoControlnetLoaderMultiGPU,
-    "FantasyTalkingModelLoaderMultiGPU": FantasyTalkingModelLoaderMultiGPU,
-    "Wav2VecModelLoaderMultiGPU": Wav2VecModelLoaderMultiGPU,
-    "WanVideoUni3C_ControlnetLoaderMultiGPU": WanVideoUni3C_ControlnetLoaderMultiGPU,
-    "DownloadAndLoadWav2VecModelMultiGPU": DownloadAndLoadWav2VecModelMultiGPU,
+    "WanVideoControlnetLoaderMultiGPU": WanVideoControlnetLoader,
+    "FantasyTalkingModelLoaderMultiGPU": FantasyTalkingModelLoader,
+    "Wav2VecModelLoaderMultiGPU": Wav2VecModelLoader,
+    "WanVideoUni3C_ControlnetLoaderMultiGPU": WanVideoUni3C_ControlnetLoader,
+    "DownloadAndLoadWav2VecModelMultiGPU": DownloadAndLoadWav2VecModel,
 }
 register_and_count(["ComfyUI-WanVideoWrapper", "comfyui-wanvideowrapper"], wanvideo_nodes)
 
