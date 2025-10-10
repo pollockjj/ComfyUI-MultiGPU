@@ -829,3 +829,30 @@ class DownloadAndLoadWav2VecModel:
         
         original_loader = NODE_CLASS_MAPPINGS["DownloadAndLoadWav2VecModel"]()
         return original_loader.loadmodel(model, base_precision, load_device)
+
+class WanVideoControlnetLoader:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "model": (folder_paths.get_filename_list("controlnet"), {"tooltip": "These models are loaded from the 'ComfyUI/models/controlnet' -folder",}),
+
+            "base_precision": (["fp32", "bf16", "fp16"], {"default": "bf16"}),
+            "quantization": (['disabled', 'fp8_e4m3fn', 'fp8_e4m3fn_fast', 'fp8_e5m2', 'fp8_e4m3fn_fast_no_ffn'], {"default": 'disabled', "tooltip": "optional quantization method"}),
+            "load_device": (["main_device", "offload_device"], {"default": "main_device", "tooltip": "Initial device to load the model to, NOT recommended with the larger models unless you have 48GB+ VRAM"}),
+            },
+        }
+
+    RETURN_TYPES = ("WANVIDEOCONTROLNET",)
+    RETURN_NAMES = ("controlnet", )
+    FUNCTION = "loadmodel"
+    CATEGORY = "WanVideoWrapper"
+    DESCRIPTION = "Loads ControlNet model from 'https://huggingface.co/collections/TheDenk/wan21-controlnets-68302b430411dafc0d74d2fc'"
+
+    def loadmodel(self, model, base_precision, load_device, quantization):
+        from . import set_current_device
+
+        set_current_device(device)
+
+        original_loader = NODE_CLASS_MAPPINGS["WanVideoControlnetLoader"]()
+        return original_loader.loadmodel(model, base_precision, load_device, quantization)
