@@ -148,6 +148,7 @@ def check_module_exists(module_path):
 
 current_device = mm.get_torch_device()
 current_text_encoder_device = mm.text_encoder_device()
+current_unet_offload_device = mm.unet_offload_device()
 
 def set_current_device(device):
     """Set the current device context for MultiGPU operations."""
@@ -160,6 +161,12 @@ def set_current_text_encoder_device(device):
     global current_text_encoder_device
     current_text_encoder_device = device
     logger.debug(f"[MultiGPU Initialization] current_text_encoder_device set to: {device}")
+
+def set_current_unet_offload_device(device):
+    """Set the current UNet offload device context for MultiGPU operations."""
+    global current_unet_offload_device
+    current_unet_offload_device = device
+    logger.debug(f"[MultiGPU Initialization] current_unet_offload_device set to: {device}")
 
 def get_torch_device_patched():
     """Return MultiGPU-aware device selection for patched mm.get_torch_device."""
@@ -183,11 +190,24 @@ def text_encoder_device_patched():
     logger.info(f"[MultiGPU Core Patching] text_encoder_device_patched returning device: {device} (current_text_encoder_device={current_text_encoder_device})")
     return device
 
-logger.info(f"[MultiGPU Core Patching] Patching mm.get_torch_device and mm.text_encoder_device")
+def unet_offload_device_patched():
+    """Return MultiGPU-aware UNet offload device for patched mm.unet_offload_device."""
+    device = None
+    if (not is_accelerator_available() or mm.cpu_state == mm.CPUState.CPU or "cpu" in str(current_unet_offload_device).lower()):
+        device = torch.device("cpu")
+    else:
+        devs = set(get_device_list())
+        device = torch.device(current_unet_offload_device) if str(current_unet_offload_device) in devs else torch.device("cpu")
+    logger.info(f"[MultiGPU Core Patching] unet_offload_device_patched returning device: {device} (current_unet_offload_device={current_unet_offload_device})")
+    return device
+
+logger.info(f"[MultiGPU Core Patching] Patching mm.get_torch_device, mm.text_encoder_device, and mm.unet_offload_device")
 logger.info(f"[MultiGPU DEBUG] Initial current_device: {current_device}")
 logger.info(f"[MultiGPU DEBUG] Initial current_text_encoder_device: {current_text_encoder_device}")
+logger.info(f"[MultiGPU DEBUG] Initial current_unet_offload_device: {current_unet_offload_device}")
 mm.get_torch_device = get_torch_device_patched
 mm.text_encoder_device = text_encoder_device_patched
+mm.unet_offload_device = unet_offload_device_patched
 
 from .nodes import (
     UnetLoaderGGUF,
