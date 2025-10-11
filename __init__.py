@@ -253,6 +253,8 @@ from .wanvideo import (
     DownloadAndLoadWav2VecModel,
 )
 
+from .nunchaku import NunchakuQwenImageDiTLoader
+
 from .wrappers import (
     override_class,
     override_class_clip,
@@ -385,6 +387,11 @@ pulid_nodes = {
     "PulidEvaClipLoaderMultiGPU": override_class(PulidEvaClipLoader)
 }
 register_and_count(["PuLID_ComfyUI", "pulid_comfyui"], pulid_nodes)
+
+nunchaku_nodes = {
+    "NunchakuQwenImageDiTLoaderMultiGPU": NunchakuQwenImageDiTLoader,
+}
+register_and_count(["ComfyUI-nunchaku", "comfyui-nunchaku"], nunchaku_nodes)
 
 wanvideo_nodes = {
     "LoadWanVideoT5TextEncoderMultiGPU": LoadWanVideoT5TextEncoder,
