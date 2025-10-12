@@ -176,10 +176,12 @@ class LTXVLoader:
         return original_loader._load_vae(weights, config=None)
 
 class Florence2ModelLoader:
-    @classmethod
     def INPUT_TYPES(s):
+        all_llm_paths = folder_paths.get_folder_paths("LLM")
+        s.model_paths = create_path_dict(all_llm_paths, lambda x: x.is_dir())
+
         return {"required": {
-            "model": ([item.name for item in Path(folder_paths.models_dir, "LLM").iterdir() if item.is_dir()], {"tooltip": "models are expected to be in Comfyui/models/LLM folder"}),
+            "model": ([*s.model_paths], {"tooltip": "models are expected to be in Comfyui/models/LLM folder"}),
             "precision": (['fp16','bf16','fp32'],),
             "attention": (
                     [ 'flash_attention_2', 'sdpa', 'eager'],
@@ -189,6 +191,7 @@ class Florence2ModelLoader:
             },
             "optional": {
                 "lora": ("PEFTLORA",),
+                "convert_to_safetensors": ("BOOLEAN", {"default": False, "tooltip": "Some of the older model weights are not saved in .safetensors format, which seem to cause longer loading times, this option converts the .bin weights to .safetensors"}),
             }
         }
 
@@ -197,10 +200,10 @@ class Florence2ModelLoader:
     FUNCTION = "loadmodel"
     CATEGORY = "Florence2"
 
-    def loadmodel(self, model, precision, attention, lora=None):
+    def loadmodel(self, model, precision, attention, lora=None, convert_to_safetensors=False):
         """Load Florence2 vision model with specified precision and attention mode."""
         original_loader = NODE_CLASS_MAPPINGS["Florence2ModelLoader"]()
-        return original_loader.loadmodel(model, precision, attention, lora)
+        return original_loader.loadmodel(model, precision, attention, lora, convert_to_safetensors)
 
 class DownloadAndLoadFlorence2Model:
     @classmethod
@@ -220,7 +223,8 @@ class DownloadAndLoadFlorence2Model:
                     'MiaoshouAI/Florence-2-base-PromptGen-v1.5',
                     'MiaoshouAI/Florence-2-large-PromptGen-v1.5',
                     'MiaoshouAI/Florence-2-base-PromptGen-v2.0',
-                    'MiaoshouAI/Florence-2-large-PromptGen-v2.0'
+                    'MiaoshouAI/Florence-2-large-PromptGen-v2.0',
+                    'PJMixers-Images/Florence-2-base-Castollux-v0.5'
                     ],
                     {
                     "default": 'microsoft/Florence-2-base'
@@ -237,6 +241,7 @@ class DownloadAndLoadFlorence2Model:
             },
             "optional": {
                 "lora": ("PEFTLORA",),
+                "convert_to_safetensors": ("BOOLEAN", {"default": False, "tooltip": "Some of the older model weights are not saved in .safetensors format, which seem to cause longer loading times, this option converts the .bin weights to .safetensors"}),
             }
         }
 
@@ -245,10 +250,10 @@ class DownloadAndLoadFlorence2Model:
     FUNCTION = "loadmodel"
     CATEGORY = "Florence2"
 
-    def loadmodel(self, model, precision, attention, lora=None):
+    def loadmodel(self, model, precision, attention, lora=None, convert_to_safetensors=False):
         """Download and load Florence2 model from HuggingFace."""
         original_loader = NODE_CLASS_MAPPINGS["DownloadAndLoadFlorence2Model"]()
-        return original_loader.loadmodel(model, precision, attention, lora)
+        return original_loader.loadmodel(model, precision, attention, lora, convert_to_safetensors)
 
 class CheckpointLoaderNF4:
     @classmethod
