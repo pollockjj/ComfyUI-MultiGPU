@@ -1,0 +1,542 @@
+{
+  "id": "91f6bbe2-ed41-4fd6-bac7-71d5b5864ecb",
+  "revision": 0,
+  "last_node_id": 77,
+  "last_link_id": 137,
+  "nodes": [
+    {
+      "id": 3,
+      "type": "KSampler",
+      "pos": [
+        894.4686889648438,
+        201.6600799560547
+      ],
+      "size": [
+        315,
+        474
+      ],
+      "flags": {},
+      "order": 8,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 125
+        },
+        {
+          "name": "positive",
+          "type": "CONDITIONING",
+          "link": 46
+        },
+        {
+          "name": "negative",
+          "type": "CONDITIONING",
+          "link": 52
+        },
+        {
+          "name": "latent_image",
+          "type": "LATENT",
+          "link": 107
+        }
+      ],
+      "outputs": [
+        {
+          "name": "LATENT",
+          "type": "LATENT",
+          "slot_index": 0,
+          "links": [
+            128
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.3.64",
+        "Node name for S&R": "KSampler"
+      },
+      "widgets_values": [
+        174815108394042,
+        "randomize",
+        20,
+        2.5,
+        "euler",
+        "simple",
+        1
+      ]
+    },
+    {
+      "id": 66,
+      "type": "ModelSamplingAuraFlow",
+      "pos": [
+        459.40179443359375,
+        -35.1873779296875
+      ],
+      "size": [
+        270,
+        58
+      ],
+      "flags": {},
+      "order": 7,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 137
+        }
+      ],
+      "outputs": [
+        {
+          "name": "MODEL",
+          "type": "MODEL",
+          "links": [
+            125
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.3.64",
+        "Node name for S&R": "ModelSamplingAuraFlow"
+      },
+      "widgets_values": [
+        3.1000000000000005
+      ]
+    },
+    {
+      "id": 76,
+      "type": "CLIPLoaderGGUFMultiGPU",
+      "pos": [
+        -28.469432830810547,
+        225.77920532226562
+      ],
+      "size": [
+        360.6989440917969,
+        106
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "CLIP",
+          "type": "CLIP",
+          "links": [
+            135,
+            136
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfyui-multigpu",
+        "ver": "0d6dfc7524472943ba912a6ec3088757edba15c3",
+        "Node name for S&R": "CLIPLoaderGGUFMultiGPU"
+      },
+      "widgets_values": [
+        "Qwen2.5-VL-7B-Instruct-Q4_K_S.gguf",
+        "qwen_image",
+        "cuda:1"
+      ],
+      "color": "#008181",
+      "bgcolor": "rgba(24,24,27,.9)"
+    },
+    {
+      "id": 70,
+      "type": "VAELoaderMultiGPU",
+      "pos": [
+        -30.621204376220703,
+        408.86016845703125
+      ],
+      "size": [
+        367.14569091796875,
+        82
+      ],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "VAE",
+          "type": "VAE",
+          "links": [
+            130
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfyui-multigpu",
+        "ver": "0d6dfc7524472943ba912a6ec3088757edba15c3",
+        "Node name for S&R": "VAELoaderMultiGPU"
+      },
+      "widgets_values": [
+        "qwen_image_vae.safetensors",
+        "cuda:1"
+      ],
+      "color": "#008181",
+      "bgcolor": "rgba(24,24,27,.9)"
+    },
+    {
+      "id": 6,
+      "type": "CLIPTextEncode",
+      "pos": [
+        415,
+        186
+      ],
+      "size": [
+        422.84503173828125,
+        164.31304931640625
+      ],
+      "flags": {},
+      "order": 6,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "clip",
+          "type": "CLIP",
+          "link": 136
+        }
+      ],
+      "outputs": [
+        {
+          "name": "CONDITIONING",
+          "type": "CONDITIONING",
+          "slot_index": 0,
+          "links": [
+            46
+          ]
+        }
+      ],
+      "title": "CLIP Text Encode (Positive Prompt)",
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.3.64",
+        "Node name for S&R": "CLIPTextEncode"
+      },
+      "widgets_values": [
+        "A towering technological monolith in a cyberpunk cityscape at night, with \"GGUF DisTorch 2\" emblazoned across its surface in massive neon blue-green mixed with purple letters that illuminate the surrounding buildings. The text occupies the central third of the frame, crafted from glowing plasma tubes and crackling energy. Rain-slicked streets below reflect the brilliant signage, while holographic advertisements and flying vehicles populate the background. Moody atmospheric lighting, heavy contrast, photorealistic textures, cinematic color grading. "
+      ],
+      "color": "#232",
+      "bgcolor": "#353"
+    },
+    {
+      "id": 8,
+      "type": "VAEDecode",
+      "pos": [
+        932.9422607421875,
+        11.704089164733887
+      ],
+      "size": [
+        210,
+        46
+      ],
+      "flags": {},
+      "order": 9,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "samples",
+          "type": "LATENT",
+          "link": 128
+        },
+        {
+          "name": "vae",
+          "type": "VAE",
+          "link": 130
+        }
+      ],
+      "outputs": [
+        {
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "slot_index": 0,
+          "links": [
+            110
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.3.64",
+        "Node name for S&R": "VAEDecode"
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 7,
+      "type": "CLIPTextEncode",
+      "pos": [
+        422.6140441894531,
+        397.7400207519531
+      ],
+      "size": [
+        425.27801513671875,
+        182.3540496826172
+      ],
+      "flags": {
+        "collapsed": true
+      },
+      "order": 5,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "clip",
+          "type": "CLIP",
+          "link": 135
+        }
+      ],
+      "outputs": [
+        {
+          "name": "CONDITIONING",
+          "type": "CONDITIONING",
+          "slot_index": 0,
+          "links": [
+            52
+          ]
+        }
+      ],
+      "title": "CLIP Text Encode (Negative Prompt)",
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.3.64",
+        "Node name for S&R": "CLIPTextEncode"
+      },
+      "widgets_values": [
+        " "
+      ],
+      "color": "#322",
+      "bgcolor": "#533"
+    },
+    {
+      "id": 58,
+      "type": "EmptySD3LatentImage",
+      "pos": [
+        448.2394104003906,
+        480.706787109375
+      ],
+      "size": [
+        270,
+        106
+      ],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "LATENT",
+          "type": "LATENT",
+          "links": [
+            107
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.3.64",
+        "Node name for S&R": "EmptySD3LatentImage"
+      },
+      "widgets_values": [
+        1328,
+        1328,
+        1
+      ]
+    },
+    {
+      "id": 77,
+      "type": "UnetLoaderGGUFDisTorch2MultiGPU",
+      "pos": [
+        -30.83705711364746,
+        -24.04859733581543
+      ],
+      "size": [
+        363.6120910644531,
+        185.86599731445312
+      ],
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "MODEL",
+          "type": "MODEL",
+          "links": [
+            137
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfyui-multigpu",
+        "ver": "0d6dfc7524472943ba912a6ec3088757edba15c3",
+        "Node name for S&R": "UnetLoaderGGUFDisTorch2MultiGPU"
+      },
+      "widgets_values": [
+        "qwen-image-Q3_K_S.gguf",
+        "cuda:0",
+        4.2,
+        "cpu",
+        "",
+        true
+      ],
+      "color": "#008181",
+      "bgcolor": "rgba(24,24,27,.9)"
+    },
+    {
+      "id": 75,
+      "type": "MarkdownNote",
+      "pos": [
+        -713.5603637695312,
+        -38.757911682128906
+      ],
+      "size": [
+        648.826904296875,
+        649.345947265625
+      ],
+      "flags": {},
+      "order": 4,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "title": "ComfyUI-MultiGPU Note - ComfyUI-GGUF UNETDisTorch2Loader, DualClipLoader Workflow",
+      "properties": {},
+      "widgets_values": [
+        "A DisTorch2 FLUX.dev workflow with GGUF UNet DisTorch2 and CLIP to test ComfyUI-GGUF integration. In this case we are using the DisTorch2 node to statically allocate approximately half of the main UNet model to the cpu.\n\n## Custom Node\n- [ComfyUI-GGUF](https://github.com/city96/ComfyUI-GGUF)\n- [ComfyUI-MultiGPU](https://github.com/pollockjj/ComfyUI-MultiGPU)\n```\n📂 ComfyUI/\n├── 📂 custom_nodes/\n│   ├── 📂 ComfyUI-GGUF/\n│   ├── 📂 ComfyUI-MultiGPU/\n```\n## Model links\n\n**Diffusion model**\n- [qwen-image-Q3_K_S.gguf](https://huggingface.co/city96/Qwen-Image-gguf/resolve/main/qwen-image-Q3_K_S.gguf)\n\n**CLIP**\n- [Qwen2.5-VL-7B-Instruct-Q4_K_S.gguf](https://huggingface.co/unsloth/Qwen2.5-VL-7B-Instruct-GGUF/resolve/main/Qwen2.5-VL-7B-Instruct-Q4_K_S.gguf)\n\n**VAE**\n- [qwen_image_vae.safetensors](https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/blob/main/split_files/vae/qwen_image_vae.safetensors)\n\nModel Storage Location\n\n```\n📂 ComfyUI/\n├── 📂 models/\n│   ├── 📂 clip/\n│   │   └── Qwen2.5-VL-7B-Instruct-Q4_K_S.gguf\n│   ├── 📂 unet/\n│   │   ├── qwen-image-Q3_K_S.gguf [🟩🟩🟩🟩🟩⚙️⚙️⚙️⚙️⚙️]\n│   ├── 📂 vae/\n│   │   └── qwen_image_vae.safetensors\n```\n\n```\n🖥️ Device Mapping\n├── 🟢 cuda:0\n│       └── qwen-image-Q3_K_S.gguf [🟩🟩🟩🟩🟩]\n├── 🟣 cuda:1\n│       └── Qwen2.5-VL-7B-Instruct-Q4_K_S.gguf\n│       └── qwen_image_vae.safetensors\n├── ⚙️ cpu\n│       └── qwen-image-Q3_K_S.gguf [⚙️⚙️⚙️⚙️⚙️]\n\n```"
+      ],
+      "color": "#008181",
+      "bgcolor": "rgba(24,24,27,.9)"
+    },
+    {
+      "id": 60,
+      "type": "SaveImage",
+      "pos": [
+        1275.1832275390625,
+        -41.704383850097656
+      ],
+      "size": [
+        821.0496215820312,
+        871.7067260742188
+      ],
+      "flags": {},
+      "order": 10,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 110
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.3.64",
+        "Node name for S&R": "SaveImage"
+      },
+      "widgets_values": [
+        "MultiGPU"
+      ]
+    }
+  ],
+  "links": [
+    [
+      46,
+      6,
+      0,
+      3,
+      1,
+      "CONDITIONING"
+    ],
+    [
+      52,
+      7,
+      0,
+      3,
+      2,
+      "CONDITIONING"
+    ],
+    [
+      107,
+      58,
+      0,
+      3,
+      3,
+      "LATENT"
+    ],
+    [
+      110,
+      8,
+      0,
+      60,
+      0,
+      "IMAGE"
+    ],
+    [
+      125,
+      66,
+      0,
+      3,
+      0,
+      "MODEL"
+    ],
+    [
+      128,
+      3,
+      0,
+      8,
+      0,
+      "LATENT"
+    ],
+    [
+      130,
+      70,
+      0,
+      8,
+      1,
+      "VAE"
+    ],
+    [
+      135,
+      76,
+      0,
+      7,
+      0,
+      "CLIP"
+    ],
+    [
+      136,
+      76,
+      0,
+      6,
+      0,
+      "CLIP"
+    ],
+    [
+      137,
+      77,
+      0,
+      66,
+      0,
+      "MODEL"
+    ]
+  ],
+  "groups": [],
+  "config": {},
+  "extra": {
+    "ds": {
+      "scale": 0.7627768444385551,
+      "offset": [
+        811.7802596892885,
+        398.7650738399946
+      ]
+    },
+    "frontendVersion": "1.27.10",
+    "VHS_latentpreview": false,
+    "VHS_latentpreviewrate": 0,
+    "VHS_MetadataImage": true,
+    "VHS_KeepIntermediate": true
+  },
+  "version": 0.4
+}

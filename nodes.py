@@ -176,12 +176,10 @@ class LTXVLoader:
         return original_loader._load_vae(weights, config=None)
 
 class Florence2ModelLoader:
+    @classmethod
     def INPUT_TYPES(s):
-        all_llm_paths = folder_paths.get_folder_paths("LLM")
-        s.model_paths = create_path_dict(all_llm_paths, lambda x: x.is_dir())
-
         return {"required": {
-            "model": ([*s.model_paths], {"tooltip": "models are expected to be in Comfyui/models/LLM folder"}),
+            "model": ([item.name for item in Path(folder_paths.models_dir, "LLM").iterdir() if item.is_dir()], {"tooltip": "models are expected to be in Comfyui/models/LLM folder"}),
             "precision": (['fp16','bf16','fp32'],),
             "attention": (
                     [ 'flash_attention_2', 'sdpa', 'eager'],

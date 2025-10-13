@@ -1,7 +1,7 @@
 {
   "id": "4d231a10-da3b-4b12-8698-449accd4b87a",
   "revision": 0,
-  "last_node_id": 40,
+  "last_node_id": 43,
   "last_link_id": 119,
   "nodes": [
     {
@@ -16,7 +16,7 @@
         106
       ],
       "flags": {},
-      "order": 12,
+      "order": 11,
       "mode": 0,
       "inputs": [
         {
@@ -35,6 +35,8 @@
         }
       ],
       "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.3.64",
         "Node name for S&R": "BasicScheduler"
       },
       "widgets_values": [
@@ -68,6 +70,8 @@
         }
       ],
       "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.3.64",
         "Node name for S&R": "KSamplerSelect"
       },
       "widgets_values": [
@@ -86,7 +90,7 @@
         58
       ],
       "flags": {},
-      "order": 11,
+      "order": 12,
       "mode": 0,
       "inputs": [
         {
@@ -106,6 +110,8 @@
         }
       ],
       "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.3.64",
         "Node name for S&R": "FluxGuidance"
       },
       "widgets_values": [
@@ -151,6 +157,8 @@
         }
       ],
       "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.3.64",
         "Node name for S&R": "BasicGuider"
       },
       "widgets_values": []
@@ -212,6 +220,8 @@
         }
       ],
       "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.3.64",
         "Node name for S&R": "SamplerCustomAdvanced"
       },
       "widgets_values": []
@@ -241,55 +251,16 @@
         }
       ],
       "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.3.64",
         "Node name for S&R": "RandomNoise"
       },
       "widgets_values": [
-        826914720443214,
+        653376826227025,
         "randomize"
       ],
       "color": "#2a363b",
       "bgcolor": "#3f5159"
-    },
-    {
-      "id": 8,
-      "type": "VAEDecode",
-      "pos": [
-        866,
-        367
-      ],
-      "size": [
-        210,
-        46
-      ],
-      "flags": {},
-      "order": 15,
-      "mode": 0,
-      "inputs": [
-        {
-          "name": "samples",
-          "type": "LATENT",
-          "link": 24
-        },
-        {
-          "name": "vae",
-          "type": "VAE",
-          "link": 119
-        }
-      ],
-      "outputs": [
-        {
-          "name": "IMAGE",
-          "type": "IMAGE",
-          "slot_index": 0,
-          "links": [
-            9
-          ]
-        }
-      ],
-      "properties": {
-        "Node name for S&R": "VAEDecode"
-      },
-      "widgets_values": []
     },
     {
       "id": 30,
@@ -303,7 +274,7 @@
         130
       ],
       "flags": {},
-      "order": 10,
+      "order": 9,
       "mode": 0,
       "inputs": [
         {
@@ -340,6 +311,8 @@
         }
       ],
       "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.3.64",
         "Node name for S&R": "ModelSamplingFlux"
       },
       "widgets_values": [
@@ -392,6 +365,8 @@
         }
       ],
       "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.3.64",
         "Node name for S&R": "EmptySD3LatentImage"
       },
       "widgets_values": [
@@ -481,60 +456,6 @@
       "bgcolor": "#535"
     },
     {
-      "id": 9,
-      "type": "SaveImage",
-      "pos": [
-        1155,
-        196
-      ],
-      "size": [
-        985.3012084960938,
-        1060.3828125
-      ],
-      "flags": {},
-      "order": 16,
-      "mode": 0,
-      "inputs": [
-        {
-          "name": "images",
-          "type": "IMAGE",
-          "link": 9
-        }
-      ],
-      "outputs": [],
-      "properties": {
-        "Node name for S&R": "SaveImage"
-      },
-      "widgets_values": [
-        "ComfyUI"
-      ]
-    },
-    {
-      "id": 37,
-      "type": "Note",
-      "pos": [
-        480,
-        1344
-      ],
-      "size": [
-        314.99755859375,
-        117.98363494873047
-      ],
-      "flags": {},
-      "order": 4,
-      "mode": 0,
-      "inputs": [],
-      "outputs": [],
-      "properties": {
-        "text": ""
-      },
-      "widgets_values": [
-        "The reference sampling implementation auto adjusts the shift value based on the resolution, if you don't want this you can just bypass (CTRL-B) this ModelSamplingFlux node.\n"
-      ],
-      "color": "#432",
-      "bgcolor": "#653"
-    },
-    {
       "id": 6,
       "type": "CLIPTextEncode",
       "pos": [
@@ -546,7 +467,7 @@
         164.31304931640625
       ],
       "flags": {},
-      "order": 9,
+      "order": 10,
       "mode": 0,
       "inputs": [
         {
@@ -567,23 +488,105 @@
       ],
       "title": "CLIP Text Encode (Positive Prompt)",
       "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.3.64",
         "Node name for S&R": "CLIPTextEncode"
       },
       "widgets_values": [
-        "A towering technological monolith in a cyberpunk cityscape at night, with \"DisTorch 2\" emblazoned across its surface in massive neon blue-green mixed with purple letters that illuminate the surrounding buildings. The text occupies the central third of the frame, crafted from glowing plasma tubes and crackling energy. The model file suffix \"now with .safetensors!\" in same stying but smaller font directly underneath. Rain-slicked streets below reflect the brilliant signage, while holographic advertisements and flying vehicles populate the background. Moody atmospheric lighting, heavy contrast, photorealistic textures, cinematic color grading. "
+        "A towering technological monolith in a cyberpunk cityscape at night, with \"MultiGPU\" emblazoned across its surface in massive neon blue-green mixed with purple letters that illuminate the surrounding buildings. The text occupies the central third of the frame, crafted from glowing plasma tubes and crackling energy.  Rain-slicked streets below reflect the brilliant signage, while holographic advertisements and flying vehicles populate the background. Moody atmospheric lighting, heavy contrast, photorealistic textures, cinematic color grading. "
       ],
       "color": "#232",
       "bgcolor": "#353"
     },
     {
+      "id": 8,
+      "type": "VAEDecode",
+      "pos": [
+        883.333251953125,
+        602.3333129882812
+      ],
+      "size": [
+        210,
+        46
+      ],
+      "flags": {},
+      "order": 15,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "samples",
+          "type": "LATENT",
+          "link": 24
+        },
+        {
+          "name": "vae",
+          "type": "VAE",
+          "link": 119
+        }
+      ],
+      "outputs": [
+        {
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "slot_index": 0,
+          "links": [
+            9
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.3.64",
+        "Node name for S&R": "VAEDecode"
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 38,
+      "type": "UNETLoaderMultiGPU",
+      "pos": [
+        32.4267692565918,
+        128.16644287109375
+      ],
+      "size": [
+        252.71832275390625,
+        106
+      ],
+      "flags": {},
+      "order": 4,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "MODEL",
+          "type": "MODEL",
+          "links": [
+            117
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfyui-multigpu",
+        "ver": "0d6dfc7524472943ba912a6ec3088757edba15c3",
+        "Node name for S&R": "UNETLoaderMultiGPU"
+      },
+      "widgets_values": [
+        "flux1-dev-fp8.safetensors",
+        "default",
+        "cuda:0"
+      ],
+      "color": "#008181",
+      "bgcolor": "rgba(24,24,27,.9)"
+    },
+    {
       "id": 39,
       "type": "DualCLIPLoaderMultiGPU",
       "pos": [
-        52.45843505859375,
-        284.6034851074219
+        35.378475189208984,
+        276.3390197753906
       ],
       "size": [
-        270,
+        252.36911010742188,
         130
       ],
       "flags": {},
@@ -600,30 +603,56 @@
         }
       ],
       "properties": {
+        "cnr_id": "comfyui-multigpu",
+        "ver": "0d6dfc7524472943ba912a6ec3088757edba15c3",
         "Node name for S&R": "DualCLIPLoaderMultiGPU"
       },
       "widgets_values": [
-        "t5xxl_fp16.safetensors",
+        "t5xxl_fp8_e4m3fn_scaled.safetensors",
         "clip_l.safetensors",
         "flux",
-        "cuda:1"
+        "cpu"
       ],
-      "color": "#233",
-      "bgcolor": "#355"
+      "color": "#008181",
+      "bgcolor": "rgba(24,24,27,.9)"
+    },
+    {
+      "id": 42,
+      "type": "MarkdownNote",
+      "pos": [
+        -543.3901977539062,
+        124.58646392822266
+      ],
+      "size": [
+        536.8795166015625,
+        540.175537109375
+      ],
+      "flags": {},
+      "order": 6,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "title": "ComfyUI-MultiGPU Note - UNETLoader, DualClipLoader, and VAELoader nodes",
+      "properties": {},
+      "widgets_values": [
+        "A standard FLUX.dev .fp8 UNet to test ComfyUI-MultiGPU Comfy Core Loader basic functionality. In this case we are using standard MultiGPU-wrapped nodes to move model components to their own device.\n\n## Model links\n\n**Diffusion model**\n- [flux1-dev-fp8.safetensors](https://huggingface.co/Comfy-Org/flux1-dev/resolve/main/flux1-dev-fp8.safetensors)\n\n**CLIP**\n- [t5xxl_fp8_e4m3fn_scaled.safetensors](https://huggingface.co/comfyanonymous/flux_text_encoders/resolve/main/t5xxl_fp8_e4m3fn_scaled.safetensors)\n- [clip_l.safetensors](https://huggingface.co/comfyanonymous/flux_text_encoders/resolve/main/clip_l.safetensors)\n\n**VAE**\n- [ae.safetensors](https://huggingface.co/black-forest-labs/FLUX.1-dev/resolve/main/ae.safetensors)\n\nModel Storage Location\n\n```\n📂 ComfyUI/\n├── 📂 models/\n│   ├── 📂 diffusion_models/\n│   │   ├── flux1-dev-fp8.safetensors\n│   ├── 📂 clip/\n│   │   └── t5xxl_fp8_e4m3fn_scaled.safetensors\n│   │   └── clip_l.safetensors\n│   ├── 📂 vae/\n│   │   └── ae.safetensors\n```\n## Device Mapping (Example: Two GPUs, 1 CPU)\n```\n🖥️ system \n├── 🟢 cuda:0\n│       └── flux1-dev-fp8.safetensors\n├── 🟣 cuda:1\n│       └── ae.safetensors\n├── ⚙️ cpu\n        └── t5xxl_fp8_e4m3fn_scaled.safetensors\n        └── clip_l.safetensors\n```"
+      ],
+      "color": "#008181",
+      "bgcolor": "rgba(24,24,27,.9)"
     },
     {
       "id": 40,
       "type": "VAELoaderMultiGPU",
       "pos": [
-        55.872314453125,
-        462.9376220703125
+        62.4415397644043,
+        462.18499755859375
       ],
       "size": [
-        268.9281921386719,
-        82
+        250.19544982910156,
+        83.10191345214844
       ],
       "flags": {},
-      "order": 6,
+      "order": 7,
       "mode": 0,
       "inputs": [],
       "outputs": [
@@ -636,49 +665,47 @@
         }
       ],
       "properties": {
+        "cnr_id": "comfyui-multigpu",
+        "ver": "0d6dfc7524472943ba912a6ec3088757edba15c3",
         "Node name for S&R": "VAELoaderMultiGPU"
       },
       "widgets_values": [
         "ae.safetensors",
-        "cuda:0"
+        "cuda:1"
       ],
-      "color": "#233",
-      "bgcolor": "#355"
+      "color": "#008181",
+      "bgcolor": "rgba(24,24,27,.9)"
     },
     {
-      "id": 38,
-      "type": "UNETLoaderMultiGPU",
+      "id": 9,
+      "type": "SaveImage",
       "pos": [
-        62.178836822509766,
-        116.59618377685547
+        1155,
+        196
       ],
       "size": [
-        252.71832275390625,
-        106
+        771.1677856445312,
+        714.9827880859375
       ],
       "flags": {},
-      "order": 7,
+      "order": 16,
       "mode": 0,
-      "inputs": [],
-      "outputs": [
+      "inputs": [
         {
-          "name": "MODEL",
-          "type": "MODEL",
-          "links": [
-            117
-          ]
+          "name": "images",
+          "type": "IMAGE",
+          "link": 9
         }
       ],
+      "outputs": [],
       "properties": {
-        "Node name for S&R": "UNETLoaderMultiGPU"
+        "cnr_id": "comfy-core",
+        "ver": "0.3.64",
+        "Node name for S&R": "SaveImage"
       },
       "widgets_values": [
-        "flux1-dev-fp8.safetensors",
-        "default",
-        "cuda:0"
-      ],
-      "color": "#233",
-      "bgcolor": "#355"
+        "MultiGPU"
+      ]
     }
   ],
   "links": [
@@ -831,14 +858,14 @@
   "config": {},
   "extra": {
     "ds": {
-      "scale": 0.6830134553650705,
+      "scale": 0.9090909090909091,
       "offset": [
-        1096.2188760488327,
-        245.01396417277823
+        549.7571867235707,
+        -6.513564853156251
       ]
     },
+    "frontendVersion": "1.27.10",
     "groupNodes": {},
-    "frontendVersion": "1.24.4",
     "VHS_latentpreview": false,
     "VHS_latentpreviewrate": 0,
     "VHS_MetadataImage": true,
