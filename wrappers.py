@@ -484,6 +484,36 @@ def override_class(cls):
 
     return NodeOverride
 
+def override_class_offload(cls):
+    """Standard MultiGPU device override for UNet/VAE models"""
+    from . import set_current_device, set_current_unet_offload_device
+    
+    class NodeOverride(cls):
+        @classmethod
+        def INPUT_TYPES(s):
+            inputs = copy.deepcopy(cls.INPUT_TYPES())
+            devices = get_device_list()
+            default_device = devices[1] if len(devices) > 1 else devices[0]
+            inputs["optional"] = inputs.get("optional", {})
+            inputs["optional"]["device"] = (devices, {"default": default_device})
+            inputs["optional"]["offload_device"] = (devices, {"default": "cpu"})
+            return inputs
+
+        CATEGORY = "multigpu"
+        FUNCTION = "override"
+
+        def override(self, *args, device=None, offload_device=None, **kwargs):
+            if device is not None:
+                set_current_device(device)
+            if offload_device is not None:
+                set_current_unet_offload_device(offload_device)
+            fn = getattr(super(), cls.FUNCTION)
+            out = fn(*args, **kwargs)
+            return out
+
+    return NodeOverride
+
+
 
 def override_class_clip(cls):
     """Standard MultiGPU device override for CLIP models (with device kwarg workaround)"""

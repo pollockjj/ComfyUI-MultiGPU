@@ -23,7 +23,7 @@ from .model_management_mgpu import (
 )
 
 WEB_DIRECTORY = "./web"
-MGPU_MM_LOG = True
+MGPU_MM_LOG = False
 DEBUG_LOG = False
 
 logger = logging.getLogger("MultiGPU")
@@ -148,6 +148,7 @@ def check_module_exists(module_path):
 
 current_device = mm.get_torch_device()
 current_text_encoder_device = mm.text_encoder_device()
+current_unet_offload_device = mm.unet_offload_device()
 
 def set_current_device(device):
     """Set the current device context for MultiGPU operations."""
@@ -160,6 +161,12 @@ def set_current_text_encoder_device(device):
     global current_text_encoder_device
     current_text_encoder_device = device
     logger.debug(f"[MultiGPU Initialization] current_text_encoder_device set to: {device}")
+
+def set_current_unet_offload_device(device):
+    """Set the current UNet offload device context."""
+    global current_unet_offload_device
+    current_unet_offload_device = device
+    logger.debug(f"[MultiGPU Initialization] current_unet_offload_device set to: {device}")
 
 def get_torch_device_patched():
     """Return MultiGPU-aware device selection for patched mm.get_torch_device."""
@@ -183,11 +190,25 @@ def text_encoder_device_patched():
     logger.info(f"[MultiGPU Core Patching] text_encoder_device_patched returning device: {device} (current_text_encoder_device={current_text_encoder_device})")
     return device
 
-logger.info(f"[MultiGPU Core Patching] Patching mm.get_torch_device and mm.text_encoder_device")
+def unet_offload_device_patched():
+    """Return MultiGPU-aware UNet offload device for patched mm.unet_offload_device."""
+    device = None
+    if (not is_accelerator_available() or mm.cpu_state == mm.CPUState.CPU or "cpu" in str(current_unet_offload_device).lower()):
+        device = torch.device("cpu")
+    else:
+        devs = set(get_device_list())
+        device = torch.device(current_unet_offload_device) if str(current_unet_offload_device) in devs else torch.device("cpu")
+    logger.debug(f"[MultiGPU Core Patching] unet_offload_device_patched returning device: {device} (current_unet_offload_device={current_unet_offload_device})")
+    return device
+
+logger.info(f"[MultiGPU Core Patching] Patching mm.get_torch_device, mm.text_encoder_device, mm.unet_offload_device")
 logger.info(f"[MultiGPU DEBUG] Initial current_device: {current_device}")
 logger.info(f"[MultiGPU DEBUG] Initial current_text_encoder_device: {current_text_encoder_device}")
+logger.info(f"[MultiGPU DEBUG] Initial current_unet_offload_device: {current_unet_offload_device}")
+
 mm.get_torch_device = get_torch_device_patched
 mm.text_encoder_device = text_encoder_device_patched
+mm.unet_offload_device = unet_offload_device_patched
 
 from .nodes import (
     UnetLoaderGGUF,
@@ -235,6 +256,7 @@ from .wanvideo import (
 
 from .wrappers import (
     override_class,
+    override_class_offload,
     override_class_clip,
     override_class_clip_no_device,
     override_class_with_distorch_gguf,
@@ -319,8 +341,8 @@ ltx_nodes = {"LTXVLoaderMultiGPU": override_class(LTXVLoader)}
 register_and_count(["ComfyUI-LTXVideo", "comfyui-ltxvideo"], ltx_nodes)
 
 florence_nodes = {
-    "Florence2ModelLoaderMultiGPU": override_class(Florence2ModelLoader),
-    "DownloadAndLoadFlorence2ModelMultiGPU": override_class(DownloadAndLoadFlorence2Model)
+    "Florence2ModelLoaderMultiGPU": override_class_offload(Florence2ModelLoader),
+    "DownloadAndLoadFlorence2ModelMultiGPU": override_class_offload(DownloadAndLoadFlorence2Model)
 }
 register_and_count(["ComfyUI-Florence2", "comfyui-florence2"], florence_nodes)
 
