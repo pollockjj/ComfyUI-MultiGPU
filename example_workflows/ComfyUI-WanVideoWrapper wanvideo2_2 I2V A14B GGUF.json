@@ -504,7 +504,8 @@
         "0, 0, 0",
         "center",
         32,
-        "cpu"
+        "cpu",
+        "<tr><td>Output: </td><td><b>1</b> x <b>704</b> x <b>704 | 5.67MB</b></td></tr>"
       ]
     },
     {
@@ -842,7 +843,8 @@
         2,
         "linear",
         0,
-        0.01
+        0.01,
+        "[2.0, 1.0, 1.0, 1.0, 1.0, 1.0]"
       ]
     },
     {
@@ -1052,7 +1054,7 @@
         30,
         6,
         8.000000000000002,
-        668069490023304,
+        20843471366611,
         "randomize",
         true,
         "dpm++_sde",
@@ -1228,7 +1230,7 @@
         30,
         1.0000000000000002,
         8.000000000000002,
-        40589387979507,
+        645006682079046,
         "randomize",
         true,
         "dpm++_sde",
@@ -1341,108 +1343,6 @@
       "bgcolor": "rgba(24,24,27,.9)"
     },
     {
-      "id": 56,
-      "type": "WanVideoLoraSelect",
-      "pos": [
-        -135.46725463867188,
-        -56.22418212890625
-      ],
-      "size": [
-        551.2889404296875,
-        150
-      ],
-      "flags": {},
-      "order": 8,
-      "mode": 0,
-      "inputs": [
-        {
-          "name": "prev_lora",
-          "shape": 7,
-          "type": "WANVIDLORA",
-          "link": null
-        },
-        {
-          "name": "blocks",
-          "shape": 7,
-          "type": "SELECTEDBLOCKS",
-          "link": null
-        }
-      ],
-      "outputs": [
-        {
-          "name": "lora",
-          "type": "WANVIDLORA",
-          "links": [
-            110
-          ]
-        }
-      ],
-      "properties": {
-        "cnr_id": "ComfyUI-WanVideoWrapper",
-        "ver": "998a69cc0acbec503001b8b0ce0a5d5404420e1e",
-        "Node name for S&R": "WanVideoLoraSelect"
-      },
-      "widgets_values": [
-        "WanVideo/Lightx2v/wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors",
-        3,
-        false,
-        false
-      ],
-      "color": "#223",
-      "bgcolor": "#335"
-    },
-    {
-      "id": 97,
-      "type": "WanVideoLoraSelect",
-      "pos": [
-        -141.38307189941406,
-        152.2328338623047
-      ],
-      "size": [
-        532.1088256835938,
-        159.2544708251953
-      ],
-      "flags": {},
-      "order": 9,
-      "mode": 0,
-      "inputs": [
-        {
-          "name": "prev_lora",
-          "shape": 7,
-          "type": "WANVIDLORA",
-          "link": null
-        },
-        {
-          "name": "blocks",
-          "shape": 7,
-          "type": "SELECTEDBLOCKS",
-          "link": null
-        }
-      ],
-      "outputs": [
-        {
-          "name": "lora",
-          "type": "WANVIDLORA",
-          "links": [
-            169
-          ]
-        }
-      ],
-      "properties": {
-        "cnr_id": "ComfyUI-WanVideoWrapper",
-        "ver": "998a69cc0acbec503001b8b0ce0a5d5404420e1e",
-        "Node name for S&R": "WanVideoLoraSelect"
-      },
-      "widgets_values": [
-        "WanVideo/Lightx2v/wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors",
-        1,
-        false,
-        false
-      ],
-      "color": "#223",
-      "bgcolor": "#335"
-    },
-    {
       "id": 117,
       "type": "MarkdownNote",
       "pos": [
@@ -1454,7 +1354,7 @@
         937.3121337890625
       ],
       "flags": {},
-      "order": 10,
+      "order": 8,
       "mode": 0,
       "inputs": [],
       "outputs": [],
@@ -1554,10 +1454,10 @@
       "widgets_values": [
         "Wan2.2-I2V-A14B-HighNoise-Q5_K_M.gguf",
         "fp16_fast",
-        "fp8_e4m3fn_scaled",
+        "disabled",
         "offload_device",
         "cuda:0",
-        "sageattn",
+        "sdpa",
         "default"
       ],
       "color": "#008181",
@@ -1651,14 +1551,116 @@
       "widgets_values": [
         "Wan2.2-I2V-A14B-LowNoise-Q5_K_M.gguf",
         "fp16_fast",
-        "fp8_e4m3fn_scaled",
+        "disabled",
         "offload_device",
         "cuda:0",
-        "sageattn",
+        "sdpa",
         "default"
       ],
       "color": "#008181",
       "bgcolor": "rgba(24,24,27,.9)"
+    },
+    {
+      "id": 97,
+      "type": "WanVideoLoraSelect",
+      "pos": [
+        -102.80333709716797,
+        156.9707489013672
+      ],
+      "size": [
+        532.1088256835938,
+        159.2544708251953
+      ],
+      "flags": {},
+      "order": 9,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "prev_lora",
+          "shape": 7,
+          "type": "WANVIDLORA",
+          "link": null
+        },
+        {
+          "name": "blocks",
+          "shape": 7,
+          "type": "SELECTEDBLOCKS",
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "lora",
+          "type": "WANVIDLORA",
+          "links": [
+            169
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "ComfyUI-WanVideoWrapper",
+        "ver": "998a69cc0acbec503001b8b0ce0a5d5404420e1e",
+        "Node name for S&R": "WanVideoLoraSelect"
+      },
+      "widgets_values": [
+        "Wan2.2-I2V-A14B-4steps-lora-rank64-Seko-V1/low_noise_model.safetensors",
+        1,
+        false,
+        false
+      ],
+      "color": "#223",
+      "bgcolor": "#335"
+    },
+    {
+      "id": 56,
+      "type": "WanVideoLoraSelect",
+      "pos": [
+        -119.22315979003906,
+        -53.516807556152344
+      ],
+      "size": [
+        551.2889404296875,
+        150
+      ],
+      "flags": {},
+      "order": 10,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "prev_lora",
+          "shape": 7,
+          "type": "WANVIDLORA",
+          "link": null
+        },
+        {
+          "name": "blocks",
+          "shape": 7,
+          "type": "SELECTEDBLOCKS",
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "lora",
+          "type": "WANVIDLORA",
+          "links": [
+            110
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "ComfyUI-WanVideoWrapper",
+        "ver": "998a69cc0acbec503001b8b0ce0a5d5404420e1e",
+        "Node name for S&R": "WanVideoLoraSelect"
+      },
+      "widgets_values": [
+        "Wan2.2-I2V-A14B-4steps-lora-rank64-Seko-V1/high_noise_model.safetensors",
+        3,
+        false,
+        false
+      ],
+      "color": "#223",
+      "bgcolor": "#335"
     }
   ],
   "links": [
@@ -1963,10 +1965,10 @@
   "config": {},
   "extra": {
     "ds": {
-      "scale": 0.5559917313492586,
+      "scale": 0.6115909044841845,
       "offset": [
-        1049.3003683168295,
-        1500.8605042177378
+        1185.1970724860341,
+        1169.7723559677931
       ]
     },
     "frontendVersion": "1.27.10",
