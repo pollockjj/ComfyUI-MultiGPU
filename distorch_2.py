@@ -85,6 +85,10 @@ def register_patched_safetensor_modelpatcher():
                 models_temp.add(m)
                 for mm_patch in m.model_patches_models():
                     models_temp.add(mm_patch)
+                patches = m.model_patches_to(m.load_device)
+                if patches:
+                    for mm_patch in patches:
+                        models_temp.add(mm_patch)
 
             models = models_temp
 
