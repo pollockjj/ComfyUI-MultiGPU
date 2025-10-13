@@ -1,0 +1,438 @@
+{
+  "id": "a6ee03c8-e601-4b33-87dc-64e9ed484de8",
+  "revision": 0,
+  "last_node_id": 28,
+  "last_link_id": 64,
+  "nodes": [
+    {
+      "id": 8,
+      "type": "EmptyLatentImage",
+      "pos": [
+        991.2929077148438,
+        -435.2230224609375
+      ],
+      "size": [
+        210,
+        106
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "LATENT",
+          "type": "LATENT",
+          "links": [
+            9
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.3.64",
+        "Node name for S&R": "EmptyLatentImage"
+      },
+      "widgets_values": [
+        1024,
+        1024,
+        1
+      ]
+    },
+    {
+      "id": 5,
+      "type": "VAEDecode",
+      "pos": [
+        1592.0411376953125,
+        -260.3390808105469
+      ],
+      "size": [
+        140,
+        46
+      ],
+      "flags": {
+        "collapsed": false
+      },
+      "order": 6,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "samples",
+          "type": "LATENT",
+          "link": 6
+        },
+        {
+          "name": "vae",
+          "type": "VAE",
+          "link": 36
+        }
+      ],
+      "outputs": [
+        {
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "slot_index": 0,
+          "links": [
+            64
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.3.64",
+        "Node name for S&R": "VAEDecode"
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 25,
+      "type": "CLIPTextEncode",
+      "pos": [
+        935.94091796875,
+        9.248990058898926
+      ],
+      "size": [
+        285.6000061035156,
+        88
+      ],
+      "flags": {
+        "collapsed": false
+      },
+      "order": 4,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "clip",
+          "type": "CLIP",
+          "link": 58
+        }
+      ],
+      "outputs": [
+        {
+          "name": "CONDITIONING",
+          "type": "CONDITIONING",
+          "slot_index": 0,
+          "links": [
+            59
+          ]
+        }
+      ],
+      "title": "CLIP Text Encode (Negative Prompt)",
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.3.64",
+        "Node name for S&R": "CLIPTextEncode"
+      },
+      "widgets_values": [
+        ""
+      ],
+      "color": "#322",
+      "bgcolor": "#533"
+    },
+    {
+      "id": 21,
+      "type": "CLIPTextEncode",
+      "pos": [
+        937.1891479492188,
+        -240.19276428222656
+      ],
+      "size": [
+        293.767822265625,
+        206.74732971191406
+      ],
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "clip",
+          "type": "CLIP",
+          "link": 54
+        }
+      ],
+      "outputs": [
+        {
+          "name": "CONDITIONING",
+          "type": "CONDITIONING",
+          "slot_index": 0,
+          "links": [
+            46
+          ]
+        }
+      ],
+      "title": "CLIP Text Encode (Positive Prompt)",
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.3.64",
+        "Node name for S&R": "CLIPTextEncode"
+      },
+      "widgets_values": [
+        "A towering technological monolith in a cyberpunk cityscape at night, neon blue-green mixed with purple illuminate the surrounding buildings. Rain-slicked streets below reflect the brilliant signage, while holographic advertisements and flying vehicles populate the background. Moody atmospheric lighting, heavy contrast, photorealistic textures, cinematic color grading. "
+      ],
+      "color": "#232",
+      "bgcolor": "#353"
+    },
+    {
+      "id": 2,
+      "type": "KSampler",
+      "pos": [
+        1235.140380859375,
+        -287.8480529785156
+      ],
+      "size": [
+        295.7660217285156,
+        474
+      ],
+      "flags": {},
+      "order": 5,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 35
+        },
+        {
+          "name": "positive",
+          "type": "CONDITIONING",
+          "link": 46
+        },
+        {
+          "name": "negative",
+          "type": "CONDITIONING",
+          "link": 59
+        },
+        {
+          "name": "latent_image",
+          "type": "LATENT",
+          "link": 9
+        }
+      ],
+      "outputs": [
+        {
+          "name": "LATENT",
+          "type": "LATENT",
+          "slot_index": 0,
+          "links": [
+            6
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.3.64",
+        "Node name for S&R": "KSampler"
+      },
+      "widgets_values": [
+        768019607311046,
+        "randomize",
+        20,
+        8,
+        "dpmpp_2m_sde_gpu",
+        "karras",
+        1
+      ]
+    },
+    {
+      "id": 28,
+      "type": "SaveImage",
+      "pos": [
+        1763.842041015625,
+        -255.2287139892578
+      ],
+      "size": [
+        408.8526306152344,
+        449.6918029785156
+      ],
+      "flags": {},
+      "order": 7,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 64
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.3.64",
+        "Node name for S&R": "SaveImage"
+      },
+      "widgets_values": [
+        "MultiGPU"
+      ]
+    },
+    {
+      "id": 19,
+      "type": "CheckpointLoaderSimpleMultiGPU",
+      "pos": [
+        446.83160400390625,
+        -309.51922607421875
+      ],
+      "size": [
+        377.1637268066406,
+        122
+      ],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "MODEL",
+          "type": "MODEL",
+          "slot_index": 0,
+          "links": [
+            35
+          ]
+        },
+        {
+          "name": "CLIP",
+          "type": "CLIP",
+          "slot_index": 1,
+          "links": [
+            54,
+            58
+          ]
+        },
+        {
+          "name": "VAE",
+          "type": "VAE",
+          "slot_index": 2,
+          "links": [
+            36
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfyui-multigpu",
+        "ver": "0d6dfc7524472943ba912a6ec3088757edba15c3",
+        "Node name for S&R": "CheckpointLoaderSimpleMultiGPU"
+      },
+      "widgets_values": [
+        "sd1.5-real-dream-16.safetensors",
+        "cuda:1"
+      ],
+      "color": "#008181",
+      "bgcolor": "rgba(24,24,27,.9)"
+    },
+    {
+      "id": 27,
+      "type": "MarkdownNote",
+      "pos": [
+        39.4303092956543,
+        -313.1197509765625
+      ],
+      "size": [
+        387.6714782714844,
+        472.19256591796875
+      ],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "title": "ComfyUI-MultiGPU - CheckpointLoaderSimpleMultiGPU",
+      "properties": {},
+      "widgets_values": [
+        "A mature SD1.5 Checkpoint to test ComfyUI-MultiGPU basic functionality. In this case we are doing the simplest action of changing device where all models are loaded before inference.\n## Custom Node\n\n[ComfyUI-MultiGPU](https://github.com/pollockjj/ComfyUI-MultiGPU)\n```\n📂 ComfyUI/\n├── 📂 custom_nodes/\n│   ├── 📂 ComfyUI-MultiGPU/\n```\n## Model links\n\n**checkpoints**\n\n - [sd1.5-real-dream-16.safetensors](https://huggingface.co/sinatra-rd/sd-1.5-real-dream/resolve/main/sd1.5-real-dream-16.safetensors)\n\n```\n📂 ComfyUI/\n├─ 📂 models/\n│   ├─ 📂 checkpoints/\n│   │     └── sd1.5-real-dream-16.safetensors\n```\n## Device Mapping (Example: Two GPUs, 1 CPU)\n```\n🖥️ system \n├── 🟢 cuda:0\n│       └── EMPTY\n├── 🟣 cuda:1\n│       └── sd1.5-real-dream-16.safetensors\n├── ⚙️ cpu\n        └── EMPTY\n```"
+      ],
+      "color": "#008181",
+      "bgcolor": "rgba(24,24,27,.9)"
+    }
+  ],
+  "links": [
+    [
+      6,
+      2,
+      0,
+      5,
+      0,
+      "LATENT"
+    ],
+    [
+      9,
+      8,
+      0,
+      2,
+      3,
+      "LATENT"
+    ],
+    [
+      35,
+      19,
+      0,
+      2,
+      0,
+      "MODEL"
+    ],
+    [
+      36,
+      19,
+      2,
+      5,
+      1,
+      "VAE"
+    ],
+    [
+      46,
+      21,
+      0,
+      2,
+      1,
+      "CONDITIONING"
+    ],
+    [
+      54,
+      19,
+      1,
+      21,
+      0,
+      "CLIP"
+    ],
+    [
+      58,
+      19,
+      1,
+      25,
+      0,
+      "CLIP"
+    ],
+    [
+      59,
+      25,
+      0,
+      2,
+      2,
+      "CONDITIONING"
+    ],
+    [
+      64,
+      5,
+      0,
+      28,
+      0,
+      "IMAGE"
+    ]
+  ],
+  "groups": [],
+  "config": {},
+  "extra": {
+    "ds": {
+      "scale": 0.876922695000118,
+      "offset": [
+        164.74639645547714,
+        599.3047746961622
+      ]
+    },
+    "frontendVersion": "1.27.10",
+    "ue_links": [],
+    "VHS_latentpreview": false,
+    "VHS_latentpreviewrate": 0,
+    "VHS_MetadataImage": true,
+    "VHS_KeepIntermediate": true
+  },
+  "version": 0.4
+}
