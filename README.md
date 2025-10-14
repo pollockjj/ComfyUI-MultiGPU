@@ -137,7 +137,7 @@ All MultiGPU nodes available for your install can be found in the "multigpu" cat
 
 ## Node Documentation
 
-Detailed technical documentation is available for all **automatically-detected core MultiGPU and DisTorch2 nodes**, covering 36+ documented nodes with comprehensive parameter details, output specifications, and DisTorch2 allocation guidance where applicable.
+Detailed technical documentation is available for all **automatically-detected core MultiGPU and DisTorch2 nodes**, covering 70+ documented nodes with comprehensive parameter details, output specifications, and DisTorch2 allocation guidance where applicable.
 
 - **To access documentation**: Click on any core MultiGPU or DisTorch2 node in ComfyUI and select "Help" (question mark inside a circle) from the resultant menu 
 - **Coverage**: All standard ComfyUI loader nodes (UNet, VAE, Checkpoints, CLIP, ControlNet, Diffusers) plus popular GGUF loader variants
@@ -253,19 +253,6 @@ All workflows have been tested on a 2x 3090 + 1060ti linux setup, a 4070 win 11 
   </tr>
 </table>
 
-### Florence2
-
-<table>
-  <tr>
-    <td align="center">
-      <a href="example_workflows/ComfyUI-Florence2%20detailed_caption%20to%20flux.json">
-        <img src="example_workflows/ComfyUI-Florence2%20detailed_caption%20to%20flux.jpg" alt="Florence2 Detailed Caption to FLUX Pipeline" style="max-width:160px; max-height:160px;">
-        <div>Florence2 Detailed Caption to FLUX Pipeline</div>
-      </a>
-    </td>
-  </tr>
-</table>
-
 ### GGUF
 
 <table>
@@ -286,7 +273,7 @@ All workflows have been tested on a 2x 3090 + 1060ti linux setup, a 4070 win 11 
   </tr>
 </table>
 
-### HunyuanVideoWrapper
+### HunyuanVideoWrapper / Florence2
 
 <table>
   <tr>
@@ -296,6 +283,12 @@ All workflows have been tested on a 2x 3090 + 1060ti linux setup, a 4070 win 11 
         <div>HunyuanVideoWrapper DisTorch (Legacy, Deprecated)</div>
       </a>
     </td>
+    <td align="center">
+      <a href="example_workflows/ComfyUI-Florence2%20detailed_caption%20to%20flux.json">
+        <img src="example_workflows/ComfyUI-Florence2%20detailed_caption%20to%20flux.jpg" alt="Florence2 Detailed Caption to FLUX Pipeline" style="max-width:160px; max-height:160px;">
+        <div>Florence2 Detailed Caption to FLUX Pipeline</div>
+      </a>
+    </td>    
   </tr>
 </table>
 
