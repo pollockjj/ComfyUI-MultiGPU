@@ -322,12 +322,16 @@ def analyze_safetensor_loading(model_patcher, allocations_string, is_clip=False)
     """
     DEVICE_RATIOS_DISTORCH = {}
     device_table = {}
-    distorch_alloc = allocations_string
+    distorch_alloc = ""
+    virtual_vram_str = ""
     virtual_vram_gb = 0.0
 
-    distorch_alloc, virtual_vram_str = allocations_string.split('#')
+    if '#' in allocations_string:
+        distorch_alloc, virtual_vram_str = allocations_string.split('#', 1)
+    else:
+        distorch_alloc = allocations_string
 
-    compute_device = virtual_vram_str.split(';')[0]
+    compute_device = virtual_vram_str.split(';')[0] if virtual_vram_str else "cuda:0"
     logger.debug(f"[MultiGPU DisTorch V2] Compute Device: {compute_device}")
 
     if not distorch_alloc:

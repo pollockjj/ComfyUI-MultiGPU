@@ -112,7 +112,7 @@ def _create_distorch_safetensor_v2_override(cls, device_param_name, device_sette
             elif hasattr(out[0], 'patcher') and hasattr(out[0].patcher, 'model'):
                 model_to_check = out[0].patcher
 
-            if model_to_check:
+            if model_to_check and full_allocation:
                 inner_model = model_to_check.model
                 inner_model._distorch_v2_meta = {"full_allocation": full_allocation}
 
@@ -217,7 +217,7 @@ def override_class_with_distorch_gguf(cls):
             elif hasattr(out[0], 'patcher') and hasattr(out[0].patcher, 'model'):
                 model_to_check = out[0].patcher
             
-            if model_to_check:
+            if model_to_check and full_allocation:
                 inner_model = model_to_check.model
                 inner_model._distorch_v2_meta = {"full_allocation": full_allocation}
 
@@ -279,7 +279,7 @@ def override_class_with_distorch_gguf_v2(cls):
             elif hasattr(out[0], 'patcher') and hasattr(out[0].patcher, 'model'):
                 model_to_check = out[0].patcher
             
-            if model_to_check:
+            if model_to_check and full_allocation:
                 inner_model = model_to_check.model
                 inner_model._distorch_v2_meta = {"full_allocation": full_allocation}
 
@@ -343,7 +343,7 @@ def override_class_with_distorch_clip(cls):
             elif hasattr(out[0], 'patcher') and hasattr(out[0].patcher, 'model'):
                 model_to_check = out[0].patcher
             
-            if model_to_check:
+            if model_to_check and full_allocation:
                 inner_model = model_to_check.model
                 inner_model._distorch_v2_meta = {"full_allocation": full_allocation}
 
@@ -407,7 +407,7 @@ def override_class_with_distorch_clip_no_device(cls):
             elif hasattr(out[0], 'patcher') and hasattr(out[0].patcher, 'model'):
                 model_to_check = out[0].patcher
             
-            if model_to_check:
+            if model_to_check and full_allocation:
                 inner_model = model_to_check.model
                 inner_model._distorch_v2_meta = {"full_allocation": full_allocation}
 

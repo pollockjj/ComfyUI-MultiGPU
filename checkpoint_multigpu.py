@@ -107,11 +107,13 @@ def patched_load_state_dict_guess_config(sd, output_vae=True, output_clip=True, 
             multigpu_memory_log(f"unet:{config_hash[:8]}", "post-model")
 
             if distorch_config and 'unet_allocation' in distorch_config:
-                register_patched_safetensor_modelpatcher()
-                inner_model = model_patcher.model
-                inner_model._distorch_v2_meta = {"full_allocation": distorch_config['unet_allocation']}
-                logger.info(f"[CHECKPOINT_META] UNET inner_model id=0x{id(inner_model):x}")
-                model._distorch_high_precision_loras = distorch_config.get('high_precision_loras', True)
+                unet_alloc = distorch_config['unet_allocation']
+                if unet_alloc:
+                    register_patched_safetensor_modelpatcher()
+                    inner_model = model_patcher.model
+                    inner_model._distorch_v2_meta = {"full_allocation": unet_alloc}
+                    logger.info(f"[CHECKPOINT_META] UNET inner_model id=0x{id(inner_model):x}")
+                    model._distorch_high_precision_loras = distorch_config.get('high_precision_loras', True)
 
             model.load_model_weights(sd, diffusion_model_prefix)
             multigpu_memory_log(f"unet:{config_hash[:8]}", "post-weights")
@@ -141,10 +143,11 @@ def patched_load_state_dict_guess_config(sd, output_vae=True, output_clip=True, 
                     clip = CLIP(clip_target, embedding_directory=embedding_directory, tokenizer_data=clip_sd, parameters=clip_params, model_options=te_model_options)
 
                     if distorch_config and 'clip_allocation' in distorch_config:
-                         if hasattr(clip, 'patcher'):
+                        clip_alloc = distorch_config['clip_allocation']
+                        if clip_alloc and hasattr(clip, 'patcher'):
                             register_patched_safetensor_modelpatcher()
                             inner_clip = clip.patcher.model
-                            inner_clip._distorch_v2_meta = {"full_allocation": distorch_config['clip_allocation']}
+                            inner_clip._distorch_v2_meta = {"full_allocation": clip_alloc}
                             logger.info(f"[CHECKPOINT_META] CLIP inner_model id=0x{id(inner_clip):x}")
                             clip.patcher.model._distorch_high_precision_loras = distorch_config.get('high_precision_loras', True)
 
@@ -257,10 +260,19 @@ class CheckpointLoaderAdvancedDisTorch2MultiGPU:
             'vae_device': vae_device
         }
 
-        unet_vram_str = f"{unet_compute_device};{unet_virtual_vram_gb};{unet_donor_device}"
-        unet_alloc = f"{unet_expert_mode_allocations}#{unet_vram_str}"
-        clip_vram_str = f"{clip_compute_device};{clip_virtual_vram_gb};{clip_donor_device}"
-        clip_alloc = f"{clip_expert_mode_allocations}#{clip_vram_str}"
+        unet_vram_str = ""
+        if unet_virtual_vram_gb > 0:
+            unet_vram_str = f"{unet_compute_device};{unet_virtual_vram_gb};{unet_donor_device}"
+        elif unet_expert_mode_allocations:
+            unet_vram_str = unet_compute_device
+        unet_alloc = f"{unet_expert_mode_allocations}#{unet_vram_str}" if unet_expert_mode_allocations or unet_vram_str else ""
+        
+        clip_vram_str = ""
+        if clip_virtual_vram_gb > 0:
+            clip_vram_str = f"{clip_compute_device};{clip_virtual_vram_gb};{clip_donor_device}"
+        elif clip_expert_mode_allocations:
+            clip_vram_str = clip_compute_device
+        clip_alloc = f"{clip_expert_mode_allocations}#{clip_vram_str}" if clip_expert_mode_allocations or clip_vram_str else ""
 
         checkpoint_distorch_config[config_hash] = {
             'unet_allocation': unet_alloc,
