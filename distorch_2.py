@@ -54,15 +54,14 @@ def register_patched_safetensor_modelpatcher():
                 model_type = type(m).__name__
 
                 if ("GGUF" in model_type or "ModelPatcher" in model_type) and hasattr(m, "model_patches_to"):
-                    print(f"[MultiGPU] {type(m).__name__} missing 'model_patches_models' attribute, using 'model_patches_to' fallback.")
-                    target_device = getattr(m, "load_device",
-                                            f"cuda:{torch.cuda.current_device()}" if torch.cuda.is_available() else "cpu")
-                    print(f"Target device: {target_device}")
+                    logger.info(f"[MultiGPU DisTorch V2] {type(m).__name__} missing 'model_patches_models' attribute, using 'model_patches_to' fallback.")
+                    target_device = m.load_device
+                    logger.debug(f"[MultiGPU DisTorch V2] Target device: {target_device}")
                     patches = m.model_patches_to(target_device)
                     if patches:
-                        print(f"[MultiGPU] Found {len(patches)} mm_patch(es) for {type(m).__name__} on device {target_device}")
+                        logger.debug(f"[MultiGPU DisTorch V2] Found {len(patches)} mm_patch(es) for {type(m).__name__} on device {target_device}")
                         for mm_patch in patches:
-                            print(f"[MultiGPU] Registering mm_patch: {type(mm_patch).__name__}")
+                            logger.debug(f"[MultiGPU DisTorch V2] Registering mm_patch: {type(mm_patch).__name__}")
                             models_temp.add(mm_patch)
                     continue
                 
