@@ -269,8 +269,6 @@ from .wrappers import (
     override_class_with_distorch_safetensor_v2_clip_no_device,
 )
 from .distorch_2 import (
-    safetensor_allocation_store,
-    create_safetensor_model_hash,
     register_patched_safetensor_modelpatcher,
     analyze_safetensor_loading,
     calculate_safetensor_vvram_allocation,

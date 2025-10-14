@@ -22,29 +22,8 @@ logger = logging.getLogger("MultiGPU")
 # Model Analysis and Store Management (DisTorch V1 & V2)
 # ==========================================================================================
 
-# DisTorch V2 SafeTensor stores
-safetensor_allocation_store = {}
-safetensor_settings_store = {}
-
 # DisTorch V1 GGUF stores (backwards compatibility)
 model_allocation_store = {}
-
-def create_safetensor_model_hash(model, caller):
-    """Create a unique hash for a safetensor model to track allocations"""
-    if hasattr(model, 'model'):
-        actual_model = model.model
-        model_type = type(actual_model).__name__
-        model_size = model.model_size() if hasattr(model, 'model_size') else sum(p.numel() * p.element_size() for p in actual_model.parameters())
-        first_layers = str(list(model.model_state_dict().keys() if hasattr(model, 'model_state_dict') else actual_model.state_dict().keys())[:3])
-    else:
-        model_type = type(model).__name__
-        model_size = sum(p.numel() * p.element_size() for p in model.parameters())
-        first_layers = str(list(model.state_dict().keys())[:3])
-    
-    identifier = f"{model_type}_{model_size}_{first_layers}"
-    final_hash = hashlib.sha256(identifier.encode()).hexdigest()
-    logger.debug(f"[MultiGPU DisTorch V2] Created hash for {caller}: {final_hash[:8]}...")
-    return final_hash
 
 def create_model_hash(model, caller):
     """Create a unique hash for a GGUF model to track allocations (DisTorch V1)"""

@@ -235,30 +235,17 @@ original_soft_empty_cache = mm.soft_empty_cache
 def soft_empty_cache_distorch2_patched(force=False):
     """Patched mm.soft_empty_cache managing VRAM across all devices, CPU RAM with adaptive thresholding, and DisTorch store pruning."""
     from .model_management_mgpu import multigpu_memory_log, check_cpu_memory_threshold, trigger_executor_cache_reset
-    from .distorch_2 import safetensor_allocation_store, create_safetensor_model_hash
     
     is_distorch_active = False
 
-    # Detect DisTorch2-managed models
-    # logger.mgpu_mm_log(f"[DETECT_DEBUG] Checking DisTorch2 active status - loaded models: {len(mm.current_loaded_models)}, store entries: {len(safetensor_allocation_store)}")
-    
     for i, lm in enumerate(mm.current_loaded_models):
-        mp = lm.model  # weakref call to ModelPatcher
+        mp = lm.model
         if mp is not None:
-            model_hash = create_safetensor_model_hash(mp, "cache_patch_check")
-            in_store = model_hash in safetensor_allocation_store
-            alloc_value = safetensor_allocation_store.get(model_hash, "")
-            model_name = type(getattr(mp, 'model', mp)).__name__
-            unload_distorch_model = getattr(getattr(mp, 'model', None), '_mgpu_unload_distorch_model', False)
+            inner_model = mp.model
             
-            #logger.mgpu_mm_log(f"[DETECT_DEBUG] Model {i}: {model_name}, hash={model_hash[:8]}, in_store={in_store}, alloc_value='{alloc_value}', unload_distorch_model={unload_distorch_model}")
-            
-            if in_store and alloc_value:
+            if hasattr(inner_model, '_distorch_v2_meta'):
                 is_distorch_active = True
-                #logger.mgpu_mm_log(f"[DETECT_DEBUG] DisTorch2 ACTIVE detected on model: {model_name}")
                 break
-    
-    #logger.mgpu_mm_log(f"[DETECT_DEBUG] Final DisTorch2 active status: {is_distorch_active}")
 
     # Phase 2: adaptive CPU memory management
     check_cpu_memory_threshold()

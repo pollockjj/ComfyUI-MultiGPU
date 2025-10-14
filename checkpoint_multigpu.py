@@ -9,7 +9,7 @@ import comfy.clip_vision
 from comfy.sd import VAE, CLIP
 from .device_utils import get_device_list, soft_empty_cache_multigpu
 from .model_management_mgpu import multigpu_memory_log
-from .distorch_2 import safetensor_allocation_store, safetensor_settings_store, create_safetensor_model_hash, register_patched_safetensor_modelpatcher
+from .distorch_2 import register_patched_safetensor_modelpatcher
 
 logger = logging.getLogger("MultiGPU")
 
@@ -108,12 +108,10 @@ def patched_load_state_dict_guess_config(sd, output_vae=True, output_clip=True, 
 
             if distorch_config and 'unet_allocation' in distorch_config:
                 register_patched_safetensor_modelpatcher()
-                model_hash = create_safetensor_model_hash(model_patcher, "checkpoint_loader_unet")
-                safetensor_allocation_store[model_hash] = distorch_config['unet_allocation']
-                safetensor_settings_store[model_hash] = distorch_config.get('unet_settings','')
-                model.is_distorch = True
+                inner_model = model_patcher.model
+                inner_model._distorch_v2_meta = {"full_allocation": distorch_config['unet_allocation']}
+                logger.info(f"[CHECKPOINT_META] UNET inner_model id=0x{id(inner_model):x}")
                 model._distorch_high_precision_loras = distorch_config.get('high_precision_loras', True)
-                logger.mgpu_mm_log(f"Stored DisTorch2 config for UNet (hash {model_hash[:8]}): {distorch_config['unet_allocation']}")
 
             model.load_model_weights(sd, diffusion_model_prefix)
             multigpu_memory_log(f"unet:{config_hash[:8]}", "post-weights")
@@ -145,12 +143,10 @@ def patched_load_state_dict_guess_config(sd, output_vae=True, output_clip=True, 
                     if distorch_config and 'clip_allocation' in distorch_config:
                          if hasattr(clip, 'patcher'):
                             register_patched_safetensor_modelpatcher()
-                            clip_hash = create_safetensor_model_hash(clip.patcher, "checkpoint_loader_clip")
-                            safetensor_allocation_store[clip_hash] = distorch_config['clip_allocation']
-                            safetensor_settings_store[clip_hash] = distorch_config.get('clip_settings','')
-                            clip.patcher.model.is_distorch = True
+                            inner_clip = clip.patcher.model
+                            inner_clip._distorch_v2_meta = {"full_allocation": distorch_config['clip_allocation']}
+                            logger.info(f"[CHECKPOINT_META] CLIP inner_model id=0x{id(inner_clip):x}")
                             clip.patcher.model._distorch_high_precision_loras = distorch_config.get('high_precision_loras', True)
-                            logger.info(f"Stored DisTorch2 config for CLIP (hash {clip_hash[:8]}): {distorch_config['clip_allocation']}")
 
                     m, u = clip.load_sd(clip_sd, full_model=True) # This respects the patched text_encoder_device
                     if len(m) > 0: logger.warning(f"CLIP missing keys: {m}")
