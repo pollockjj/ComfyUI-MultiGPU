@@ -1,0 +1,122 @@
+{
+  "3": {
+    "inputs": {
+      "seed": 363535877769015,
+      "steps": 30,
+      "cfg": 4.5,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "denoise": 1,
+      "model": [
+        "44",
+        0
+      ],
+      "positive": [
+        "6",
+        0
+      ],
+      "negative": [
+        "7",
+        0
+      ],
+      "latent_image": [
+        "21",
+        0
+      ]
+    },
+    "class_type": "KSampler",
+    "_meta": {
+      "title": "KSampler"
+    }
+  },
+  "6": {
+    "inputs": {
+      "text": "A neon blue-green frog with vibrant neon purple spots stares forward with its left eye moving subtly. The frog's skin is textured with small bumps, and its spots appear in irregular patterns across its head and face. The eye is round and black with a subtle shine. The head is slightly tilted to its left, and the body is barely visible. The background is a flat, solid deep blue color, extending beyond the frog in all directions. The camera zooms in slowly on the frog's eye and the frog looks directly at the viewer. The overall lighting is bright and diffused, creating a soft appearance.",
+      "clip": [
+        "44",
+        1
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Prompt)"
+    }
+  },
+  "7": {
+    "inputs": {
+      "text": "",
+      "clip": [
+        "44",
+        1
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Prompt)"
+    }
+  },
+  "8": {
+    "inputs": {
+      "samples": [
+        "3",
+        0
+      ],
+      "vae": [
+        "44",
+        2
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE Decode"
+    }
+  },
+  "21": {
+    "inputs": {
+      "width": 848,
+      "height": 480,
+      "length": 25,
+      "batch_size": 1
+    },
+    "class_type": "EmptyMochiLatentVideo",
+    "_meta": {
+      "title": "EmptyMochiLatentVideo"
+    }
+  },
+  "28": {
+    "inputs": {
+      "filename_prefix": "MultiGPU",
+      "fps": 24,
+      "lossless": false,
+      "quality": 90,
+      "method": "default",
+      "images": [
+        "8",
+        0
+      ]
+    },
+    "class_type": "SaveAnimatedWEBP",
+    "_meta": {
+      "title": "SaveAnimatedWEBP"
+    }
+  },
+  "44": {
+    "inputs": {
+      "ckpt_name": "mochi_preview_fp8_scaled.safetensors",
+      "unet_compute_device": "cuda:0",
+      "unet_virtual_vram_gb": 5,
+      "unet_donor_device": "cpu",
+      "clip_compute_device": "cuda:1",
+      "clip_virtual_vram_gb": 2,
+      "clip_donor_device": "cpu",
+      "vae_device": "cuda:1",
+      "unet_expert_mode_allocations": "",
+      "clip_expert_mode_allocations": "",
+      "high_precision_loras": true
+    },
+    "class_type": "CheckpointLoaderAdvancedDisTorch2MultiGPU",
+    "_meta": {
+      "title": "CheckpointLoaderAdvancedDisTorch2MultiGPU"
+    }
+  }
+}

@@ -1,0 +1,146 @@
+{
+  "3": {
+    "inputs": {
+      "seed": 174815108394042,
+      "steps": 20,
+      "cfg": 2.5,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "denoise": 1,
+      "model": [
+        "66",
+        0
+      ],
+      "positive": [
+        "6",
+        0
+      ],
+      "negative": [
+        "7",
+        0
+      ],
+      "latent_image": [
+        "58",
+        0
+      ]
+    },
+    "class_type": "KSampler",
+    "_meta": {
+      "title": "KSampler"
+    }
+  },
+  "6": {
+    "inputs": {
+      "text": "A towering technological monolith in a cyberpunk cityscape at night, with \"GGUF DisTorch 2\" emblazoned across its surface in massive neon blue-green mixed with purple letters that illuminate the surrounding buildings. The text occupies the central third of the frame, crafted from glowing plasma tubes and crackling energy. Rain-slicked streets below reflect the brilliant signage, while holographic advertisements and flying vehicles populate the background. Moody atmospheric lighting, heavy contrast, photorealistic textures, cinematic color grading. ",
+      "clip": [
+        "76",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Positive Prompt)"
+    }
+  },
+  "7": {
+    "inputs": {
+      "text": " ",
+      "clip": [
+        "76",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Negative Prompt)"
+    }
+  },
+  "8": {
+    "inputs": {
+      "samples": [
+        "3",
+        0
+      ],
+      "vae": [
+        "70",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE Decode"
+    }
+  },
+  "58": {
+    "inputs": {
+      "width": 1328,
+      "height": 1328,
+      "batch_size": 1
+    },
+    "class_type": "EmptySD3LatentImage",
+    "_meta": {
+      "title": "EmptySD3LatentImage"
+    }
+  },
+  "60": {
+    "inputs": {
+      "filename_prefix": "MultiGPU",
+      "images": [
+        "8",
+        0
+      ]
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "Save Image"
+    }
+  },
+  "66": {
+    "inputs": {
+      "shift": 3.1000000000000005,
+      "model": [
+        "77",
+        0
+      ]
+    },
+    "class_type": "ModelSamplingAuraFlow",
+    "_meta": {
+      "title": "ModelSamplingAuraFlow"
+    }
+  },
+  "70": {
+    "inputs": {
+      "vae_name": "qwen_image_vae.safetensors",
+      "device": "cuda:1"
+    },
+    "class_type": "VAELoaderMultiGPU",
+    "_meta": {
+      "title": "VAELoaderMultiGPU"
+    }
+  },
+  "76": {
+    "inputs": {
+      "clip_name": "Qwen2.5-VL-7B-Instruct-Q4_K_S.gguf",
+      "type": "qwen_image",
+      "device": "cuda:1"
+    },
+    "class_type": "CLIPLoaderGGUFMultiGPU",
+    "_meta": {
+      "title": "CLIPLoaderGGUFMultiGPU"
+    }
+  },
+  "77": {
+    "inputs": {
+      "unet_name": "qwen-image-Q3_K_S.gguf",
+      "compute_device": "cuda:0",
+      "virtual_vram_gb": 4.2,
+      "donor_device": "cpu",
+      "expert_mode_allocations": "",
+      "eject_models": true
+    },
+    "class_type": "UnetLoaderGGUFDisTorch2MultiGPU",
+    "_meta": {
+      "title": "UnetLoaderGGUFDisTorch2MultiGPU"
+    }
+  }
+}

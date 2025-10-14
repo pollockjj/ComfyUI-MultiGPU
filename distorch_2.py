@@ -20,38 +20,6 @@ from .device_utils import get_device_list, soft_empty_cache_multigpu
 from .model_management_mgpu import multigpu_memory_log, force_full_system_cleanup
 
 
-safetensor_allocation_store = {}
-safetensor_settings_store = {}
-
-
-def create_safetensor_model_hash(model, caller):
-    """Create a unique hash for a safetensor model to track allocations"""
-    if hasattr(model, 'model'):
-        # For ModelPatcher objects
-        actual_model = model.model
-        model_type = type(actual_model).__name__
-        # Use ComfyUI's model_size if available
-        if hasattr(model, 'model_size'):
-            model_size = model.model_size()
-        else:
-            model_size = sum(p.numel() * p.element_size() for p in actual_model.parameters())
-        if hasattr(model, 'model_state_dict'):
-            first_layers = str(list(model.model_state_dict().keys())[:3])
-        else:
-            first_layers = str(list(actual_model.state_dict().keys())[:3])
-    else:
-        # Direct model
-        model_type = type(model).__name__
-        model_size = sum(p.numel() * p.element_size() for p in model.parameters())
-        first_layers = str(list(model.state_dict().keys())[:3])
-    
-    identifier = f"{model_type}_{model_size}_{first_layers}"
-    final_hash = hashlib.sha256(identifier.encode()).hexdigest()
-    
-    # DEBUG STATEMENT - ALWAYS LOG THE HASH
-    logger.debug(f"[MultiGPU DisTorch V2] Created hash for {caller}: {final_hash[:8]}...")
-    return final_hash
-
 def register_patched_safetensor_modelpatcher():
     """Register and patch the ModelPatcher for distributed safetensor loading"""
     from comfy.model_patcher import wipe_lowvram_weight, move_weight_functions
@@ -128,23 +96,35 @@ def register_patched_safetensor_modelpatcher():
                 device = loaded_model.device
                 base_memory = loaded_model.model_memory_required(device)
 
-                # Check DisTorch flags
-                is_distorch = hasattr(loaded_model.model.model, '_mgpu_virtual_vram_gb')
-                has_eject = hasattr(loaded_model.model.model, '_mgpu_eject_models')
-
-                if has_eject:
-                    eject_device = device
-                    logger.mgpu_mm_log("DisTorch eject_models=True, is_distorch=True - MAX memory eviction")
-
-                if is_distorch:
-                    # is_distorch=True: use compute device allocation size
-                    virtual_vram_gb = loaded_model.model.model._mgpu_virtual_vram_gb
+                inner_model = loaded_model.model.model
+                
+                if hasattr(inner_model, '_distorch_v2_meta'):
+                    meta = inner_model._distorch_v2_meta
+                    allocation_str = meta['full_allocation']
+                    
+                    # Parse allocation string: "expert#compute_device;virtual_vram_gb;donors"
+                    parts = allocation_str.split('#')
+                    virtual_vram_gb = 0.0
+                    has_eject = False
+                    
+                    if len(parts) > 1:
+                        virtual_vram_str = parts[1]
+                        virtual_info = virtual_vram_str.split(';')
+                        if len(virtual_info) > 1:
+                            virtual_vram_gb = float(virtual_info[1])
+                        if len(virtual_info) > 2 and virtual_info[2]:
+                            has_eject = True
+                    
+                    if has_eject:
+                        eject_device = device
+                        logger.mgpu_mm_log("DisTorch eject_models detected - MAX memory eviction")
+                    
                     virtual_vram_bytes = virtual_vram_gb * (1024**3)
                     adjusted_memory = max(0, base_memory - virtual_vram_bytes)
                     total_memory_required[device] = total_memory_required.get(device, 0) + adjusted_memory
-                    logger.mgpu_mm_log(f"DisTorch is_distorch=True, model adjusted {(base_memory - virtual_vram_bytes)/(1024**3):.2f}GB for device {device}")
+                    logger.mgpu_mm_log(f"DisTorch model adjusted {(base_memory - virtual_vram_bytes)/(1024**3):.2f}GB for device {device}")
                 else:
-                    # is_distorch=False: use full model size
+                    # Standard model: use full model size
                     total_memory_required[device] = total_memory_required.get(device, 0) + base_memory
                     logger.mgpu_mm_log(f"[LOAD_MODELS_GPU] Standard model {(base_memory)/(1024**3):.2f}GB for device {device}")
 
@@ -209,23 +189,24 @@ def register_patched_safetensor_modelpatcher():
         original_partially_load = comfy.model_patcher.ModelPatcher.partially_load
 
         def new_partially_load(self, device_to, extra_memory=0, full_load=False, force_patch_weights=False, **kwargs):
-            """Override to use our static device assignments"""
-            global safetensor_allocation_store
-
-            debug_hash = create_safetensor_model_hash(self, "partial_load")
-            multigpu_memory_log(f"safetensor:{debug_hash[:8]}", "pre-load")
-            allocations = safetensor_allocation_store.get(debug_hash)
-
-            # Set default precision flag before checking
-            if not hasattr(self.model, '_distorch_high_precision_loras'):
-                self.model._distorch_high_precision_loras = True
-
-            if not allocations:
+            """Override to use direct model annotation for allocation"""
+            
+            mp_id = id(self)
+            mp_patches_uuid = self.patches_uuid
+            inner_model = self.model
+            inner_model_id = id(inner_model)
+            
+            if not hasattr(inner_model, "_distorch_v2_meta"):
+                logger.debug(f"[DISTORCH_SKIP] ModelPatcher=0x{mp_id:x} inner_model=0x{inner_model_id:x} type={type(inner_model).__name__} - no metadata, using standard loading")
                 result = original_partially_load(self, device_to, extra_memory, force_patch_weights)
-                multigpu_memory_log(f"safetensor:{debug_hash[:8]}", "post-load")
                 if hasattr(self, '_distorch_block_assignments'):
                     del self._distorch_block_assignments
                 return result
+            
+            allocations = inner_model._distorch_v2_meta['full_allocation']
+            
+            if not hasattr(self.model, '_distorch_high_precision_loras'):
+                self.model._distorch_high_precision_loras = True
 
             if not hasattr(self.model, 'current_weight_patches_uuid'):
                 self.model.current_weight_patches_uuid = None
@@ -308,7 +289,6 @@ def register_patched_safetensor_modelpatcher():
 
             logger.info("[MultiGPU DisTorch V2] DisTorch loading completed.")
             logger.info(f"[MultiGPU DisTorch V2] Total memory: {mem_counter / (1024 * 1024):.2f}MB")
-            multigpu_memory_log(f"safetensor:{debug_hash[:8]}", "post-load")
 
             return 0
 

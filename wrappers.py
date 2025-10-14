@@ -17,12 +17,7 @@ logger = logging.getLogger("MultiGPU")
 
 def _create_distorch_safetensor_v2_override(cls, device_param_name, device_setter_func, apply_device_kwarg_workaround, eject_models_default=True):
     """Internal factory function creating DisTorch2 override class with parameterized device selection behavior."""
-    from .distorch_2 import (
-        register_patched_safetensor_modelpatcher,
-        safetensor_allocation_store,
-        safetensor_settings_store,
-        create_safetensor_model_hash
-    )
+    from .distorch_2 import register_patched_safetensor_modelpatcher
     from .model_management_mgpu import force_full_system_cleanup
     
     class NodeOverrideDisTorchSafetensorV2(cls):
@@ -118,51 +113,10 @@ def _create_distorch_safetensor_v2_override(cls, device_param_name, device_sette
                 model_to_check = out[0].patcher
 
             if model_to_check:
-                model_hash = create_safetensor_model_hash(model_to_check, "override_store")
-                settings_str = f"{device_value}{virtual_vram_gb}{donor_device}{expert_mode_allocations}"
-                settings_hash = hashlib.sha256(settings_str.encode()).hexdigest()
-                
-                safetensor_allocation_store[model_hash] = full_allocation
-                safetensor_settings_store[model_hash] = settings_hash
-                logger.debug(f"[MultiGPU DisTorch V2] Stored allocation for model {model_hash[:8]}: {full_allocation}")
+                inner_model = model_to_check.model
+                inner_model._distorch_v2_meta = {"full_allocation": full_allocation}
 
             logger.info(f"[MultiGPU DisTorch V2] Full allocation string: {full_allocation}")
-            logger.mgpu_mm_log(f"[MODEL_SETUP] Setting DisTorch model properties: virtual_vram_gb={virtual_vram_gb}")
-
-            if hasattr(out[0], 'model'):
-                mp = out[0]
-                mp_id = id(mp)
-                inner_model = getattr(mp, 'model', None)
-                inner_model_id = id(inner_model) if inner_model else None
-                inner_model_name = type(inner_model).__name__ if inner_model else "None"
-                inner_id_str = f"0x{inner_model_id:x}" if inner_model_id is not None else "None"
-
-                logger.mgpu_mm_log(f"[OBJECT_CHAIN_SET] ModelPatcher: mp_id=0x{mp_id:x}, inner_model_id={inner_id_str}, inner_model_type={inner_model_name}")
-
-                # SET VIRTUAL VRAM PROPERTY FOR MEMORY CALCULATION
-                if inner_model:
-                    inner_model._mgpu_virtual_vram_gb = virtual_vram_gb
-                    logger.mgpu_mm_log(f"[VIRTUAL_VRAM_SET] Set _mgpu_virtual_vram_gb={virtual_vram_gb}GB on inner model (id=0x{inner_model_id:x}) for memory assessment")
-
-                # SET EJECT MODELS PROPERTY IF ENABLED
-                if eject_models and inner_model:
-                    inner_model._mgpu_eject_models = True
-                    logger.mgpu_mm_log(f"[EJECT_FLAG_SET] Set _mgpu_eject_models=True on inner model (id=0x{inner_model_id:x}) - will trigger ejection during load_models_gpu")
-
-            elif hasattr(out[0], 'patcher') and hasattr(out[0].patcher, 'model'):
-                mp = out[0].patcher
-                mp_id = id(mp)
-                inner_model = getattr(mp, 'model', None)
-                inner_model_id = id(inner_model) if inner_model else None
-                inner_model_name = type(inner_model).__name__ if inner_model else "None"
-                inner_id_str = f"0x{inner_model_id:x}" if inner_model_id is not None else "None"
-
-                logger.mgpu_mm_log(f"[OBJECT_CHAIN_SET] ModelPatcher via patcher: mp_id=0x{mp_id:x}, inner_model_id={inner_id_str}, inner_model_type={inner_model_name}")
-
-                # SET VIRTUAL VRAM PROPERTY FOR MEMORY CALCULATION
-                if inner_model:
-                    inner_model._mgpu_virtual_vram_gb = virtual_vram_gb
-                    logger.mgpu_mm_log(f"[VIRTUAL_VRAM_SET] Set _mgpu_virtual_vram_gb={virtual_vram_gb}GB on inner model (id=0x{inner_model_id:x}) for memory assessment")
 
             return out
 
@@ -211,7 +165,7 @@ def override_class_with_distorch_safetensor_v2_clip_no_device(cls):
 def override_class_with_distorch_gguf(cls):
     """DisTorch V1 Legacy wrapper - maintains V1 UI but calls V2 backend"""
     from . import set_current_device
-    from .distorch_2 import register_patched_safetensor_modelpatcher, safetensor_allocation_store, create_safetensor_model_hash
+    from .distorch_2 import register_patched_safetensor_modelpatcher
     
     class NodeOverrideDisTorchGGUFLegacy(cls):
         @classmethod
@@ -257,12 +211,15 @@ def override_class_with_distorch_gguf(cls):
             fn = getattr(super(), cls.FUNCTION)
             out = fn(*args, **clean_kwargs)
 
+            model_to_check = None
             if hasattr(out[0], 'model'):
-                model_hash = create_safetensor_model_hash(out[0], "v1_compat")
-                safetensor_allocation_store[model_hash] = full_allocation
+                model_to_check = out[0]
             elif hasattr(out[0], 'patcher') and hasattr(out[0].patcher, 'model'):
-                model_hash = create_safetensor_model_hash(out[0].patcher, "v1_compat")
-                safetensor_allocation_store[model_hash] = full_allocation
+                model_to_check = out[0].patcher
+            
+            if model_to_check:
+                inner_model = model_to_check.model
+                inner_model._distorch_v2_meta = {"full_allocation": full_allocation}
 
             return out
 
@@ -272,7 +229,7 @@ def override_class_with_distorch_gguf(cls):
 def override_class_with_distorch_gguf_v2(cls):
     """DisTorch V2 wrapper for GGUF models"""
     from . import set_current_device
-    from .distorch_2 import register_patched_safetensor_modelpatcher, safetensor_allocation_store, create_safetensor_model_hash
+    from .distorch_2 import register_patched_safetensor_modelpatcher
     
     class NodeOverrideDisTorchGGUFv2(cls):
         @classmethod
@@ -316,12 +273,15 @@ def override_class_with_distorch_gguf_v2(cls):
             fn = getattr(super(), cls.FUNCTION)
             out = fn(*args, **clean_kwargs)
             
+            model_to_check = None
             if hasattr(out[0], 'model'):
-                model_hash = create_safetensor_model_hash(out[0], "v2_gguf")
-                safetensor_allocation_store[model_hash] = full_allocation
+                model_to_check = out[0]
             elif hasattr(out[0], 'patcher') and hasattr(out[0].patcher, 'model'):
-                model_hash = create_safetensor_model_hash(out[0].patcher, "v2_gguf")
-                safetensor_allocation_store[model_hash] = full_allocation
+                model_to_check = out[0].patcher
+            
+            if model_to_check:
+                inner_model = model_to_check.model
+                inner_model._distorch_v2_meta = {"full_allocation": full_allocation}
 
             return out
 
@@ -331,7 +291,7 @@ def override_class_with_distorch_gguf_v2(cls):
 def override_class_with_distorch_clip(cls):
     """DisTorch V1 wrapper for CLIP models - calls V2 backend"""
     from . import set_current_text_encoder_device
-    from .distorch_2 import register_patched_safetensor_modelpatcher, safetensor_allocation_store, create_safetensor_model_hash
+    from .distorch_2 import register_patched_safetensor_modelpatcher
     
     class NodeOverrideDisTorchClip(cls):
         @classmethod
@@ -377,12 +337,15 @@ def override_class_with_distorch_clip(cls):
             fn = getattr(super(), cls.FUNCTION)
             out = fn(*args, **clean_kwargs)
             
+            model_to_check = None
             if hasattr(out[0], 'model'):
-                model_hash = create_safetensor_model_hash(out[0], "v1_clip")
-                safetensor_allocation_store[model_hash] = full_allocation
+                model_to_check = out[0]
             elif hasattr(out[0], 'patcher') and hasattr(out[0].patcher, 'model'):
-                model_hash = create_safetensor_model_hash(out[0].patcher, "v1_clip")
-                safetensor_allocation_store[model_hash] = full_allocation
+                model_to_check = out[0].patcher
+            
+            if model_to_check:
+                inner_model = model_to_check.model
+                inner_model._distorch_v2_meta = {"full_allocation": full_allocation}
 
             return out
 
@@ -392,7 +355,7 @@ def override_class_with_distorch_clip(cls):
 def override_class_with_distorch_clip_no_device(cls):
     """DisTorch V1 wrapper for Triple/Quad CLIP models - calls V2 backend"""
     from . import set_current_text_encoder_device
-    from .distorch_2 import register_patched_safetensor_modelpatcher, safetensor_allocation_store, create_safetensor_model_hash
+    from .distorch_2 import register_patched_safetensor_modelpatcher
     
     class NodeOverrideDisTorchClipNoDevice(cls):
         @classmethod
@@ -438,12 +401,15 @@ def override_class_with_distorch_clip_no_device(cls):
             fn = getattr(super(), cls.FUNCTION)
             out = fn(*args, **clean_kwargs)
             
+            model_to_check = None
             if hasattr(out[0], 'model'):
-                model_hash = create_safetensor_model_hash(out[0], "v1_clip_nodev")
-                safetensor_allocation_store[model_hash] = full_allocation
+                model_to_check = out[0]
             elif hasattr(out[0], 'patcher') and hasattr(out[0].patcher, 'model'):
-                model_hash = create_safetensor_model_hash(out[0].patcher, "v1_clip_nodev")
-                safetensor_allocation_store[model_hash] = full_allocation
+                model_to_check = out[0].patcher
+            
+            if model_to_check:
+                inner_model = model_to_check.model
+                inner_model._distorch_v2_meta = {"full_allocation": full_allocation}
 
             return out
 

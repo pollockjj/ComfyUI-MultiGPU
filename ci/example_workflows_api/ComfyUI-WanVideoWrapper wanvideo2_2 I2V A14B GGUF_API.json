@@ -1,0 +1,427 @@
+{
+  "56": {
+    "inputs": {
+      "lora": "Wan2.2-I2V-A14B-4steps-lora-rank64-Seko-V1/high_noise_model.safetensors",
+      "strength": 3,
+      "low_mem_load": false,
+      "merge_loras": false
+    },
+    "class_type": "WanVideoLoraSelect",
+    "_meta": {
+      "title": "WanVideo Lora Select"
+    }
+  },
+  "60": {
+    "inputs": {
+      "frame_rate": 16,
+      "loop_count": 0,
+      "filename_prefix": "WanVideo2_2_I2V",
+      "format": "video/h264-mp4",
+      "pix_fmt": "yuv420p",
+      "crf": 19,
+      "save_metadata": true,
+      "trim_to_audio": false,
+      "pingpong": false,
+      "save_output": true,
+      "images": [
+        "69",
+        0
+      ]
+    },
+    "class_type": "VHS_VideoCombine",
+    "_meta": {
+      "title": "Video Combine 🎥🅥🅗🅢"
+    }
+  },
+  "67": {
+    "inputs": {
+      "image": "sd15 checkpoint loader simple.jpg"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Image"
+    }
+  },
+  "68": {
+    "inputs": {
+      "width": 720,
+      "height": 720,
+      "upscale_method": "lanczos",
+      "keep_proportion": "resize",
+      "pad_color": "0, 0, 0",
+      "crop_position": "center",
+      "divisible_by": 32,
+      "device": "cpu",
+      "image": [
+        "67",
+        0
+      ]
+    },
+    "class_type": "ImageResizeKJv2",
+    "_meta": {
+      "title": "Resize Image v2"
+    }
+  },
+  "69": {
+    "inputs": {
+      "image": [
+        "115",
+        0
+      ]
+    },
+    "class_type": "GetImageSizeAndCount",
+    "_meta": {
+      "title": "Get Image Size & Count"
+    }
+  },
+  "79": {
+    "inputs": {
+      "model": [
+        "93",
+        0
+      ],
+      "lora": [
+        "97",
+        0
+      ]
+    },
+    "class_type": "WanVideoSetLoRAs",
+    "_meta": {
+      "title": "WanVideo Set LoRAs"
+    }
+  },
+  "80": {
+    "inputs": {
+      "model": [
+        "92",
+        0
+      ],
+      "lora": [
+        "56",
+        0
+      ]
+    },
+    "class_type": "WanVideoSetLoRAs",
+    "_meta": {
+      "title": "WanVideo Set LoRAs"
+    }
+  },
+  "91": {
+    "inputs": {
+      "value": 3
+    },
+    "class_type": "INTConstant",
+    "_meta": {
+      "title": "Split_step"
+    }
+  },
+  "92": {
+    "inputs": {
+      "block_swap_args": [
+        "116",
+        0
+      ]
+    },
+    "class_type": "WanVideoSetBlockSwap",
+    "_meta": {
+      "title": "WanVideo Set BlockSwap"
+    }
+  },
+  "93": {
+    "inputs": {
+      "model": [
+        "108",
+        0
+      ],
+      "block_swap_args": [
+        "116",
+        0
+      ]
+    },
+    "class_type": "WanVideoSetBlockSwap",
+    "_meta": {
+      "title": "WanVideo Set BlockSwap"
+    }
+  },
+  "94": {
+    "inputs": {
+      "value": 6
+    },
+    "class_type": "INTConstant",
+    "_meta": {
+      "title": "Steps"
+    }
+  },
+  "95": {
+    "inputs": {
+      "steps": [
+        "94",
+        0
+      ],
+      "cfg_scale_start": 2,
+      "cfg_scale_end": 2,
+      "interpolation": "linear",
+      "start_percent": 0,
+      "end_percent": 0.01
+    },
+    "class_type": "CreateCFGScheduleFloatList",
+    "_meta": {
+      "title": "Create CFG Schedule Float List"
+    }
+  },
+  "97": {
+    "inputs": {
+      "lora": "Wan2.2-I2V-A14B-4steps-lora-rank64-Seko-V1/low_noise_model.safetensors",
+      "strength": 1,
+      "low_mem_load": false,
+      "merge_loras": false
+    },
+    "class_type": "WanVideoLoraSelect",
+    "_meta": {
+      "title": "WanVideo Lora Select"
+    }
+  },
+  "99": {
+    "inputs": {
+      "model_name": "umt5-xxl-enc-bf16.safetensors",
+      "precision": "bf16",
+      "device": "cuda:0",
+      "quantization": "disabled"
+    },
+    "class_type": "LoadWanVideoT5TextEncoderMultiGPU",
+    "_meta": {
+      "title": "LoadWanVideoT5TextEncoderMultiGPU"
+    }
+  },
+  "100": {
+    "inputs": {
+      "positive_prompt": "The words \"ComfyUI-WanVideoWrapper\" emblazoned across the scene of an animated cyberpunk cityscape",
+      "negative_prompt": "色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走",
+      "force_offload": "cpu",
+      "use_disk_cache": false,
+      "t5": [
+        "99",
+        0
+      ],
+      "load_device": [
+        "99",
+        1
+      ]
+    },
+    "class_type": "WanVideoTextEncodeMultiGPU",
+    "_meta": {
+      "title": "WanVideoTextEncodeMultiGPU"
+    }
+  },
+  "105": {
+    "inputs": {
+      "steps": [
+        "94",
+        0
+      ],
+      "cfg": [
+        "95",
+        0
+      ],
+      "shift": 8.000000000000002,
+      "seed": 20843471366611,
+      "force_offload": true,
+      "scheduler": "dpm++_sde",
+      "riflex_freq_index": 0,
+      "denoise_strength": 1,
+      "batched_cfg": false,
+      "rope_function": "comfy",
+      "start_step": 0,
+      "end_step": [
+        "91",
+        0
+      ],
+      "add_noise_to_samples": false,
+      "model": [
+        "109",
+        0
+      ],
+      "compute_device": [
+        "109",
+        1
+      ],
+      "image_embeds": [
+        "112",
+        0
+      ],
+      "text_embeds": [
+        "100",
+        0
+      ]
+    },
+    "class_type": "WanVideoSamplerMultiGPU",
+    "_meta": {
+      "title": "WanVideoSamplerMultiGPU"
+    }
+  },
+  "106": {
+    "inputs": {
+      "steps": [
+        "94",
+        0
+      ],
+      "cfg": 1.0000000000000002,
+      "shift": 8.000000000000002,
+      "seed": 645006682079046,
+      "force_offload": true,
+      "scheduler": "dpm++_sde",
+      "riflex_freq_index": 0,
+      "denoise_strength": 1,
+      "batched_cfg": false,
+      "rope_function": "comfy",
+      "start_step": [
+        "91",
+        0
+      ],
+      "end_step": -1,
+      "add_noise_to_samples": false,
+      "model": [
+        "79",
+        0
+      ],
+      "compute_device": [
+        "108",
+        1
+      ],
+      "image_embeds": [
+        "112",
+        0
+      ],
+      "text_embeds": [
+        "100",
+        0
+      ],
+      "samples": [
+        "105",
+        0
+      ]
+    },
+    "class_type": "WanVideoSamplerMultiGPU",
+    "_meta": {
+      "title": "WanVideoSamplerMultiGPU"
+    }
+  },
+  "108": {
+    "inputs": {
+      "model": "Wan2.2-I2V-A14B-LowNoise-Q5_K_M.gguf",
+      "base_precision": "fp16_fast",
+      "quantization": "disabled",
+      "load_device": "offload_device",
+      "compute_device": "cuda:0",
+      "attention_mode": "sdpa",
+      "rms_norm_function": "default"
+    },
+    "class_type": "WanVideoModelLoaderMultiGPU",
+    "_meta": {
+      "title": "WanVideoModelLoaderMultiGPU"
+    }
+  },
+  "109": {
+    "inputs": {
+      "model": "Wan2.2-I2V-A14B-HighNoise-Q5_K_M.gguf",
+      "base_precision": "fp16_fast",
+      "quantization": "disabled",
+      "load_device": "offload_device",
+      "compute_device": "cuda:0",
+      "attention_mode": "sdpa",
+      "rms_norm_function": "default"
+    },
+    "class_type": "WanVideoModelLoaderMultiGPU",
+    "_meta": {
+      "title": "WanVideoModelLoaderMultiGPU"
+    }
+  },
+  "112": {
+    "inputs": {
+      "width": [
+        "68",
+        1
+      ],
+      "height": [
+        "68",
+        2
+      ],
+      "num_frames": 81,
+      "noise_aug_strength": 0,
+      "start_latent_strength": 1,
+      "end_latent_strength": 1,
+      "force_offload": true,
+      "fun_or_fl2v_model": false,
+      "tiled_vae": false,
+      "vae": [
+        "114",
+        0
+      ],
+      "load_device": [
+        "114",
+        1
+      ],
+      "start_image": [
+        "68",
+        0
+      ]
+    },
+    "class_type": "WanVideoImageToVideoEncodeMultiGPU",
+    "_meta": {
+      "title": "WanVideoImageToVideoEncodeMultiGPU"
+    }
+  },
+  "114": {
+    "inputs": {
+      "model_name": "wan_2.1_vae.safetensors",
+      "load_device": "cuda:0",
+      "precision": "bf16"
+    },
+    "class_type": "WanVideoVAELoaderMultiGPU",
+    "_meta": {
+      "title": "WanVideoVAELoaderMultiGPU"
+    }
+  },
+  "115": {
+    "inputs": {
+      "enable_vae_tiling": false,
+      "tile_x": 272,
+      "tile_y": 272,
+      "tile_stride_x": 144,
+      "tile_stride_y": 128,
+      "normalization": "default",
+      "vae": [
+        "114",
+        0
+      ],
+      "load_device": [
+        "114",
+        1
+      ],
+      "samples": [
+        "106",
+        0
+      ]
+    },
+    "class_type": "WanVideoDecodeMultiGPU",
+    "_meta": {
+      "title": "WanVideoDecodeMultiGPU"
+    }
+  },
+  "116": {
+    "inputs": {
+      "blocks_to_swap": 40,
+      "offload_img_emb": true,
+      "offload_txt_emb": true,
+      "use_non_blocking": false,
+      "vace_blocks_to_swap": 0,
+      "prefetch_blocks": 0,
+      "block_swap_debug": false,
+      "swap_device": "cuda:1"
+    },
+    "class_type": "WanVideoBlockSwapMultiGPU",
+    "_meta": {
+      "title": "WanVideoBlockSwapMultiGPU"
+    }
+  }
+}
