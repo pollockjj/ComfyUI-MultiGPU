@@ -1,0 +1,223 @@
+{
+  "3": {
+    "inputs": {
+      "text": "A towering technological monolith in a cyberpunk cityscape at night, with \"WAN 2.2\" and \"T2I\" emblazoned across its surface in massive neon blue-green mixed with purple letters that illuminate the surrounding buildings, with a smaller \"lightx2v\" underneath, bursting with color. The text occupies the central third of the frame, crafted from glowing plasma tubes and crackling energy. Rain-slicked streets below reflect the brilliant signage, while holographic advertisements and flying vehicles populate the background. Moody atmospheric lighting, heavy contrast, photorealistic textures, cinematic color grading. ",
+      "clip": [
+        "29",
+        1
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "Positive Prompt"
+    }
+  },
+  "4": {
+    "inputs": {
+      "text": "",
+      "clip": [
+        "29",
+        1
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "Negative Prompt"
+    }
+  },
+  "5": {
+    "inputs": {
+      "width": 1536,
+      "height": 1536,
+      "length": 1,
+      "batch_size": 1
+    },
+    "class_type": "EmptyHunyuanLatentVideo",
+    "_meta": {
+      "title": "EmptyHunyuanLatentVideo"
+    }
+  },
+  "9": {
+    "inputs": {
+      "samples": [
+        "36",
+        0
+      ],
+      "vae": [
+        "55",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE Decode"
+    }
+  },
+  "10": {
+    "inputs": {
+      "filename_prefix": "MultiGPU",
+      "images": [
+        "9",
+        0
+      ]
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "Save Image"
+    }
+  },
+  "29": {
+    "inputs": {
+      "lora_name": "Wan2.2-T2V-A14B-4steps-lora-rank64-Seko-V1.1/high_noise.safetensors",
+      "strength_model": 1,
+      "strength_clip": 1,
+      "model": [
+        "50",
+        0
+      ],
+      "clip": [
+        "51",
+        0
+      ]
+    },
+    "class_type": "LoraLoader",
+    "_meta": {
+      "title": "Load LoRA"
+    }
+  },
+  "35": {
+    "inputs": {
+      "add_noise": "enable",
+      "noise_seed": 38613268423774,
+      "steps": 8,
+      "cfg": 1,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "start_at_step": 0,
+      "end_at_step": 4,
+      "return_with_leftover_noise": "disable",
+      "model": [
+        "29",
+        0
+      ],
+      "positive": [
+        "3",
+        0
+      ],
+      "negative": [
+        "4",
+        0
+      ],
+      "latent_image": [
+        "5",
+        0
+      ]
+    },
+    "class_type": "KSamplerAdvanced",
+    "_meta": {
+      "title": "KSampler (Advanced)"
+    }
+  },
+  "36": {
+    "inputs": {
+      "add_noise": "enable",
+      "noise_seed": 8496083239430,
+      "steps": 8,
+      "cfg": 1,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "start_at_step": 4,
+      "end_at_step": 8,
+      "return_with_leftover_noise": "disable",
+      "model": [
+        "44",
+        0
+      ],
+      "positive": [
+        "3",
+        0
+      ],
+      "negative": [
+        "4",
+        0
+      ],
+      "latent_image": [
+        "35",
+        0
+      ]
+    },
+    "class_type": "KSamplerAdvanced",
+    "_meta": {
+      "title": "KSampler (Advanced)"
+    }
+  },
+  "44": {
+    "inputs": {
+      "lora_name": "Wan2.2-T2V-A14B-4steps-lora-rank64-Seko-V1.1/low_noise.safetensors",
+      "strength_model": 1,
+      "model": [
+        "52",
+        0
+      ]
+    },
+    "class_type": "LoraLoaderModelOnly",
+    "_meta": {
+      "title": "LoraLoaderModelOnly"
+    }
+  },
+  "50": {
+    "inputs": {
+      "unet_name": "wan2.2_t2v_high_noise_14B_fp8_scaled.safetensors",
+      "weight_dtype": "default",
+      "compute_device": "cuda:0",
+      "virtual_vram_gb": 9,
+      "donor_device": "cpu",
+      "expert_mode_allocations": "",
+      "eject_models": true
+    },
+    "class_type": "UNETLoaderDisTorch2MultiGPU",
+    "_meta": {
+      "title": "UNETLoaderDisTorch2MultiGPU"
+    }
+  },
+  "51": {
+    "inputs": {
+      "clip_name": "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+      "type": "wan",
+      "device": "cuda:0"
+    },
+    "class_type": "CLIPLoaderMultiGPU",
+    "_meta": {
+      "title": "CLIPLoaderMultiGPU"
+    }
+  },
+  "52": {
+    "inputs": {
+      "unet_name": "wan2.2_t2v_low_noise_14B_fp8_scaled.safetensors",
+      "weight_dtype": "default",
+      "compute_device": "cuda:0",
+      "virtual_vram_gb": 9,
+      "donor_device": "cpu",
+      "expert_mode_allocations": "",
+      "eject_models": true
+    },
+    "class_type": "UNETLoaderDisTorch2MultiGPU",
+    "_meta": {
+      "title": "UNETLoaderDisTorch2MultiGPU"
+    }
+  },
+  "55": {
+    "inputs": {
+      "vae_name": "wan_2.1_vae.safetensors",
+      "compute_device": "cuda:0",
+      "virtual_vram_gb": 0,
+      "donor_device": "cpu",
+      "expert_mode_allocations": "",
+      "eject_models": true
+    },
+    "class_type": "VAELoaderDisTorch2MultiGPU",
+    "_meta": {
+      "title": "VAELoaderDisTorch2MultiGPU"
+    }
+  }
+}

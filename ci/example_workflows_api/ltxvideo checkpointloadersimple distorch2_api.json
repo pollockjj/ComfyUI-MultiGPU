@@ -1,0 +1,215 @@
+{
+  "6": {
+    "inputs": {
+      "text": "The sun, having just dipped below the horizon, casts a deep twilight blue across the urban canyon. The air is thick with the hush of the approaching night, punctuated only by the distant hum of the city. A gentle drizzle has just passed, leaving the asphalt slick and reflective, mirroring the neon glow from the towering buildings.\n\nIn the foreground, the street stretches out, a dark ribbon reflecting the faint reds and purples of brake lights and storefronts. Small puddles shimmer, disturbed only by the occasional ripple from a lingering raindrop or the almost imperceptible air current.\n\nAs the 3 seconds pass, a barely noticeable shift occurs. The light in the sky ever so subtly deepens, transitioning from a soft, almost ethereal blue to a richer, more profound indigo. The neon signs, which were already bright, seem to gain a fractional intensity, their colors bleeding slightly more vividly onto the wet pavement below. The faint glint on the parked cars, particularly the red one, catches the ambient light just a touch more, highlighting the curves of its wet surface.\n\nIt's a moment of serene transition, a quiet breath as the city fully embraces the night, its artificial lights beginning their nightly dominance against the fading natural world.",
+      "clip": [
+        "97",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Positive Prompt)"
+    }
+  },
+  "7": {
+    "inputs": {
+      "text": "low quality, worst quality, deformed, distorted, disfigured, motion smear, motion artifacts, fused fingers, bad anatomy, weird hand, ugly",
+      "clip": [
+        "97",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Negative Prompt)"
+    }
+  },
+  "8": {
+    "inputs": {
+      "samples": [
+        "72",
+        0
+      ],
+      "vae": [
+        "96",
+        2
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE Decode"
+    }
+  },
+  "41": {
+    "inputs": {
+      "filename_prefix": "MultiGPU",
+      "fps": 25,
+      "lossless": false,
+      "quality": 90,
+      "method": "default",
+      "images": [
+        "8",
+        0
+      ]
+    },
+    "class_type": "SaveAnimatedWEBP",
+    "_meta": {
+      "title": "SaveAnimatedWEBP"
+    }
+  },
+  "69": {
+    "inputs": {
+      "frame_rate": 25,
+      "positive": [
+        "95",
+        0
+      ],
+      "negative": [
+        "95",
+        1
+      ]
+    },
+    "class_type": "LTXVConditioning",
+    "_meta": {
+      "title": "LTXVConditioning"
+    }
+  },
+  "71": {
+    "inputs": {
+      "steps": 30,
+      "max_shift": 2.05,
+      "base_shift": 0.95,
+      "stretch": true,
+      "terminal": 0.1,
+      "latent": [
+        "95",
+        2
+      ]
+    },
+    "class_type": "LTXVScheduler",
+    "_meta": {
+      "title": "LTXVScheduler"
+    }
+  },
+  "72": {
+    "inputs": {
+      "add_noise": true,
+      "noise_seed": 871180669305010,
+      "cfg": 3,
+      "model": [
+        "96",
+        0
+      ],
+      "positive": [
+        "69",
+        0
+      ],
+      "negative": [
+        "69",
+        1
+      ],
+      "sampler": [
+        "73",
+        0
+      ],
+      "sigmas": [
+        "71",
+        0
+      ],
+      "latent_image": [
+        "95",
+        2
+      ]
+    },
+    "class_type": "SamplerCustom",
+    "_meta": {
+      "title": "SamplerCustom"
+    }
+  },
+  "73": {
+    "inputs": {
+      "sampler_name": "euler"
+    },
+    "class_type": "KSamplerSelect",
+    "_meta": {
+      "title": "KSamplerSelect"
+    }
+  },
+  "78": {
+    "inputs": {
+      "image": "ltxvideo checkpointloadersimple distorch2.jpg"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Image"
+    }
+  },
+  "82": {
+    "inputs": {
+      "img_compression": 40,
+      "image": [
+        "78",
+        0
+      ]
+    },
+    "class_type": "LTXVPreprocess",
+    "_meta": {
+      "title": "LTXVPreprocess"
+    }
+  },
+  "95": {
+    "inputs": {
+      "width": 512,
+      "height": 768,
+      "length": 97,
+      "batch_size": 1,
+      "strength": 1,
+      "positive": [
+        "6",
+        0
+      ],
+      "negative": [
+        "7",
+        0
+      ],
+      "vae": [
+        "96",
+        2
+      ],
+      "image": [
+        "82",
+        0
+      ]
+    },
+    "class_type": "LTXVImgToVideo",
+    "_meta": {
+      "title": "LTXVImgToVideo"
+    }
+  },
+  "96": {
+    "inputs": {
+      "ckpt_name": "ltx-video-2b-v0.9.5.safetensors",
+      "compute_device": "cuda:0",
+      "virtual_vram_gb": 5,
+      "donor_device": "cuda:1",
+      "expert_mode_allocations": "",
+      "eject_models": true
+    },
+    "class_type": "CheckpointLoaderSimpleDisTorch2MultiGPU",
+    "_meta": {
+      "title": "CheckpointLoaderSimpleDisTorch2MultiGPU"
+    }
+  },
+  "97": {
+    "inputs": {
+      "clip_name": "t5xxl_fp16.safetensors",
+      "type": "ltxv",
+      "device": "cuda:1"
+    },
+    "class_type": "CLIPLoaderMultiGPU",
+    "_meta": {
+      "title": "CLIPLoaderMultiGPU"
+    }
+  }
+}

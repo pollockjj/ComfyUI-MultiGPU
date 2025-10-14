@@ -1,0 +1,108 @@
+{
+  "2": {
+    "inputs": {
+      "seed": 768019607311046,
+      "steps": 20,
+      "cfg": 8,
+      "sampler_name": "dpmpp_2m_sde_gpu",
+      "scheduler": "karras",
+      "denoise": 1,
+      "model": [
+        "19",
+        0
+      ],
+      "positive": [
+        "21",
+        0
+      ],
+      "negative": [
+        "25",
+        0
+      ],
+      "latent_image": [
+        "8",
+        0
+      ]
+    },
+    "class_type": "KSampler",
+    "_meta": {
+      "title": "KSampler"
+    }
+  },
+  "5": {
+    "inputs": {
+      "samples": [
+        "2",
+        0
+      ],
+      "vae": [
+        "19",
+        2
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE Decode"
+    }
+  },
+  "8": {
+    "inputs": {
+      "width": 1024,
+      "height": 1024,
+      "batch_size": 1
+    },
+    "class_type": "EmptyLatentImage",
+    "_meta": {
+      "title": "Empty Latent Image"
+    }
+  },
+  "19": {
+    "inputs": {
+      "ckpt_name": "sd1.5-real-dream-16.safetensors",
+      "device": "cuda:1"
+    },
+    "class_type": "CheckpointLoaderSimpleMultiGPU",
+    "_meta": {
+      "title": "CheckpointLoaderSimpleMultiGPU"
+    }
+  },
+  "21": {
+    "inputs": {
+      "text": "A towering technological monolith in a cyberpunk cityscape at night, neon blue-green mixed with purple illuminate the surrounding buildings. Rain-slicked streets below reflect the brilliant signage, while holographic advertisements and flying vehicles populate the background. Moody atmospheric lighting, heavy contrast, photorealistic textures, cinematic color grading. ",
+      "clip": [
+        "19",
+        1
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Positive Prompt)"
+    }
+  },
+  "25": {
+    "inputs": {
+      "text": "",
+      "clip": [
+        "19",
+        1
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Negative Prompt)"
+    }
+  },
+  "28": {
+    "inputs": {
+      "filename_prefix": "MultiGPU",
+      "images": [
+        "5",
+        0
+      ]
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "Save Image"
+    }
+  }
+}
