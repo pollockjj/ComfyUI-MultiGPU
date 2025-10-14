@@ -117,27 +117,6 @@ def _create_distorch_safetensor_v2_override(cls, device_param_name, device_sette
                 inner_model._distorch_v2_meta = {"full_allocation": full_allocation}
 
             logger.info(f"[MultiGPU DisTorch V2] Full allocation string: {full_allocation}")
-            logger.mgpu_mm_log(f"[MODEL_SETUP] Setting DisTorch model properties: virtual_vram_gb={virtual_vram_gb}")
-
-            if hasattr(out[0], 'model'):
-                mp = out[0]
-                mp_id = id(mp)
-                inner_model = getattr(mp, 'model', None)
-                inner_model_id = id(inner_model) if inner_model else None
-                inner_model_name = type(inner_model).__name__ if inner_model else "None"
-                inner_id_str = f"0x{inner_model_id:x}" if inner_model_id is not None else "None"
-
-                logger.mgpu_mm_log(f"[OBJECT_CHAIN_SET] ModelPatcher: mp_id=0x{mp_id:x}, inner_model_id={inner_id_str}, inner_model_type={inner_model_name}")
-
-            elif hasattr(out[0], 'patcher') and hasattr(out[0].patcher, 'model'):
-                mp = out[0].patcher
-                mp_id = id(mp)
-                inner_model = getattr(mp, 'model', None)
-                inner_model_id = id(inner_model) if inner_model else None
-                inner_model_name = type(inner_model).__name__ if inner_model else "None"
-                inner_id_str = f"0x{inner_model_id:x}" if inner_model_id is not None else "None"
-
-                logger.mgpu_mm_log(f"[OBJECT_CHAIN_SET] ModelPatcher via patcher: mp_id=0x{mp_id:x}, inner_model_id={inner_id_str}, inner_model_type={inner_model_name}")
 
             return out
 
