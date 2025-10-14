@@ -1,7 +1,7 @@
 [project]
 name = "comfyui-multigpu"
 description = "Provides a suite of custom nodes to manage multiple GPUs for ComfyUI, including advanced model offloading for both GGUF and Safetensor formats with DisTorch, and bespoke MultiGPU support for WanVideoWrapper and other custom nodes."
-version = "2.5.7"
+version = "2.5.8"
 license = {file = "LICENSE"}
 
 [project.urls]
