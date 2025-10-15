@@ -34,7 +34,7 @@ def patched_load_state_dict_guess_config(sd, output_vae=True, output_clip=True, 
                                         embedding_directory=None, output_model=True, model_options={},
                                         te_model_options={}, metadata=None):
     """Patched checkpoint loader with MultiGPU and DisTorch2 device placement support."""
-    from . import set_current_device, set_current_text_encoder_device, current_device, current_text_encoder_device
+    from . import set_current_device, set_current_text_encoder_device, get_current_device, get_current_text_encoder_device
     
     sd_size = sum(p.numel() for p in sd.values() if hasattr(p, 'numel'))
     config_hash = str(sd_size)
@@ -54,8 +54,9 @@ def patched_load_state_dict_guess_config(sd, output_vae=True, output_clip=True, 
     model = None
     model_patcher = None
     
-    original_main_device = current_device
-    original_clip_device = current_text_encoder_device
+    # Capture the current devices at runtime so we can restore them after loading
+    original_main_device = get_current_device()
+    original_clip_device = get_current_text_encoder_device()
 
     try:
         diffusion_model_prefix = comfy.model_detection.unet_prefix_from_state_dict(sd)
