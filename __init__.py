@@ -168,6 +168,21 @@ def set_current_unet_offload_device(device):
     current_unet_offload_device = device
     logger.debug(f"[MultiGPU Initialization] current_unet_offload_device set to: {device}")
 
+
+def get_current_device():
+    """Get the current device context for MultiGPU operations at runtime."""
+    return current_device
+
+
+def get_current_text_encoder_device():
+    """Get the current text encoder device context for CLIP models at runtime."""
+    return current_text_encoder_device
+
+
+def get_current_unet_offload_device():
+    """Get the current UNet offload device context at runtime."""
+    return current_unet_offload_device
+
 def get_torch_device_patched():
     """Return MultiGPU-aware device selection for patched mm.get_torch_device."""
     device = None
