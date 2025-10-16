@@ -301,6 +301,8 @@ def register_patched_safetensor_modelpatcher():
 
             self.model.current_weight_patches_uuid = self.patches_uuid
 
+            self.model.device = device_to
+
             logger.info("[MultiGPU DisTorch V2] DisTorch loading completed.")
             logger.info(f"[MultiGPU DisTorch V2] Total memory: {mem_counter / (1024 * 1024):.2f}MB")
 
