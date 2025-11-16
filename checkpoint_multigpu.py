@@ -10,6 +10,7 @@ from comfy.sd import VAE, CLIP
 from .device_utils import get_device_list, soft_empty_cache_multigpu
 from .model_management_mgpu import multigpu_memory_log
 from .distorch_2 import register_patched_safetensor_modelpatcher
+from .hvci_detector import should_use_mmap_workaround, get_hvci_status_string
 
 logger = logging.getLogger("MultiGPU")
 
@@ -17,6 +18,39 @@ checkpoint_device_config = {}
 checkpoint_distorch_config = {}
 
 original_load_state_dict_guess_config = None
+
+def apply_mmap_workaround(sd):
+    """
+    Apply mmap workaround by deep-copying all CPU tensors.
+    This prevents Windows HVCI from causing access violations during multi-threaded loading.
+
+    Args:
+        sd: State dict containing model tensors
+
+    Returns:
+        State dict with all CPU tensors copied to new memory
+    """
+    logger.debug("[MultiGPU HVCI] Applying tensor copying workaround...")
+    sd_copied = {}
+    copied_count = 0
+    skipped_count = 0
+
+    for k, v in sd.items():
+        if torch.is_tensor(v):
+            if v.device.type == 'cpu':
+                # Deep copy CPU tensors to break mmap references
+                sd_copied[k] = v.to(device='cpu', copy=True)
+                copied_count += 1
+            else:
+                # GPU tensors don't need copying
+                sd_copied[k] = v
+                skipped_count += 1
+        else:
+            # Non-tensor data
+            sd_copied[k] = v
+
+    logger.debug(f"[MultiGPU HVCI] Copied {copied_count} CPU tensors, skipped {skipped_count} GPU tensors")
+    return sd_copied
 
 def patch_load_state_dict_guess_config():
     """Monkey patch comfy.sd.load_state_dict_guess_config with MultiGPU-aware checkpoint loading."""
@@ -27,6 +61,7 @@ def patch_load_state_dict_guess_config():
         return
     
     logger.info("[MultiGPU Core Patching] Patching comfy.sd.load_state_dict_guess_config for advanced MultiGPU loading.")
+    logger.info(f"[MultiGPU HVCI] Detection result: {get_hvci_status_string()}")
     original_load_state_dict_guess_config = comfy.sd.load_state_dict_guess_config
     comfy.sd.load_state_dict_guess_config = patched_load_state_dict_guess_config
 
@@ -200,6 +235,12 @@ class CheckpointLoaderAdvancedMultiGPU:
         
         ckpt_path = folder_paths.get_full_path("checkpoints", ckpt_name)
         sd = comfy.utils.load_torch_file(ckpt_path)
+        
+        # Apply HVCI workaround if needed (Windows only)
+        if should_use_mmap_workaround():
+            logger.debug("[MultiGPU HVCI] Applying workaround before loading")
+            sd = apply_mmap_workaround(sd)
+        
         sd_size = sum(p.numel() for p in sd.values() if hasattr(p, 'numel'))
         config_hash = str(sd_size)
         
@@ -252,6 +293,12 @@ class CheckpointLoaderAdvancedDisTorch2MultiGPU:
         
         ckpt_path = folder_paths.get_full_path("checkpoints", ckpt_name)
         sd = comfy.utils.load_torch_file(ckpt_path)
+        
+        # Apply HVCI workaround if needed (Windows only)
+        if should_use_mmap_workaround():
+            logger.debug("[MultiGPU HVCI] Applying workaround before loading")
+            sd = apply_mmap_workaround(sd)
+        
         sd_size = sum(p.numel() for p in sd.values() if hasattr(p, 'numel'))
         config_hash = str(sd_size)
         
