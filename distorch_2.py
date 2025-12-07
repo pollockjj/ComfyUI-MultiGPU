@@ -24,9 +24,7 @@ def bc_unpack_block(block_list):
 
     New blocks: (module_offload_mem), module_size, module_name, module_object, params
     """
-    if len(block_list) == 4:
-        return [None, *block_list]
-    return block_list
+    return [[None, *block] if len(block) == 4 else block for block in block_list]
     
 def register_patched_safetensor_modelpatcher():
     """Register and patch the ModelPatcher for distributed safetensor loading"""
