@@ -23,6 +23,8 @@ from .model_management_mgpu import multigpu_memory_log, force_full_system_cleanu
 def register_patched_safetensor_modelpatcher():
     """Register and patch the ModelPatcher for distributed safetensor loading"""
     from comfy.model_patcher import wipe_lowvram_weight, move_weight_functions
+    from comfy.model_patcher import LowVramPatch, get_key_weight
+    from comfy.patcher_extension import CallbacksMP
     # Patch ComfyUI's ModelPatcher
     if not hasattr(comfy.model_patcher.ModelPatcher, '_distorch_patched'):
 
@@ -307,9 +309,128 @@ def register_patched_safetensor_modelpatcher():
             logger.info(f"[MultiGPU DisTorch V2] Total memory: {mem_counter / (1024 * 1024):.2f}MB")
 
             return 0
-
-        
         comfy.model_patcher.ModelPatcher.partially_load = new_partially_load
+
+        def regress_load(self, device_to=None, lowvram_model_memory=0, force_patch_weights=False, full_load=False):
+            with self.use_ejected():
+                self.unpatch_hooks()
+                mem_counter = 0
+                patch_counter = 0
+                lowvram_counter = 0
+                lowvram_mem_counter = 0
+                loading = self._load_list()
+
+                load_completely = []
+                offloaded = []
+                loading.sort(reverse=True)
+                for x in loading:
+                    n = x[1]
+                    m = x[2]
+                    params = x[3]
+                    module_mem = x[0]
+
+                    lowvram_weight = False
+
+                    weight_key = "{}.weight".format(n)
+                    bias_key = "{}.bias".format(n)
+
+                    if not full_load and hasattr(m, "comfy_cast_weights"):
+                        if mem_counter + module_mem >= lowvram_model_memory:
+                            lowvram_weight = True
+                            lowvram_counter += 1
+                            lowvram_mem_counter += module_mem
+                            if hasattr(m, "prev_comfy_cast_weights"):  #Already lowvramed
+                                continue
+                    cast_weight = self.force_cast_weights
+                    if lowvram_weight:
+                        if hasattr(m, "comfy_cast_weights"):
+                            m.weight_function = []
+                            m.bias_function = []
+
+                        if weight_key in self.patches:
+                            if force_patch_weights:
+                                self.patch_weight_to_device(weight_key)
+                            else:
+                                _, set_func, convert_func = get_key_weight(self.model, weight_key)
+                                m.weight_function = [LowVramPatch(weight_key, self.patches, convert_func, set_func)]
+                                patch_counter += 1
+                        if bias_key in self.patches:
+                            if force_patch_weights:
+                                self.patch_weight_to_device(bias_key)
+                            else:
+                                _, set_func, convert_func = get_key_weight(self.model, bias_key)
+                                m.bias_function = [LowVramPatch(bias_key, self.patches, convert_func, set_func)]
+                                patch_counter += 1
+
+                        cast_weight = True
+                        offloaded.append((module_mem, n, m, params))
+                    else:
+                        if hasattr(m, "comfy_cast_weights"):
+                            wipe_lowvram_weight(m)
+
+                        if full_load or mem_counter + module_mem < lowvram_model_memory:
+                            mem_counter += module_mem
+                            load_completely.append((module_mem, n, m, params))
+
+                    if cast_weight and hasattr(m, "comfy_cast_weights"):
+                        m.prev_comfy_cast_weights = m.comfy_cast_weights
+                        m.comfy_cast_weights = True
+
+                    if weight_key in self.weight_wrapper_patches:
+                        m.weight_function.extend(self.weight_wrapper_patches[weight_key])
+
+                    if bias_key in self.weight_wrapper_patches:
+                        m.bias_function.extend(self.weight_wrapper_patches[bias_key])
+
+                    mem_counter += move_weight_functions(m, device_to)
+
+                load_completely.sort(reverse=True)
+                for x in load_completely:
+                    n = x[1]
+                    m = x[2]
+                    params = x[3]
+                    if hasattr(m, "comfy_patched_weights"):
+                        if m.comfy_patched_weights == True:
+                            continue
+
+                    for param in params:
+                        key = "{}.{}".format(n, param)
+                        self.unpin_weight(key)
+                        self.patch_weight_to_device(key, device_to=device_to)
+
+                    logging.debug("lowvram: loaded module regularly {} {}".format(n, m))
+                    m.comfy_patched_weights = True
+
+                for x in load_completely:
+                    x[2].to(device_to)
+
+                for x in offloaded:
+                    n = x[1]
+                    params = x[3]
+                    for param in params:
+                        self.pin_weight_to_device("{}.{}".format(n, param))
+
+                if lowvram_counter > 0:
+                    logging.info("loaded partially; {:.2f} MB usable, {:.2f} MB loaded, {:.2f} MB offloaded, lowvram patches: {}".format(lowvram_model_memory / (1024 * 1024), mem_counter / (1024 * 1024), lowvram_mem_counter / (1024 * 1024), patch_counter))
+                    self.model.model_lowvram = True
+                else:
+                    logging.info("loaded completely; {:.2f} MB usable, {:.2f} MB loaded, full load: {}".format(lowvram_model_memory / (1024 * 1024), mem_counter / (1024 * 1024), full_load))
+                    self.model.model_lowvram = False
+                    if full_load:
+                        self.model.to(device_to)
+                        mem_counter = self.model_size()
+
+                self.model.lowvram_patch_counter += patch_counter
+                self.model.device = device_to
+                self.model.model_loaded_weight_memory = mem_counter
+                self.model.current_weight_patches_uuid = self.patches_uuid
+
+                for callback in self.get_all_callbacks(CallbacksMP.ON_LOAD):
+                    callback(self, device_to, lowvram_model_memory, force_patch_weights, full_load)
+
+                self.apply_hooks(self.forced_hooks, force_apply=True)
+
+        comfy.model_patcher.ModelPatcher.load = regress_load
 
         def regress_load_list(self):
             loading = []
