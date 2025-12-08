@@ -310,6 +310,23 @@ def register_patched_safetensor_modelpatcher():
 
         
         comfy.model_patcher.ModelPatcher.partially_load = new_partially_load
+
+        def regress_load_list(self):
+            loading = []
+            for n, m in self.model.named_modules():
+                params = []
+                skip = False
+                for name, param in m.named_parameters(recurse=False):
+                    params.append(name)
+                for name, param in m.named_parameters(recurse=True):
+                    if name not in params:
+                        skip = True  # skip random weights in non leaf modules
+                        break
+                if not skip and (hasattr(m, "comfy_cast_weights") or len(params) > 0):
+                    loading.append((comfy.model_management.module_size(m), n, m, params))
+            return loading
+        comfy.model_patcher.ModelPatcher._load_list = regress_load_list
+
         comfy.model_patcher.ModelPatcher._distorch_patched = True
         logger.info("[MultiGPU Core Patching] Successfully patched ModelPatcher.partially_load")
 
