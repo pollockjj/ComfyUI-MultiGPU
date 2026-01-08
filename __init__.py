@@ -6,6 +6,7 @@ import copy
 import json
 from datetime import datetime
 from pathlib import Path
+
 import folder_paths
 import comfy.model_management as mm
 import comfy.model_patcher
@@ -191,7 +192,7 @@ def get_torch_device_patched():
     else:
         devs = set(get_device_list())
         device = torch.device(current_device) if str(current_device) in devs else torch.device("cpu")
-    logger.debug(f"[MultiGPU Core Patching] get_torch_device_patched returning device: {device} (current_device={current_device})")
+    logger.debug(f"[MultiGPU] get_torch_device_patched() -> {device}")
     return device
 
 def text_encoder_device_patched():
@@ -202,7 +203,7 @@ def text_encoder_device_patched():
     else:
         devs = set(get_device_list())
         device = torch.device(current_text_encoder_device) if str(current_text_encoder_device) in devs else torch.device("cpu")
-    logger.info(f"[MultiGPU Core Patching] text_encoder_device_patched returning device: {device} (current_text_encoder_device={current_text_encoder_device})")
+    logger.debug(f"[MultiGPU] text_encoder_device_patched() -> {device}")
     return device
 
 def unet_offload_device_patched():
@@ -213,13 +214,13 @@ def unet_offload_device_patched():
     else:
         devs = set(get_device_list())
         device = torch.device(current_unet_offload_device) if str(current_unet_offload_device) in devs else torch.device("cpu")
-    logger.debug(f"[MultiGPU Core Patching] unet_offload_device_patched returning device: {device} (current_unet_offload_device={current_unet_offload_device})")
+    logger.debug(f"[MultiGPU] unet_offload_device_patched() -> {device}")
     return device
 
-logger.info(f"[MultiGPU Core Patching] Patching mm.get_torch_device, mm.text_encoder_device, mm.unet_offload_device")
-logger.info(f"[MultiGPU DEBUG] Initial current_device: {current_device}")
-logger.info(f"[MultiGPU DEBUG] Initial current_text_encoder_device: {current_text_encoder_device}")
-logger.info(f"[MultiGPU DEBUG] Initial current_unet_offload_device: {current_unet_offload_device}")
+logger.debug(f"[MultiGPU Core Patching] Patching mm.get_torch_device, mm.text_encoder_device, mm.unet_offload_device")
+logger.debug(f"[MultiGPU DEBUG] Initial current_device: {current_device}")
+logger.debug(f"[MultiGPU DEBUG] Initial current_text_encoder_device: {current_text_encoder_device}")
+logger.debug(f"[MultiGPU DEBUG] Initial current_unet_offload_device: {current_unet_offload_device}")
 
 mm.get_torch_device = get_torch_device_patched
 mm.text_encoder_device = text_encoder_device_patched
@@ -244,6 +245,11 @@ from .nodes import (
     PulidInsightFaceLoader,
     PulidEvaClipLoader,
     UNetLoaderLP,
+    # LTXV2 Core Node Adapters
+    LTXV2AudioVAELoader,
+    LTXV2AVTextEncoderLoader,
+    LatentUpscaleModelLoader,
+    LTXV2CheckpointLoader,
 )
 
 from .wanvideo import (
@@ -322,6 +328,25 @@ NODE_CLASS_MAPPINGS["CheckpointLoaderSimpleDisTorch2MultiGPU"] = override_class_
 NODE_CLASS_MAPPINGS["ControlNetLoaderDisTorch2MultiGPU"] = override_class_with_distorch_safetensor_v2(GLOBAL_NODE_CLASS_MAPPINGS["ControlNetLoader"])
 NODE_CLASS_MAPPINGS["DiffusersLoaderDisTorch2MultiGPU"] = override_class_with_distorch_safetensor_v2(GLOBAL_NODE_CLASS_MAPPINGS["DiffusersLoader"])
 NODE_CLASS_MAPPINGS["DiffControlNetLoaderDisTorch2MultiGPU"] = override_class_with_distorch_safetensor_v2(GLOBAL_NODE_CLASS_MAPPINGS["DiffControlNetLoader"])
+
+# ============================================================================
+# LTXV2 CORE NODES (built into ComfyUI, always available - no custom_node check needed)
+# ============================================================================
+logger.info("[MultiGPU] Registering LTXV2/Core nodes...")
+
+# Simple device selection
+NODE_CLASS_MAPPINGS["LTXV2AudioVAELoaderMultiGPU"] = override_class(LTXV2AudioVAELoader)
+NODE_CLASS_MAPPINGS["LTXV2AVTextEncoderLoaderMultiGPU"] = override_class_clip(LTXV2AVTextEncoderLoader)
+NODE_CLASS_MAPPINGS["LatentUpscaleModelLoaderMultiGPU"] = override_class(LatentUpscaleModelLoader)
+NODE_CLASS_MAPPINGS["LTXV2CheckpointLoaderMultiGPU"] = override_class(LTXV2CheckpointLoader)
+
+# DisTorch2 layer distribution (for large models that need to be split across GPUs)
+NODE_CLASS_MAPPINGS["LTXV2AudioVAELoaderDisTorch2MultiGPU"] = override_class_with_distorch_safetensor_v2(LTXV2AudioVAELoader)
+NODE_CLASS_MAPPINGS["LTXV2AVTextEncoderLoaderDisTorch2MultiGPU"] = override_class_with_distorch_safetensor_v2_clip(LTXV2AVTextEncoderLoader)
+NODE_CLASS_MAPPINGS["LatentUpscaleModelLoaderDisTorch2MultiGPU"] = override_class_with_distorch_safetensor_v2(LatentUpscaleModelLoader)
+NODE_CLASS_MAPPINGS["LTXV2CheckpointLoaderDisTorch2MultiGPU"] = override_class_with_distorch_safetensor_v2(LTXV2CheckpointLoader)
+
+logger.info("[MultiGPU] LTXV2/Core nodes registered: 8 nodes")
 
 logger.info("[MultiGPU] Initiating custom_node Registration. . .")
 dash_line = "-" * 47
