@@ -175,6 +175,7 @@ def soft_empty_cache_multigpu():
                 logger.mgpu_mm_log(f"Clearing CUDA cache on {device_str} (idx={device_idx})")
                 multigpu_memory_log("general", f"pre-empty:{device_str}")
                 with torch.cuda.device(device_idx):
+                    torch.cuda.synchronize()
                     torch.cuda.empty_cache()
                     if hasattr(torch.cuda, "ipc_collect"):
                         torch.cuda.ipc_collect()

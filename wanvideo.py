@@ -11,9 +11,7 @@ from .model_management_mgpu import multigpu_memory_log
 from comfy.utils import load_torch_file, ProgressBar
 import gc
 import numpy as np
-from accelerate import init_empty_weights
 import os
-import importlib.util
 
 logger = logging.getLogger("MultiGPU")
 
@@ -64,6 +62,7 @@ class WanVideoModelLoader:
                 "lora": ("WANVIDLORA", {"default": None}),
                 "vram_management_args": ("VRAM_MANAGEMENTARGS", {"default": None, "tooltip": "Alternative offloading method from DiffSynth-Studio, more aggressive in reducing memory use than block swapping, but can be slower"}),
                 "extra_model": ("VACEPATH", {"default": None, "tooltip": "Extra model to add to the main model, ie. VACE or MTV Crafter"}),
+                "vace_model": ("VACEPATH", {"default": None, "tooltip": "Backward-compatible alias for extra_model"}),
                 "fantasytalking_model": ("FANTASYTALKINGMODEL", {"default": None, "tooltip": "FantasyTalking model https://github.com/Fantasy-AMAP"}),
                 "multitalk_model": ("MULTITALKMODEL", {"default": None, "tooltip": "Multitalk model"}),
                 "fantasyportrait_model": ("FANTASYPORTRAITMODEL", {"default": None, "tooltip": "FantasyPortrait model"}),
@@ -82,6 +81,10 @@ class WanVideoModelLoader:
         original_loader = NODE_CLASS_MAPPINGS["WanVideoModelLoader"]()
         loader_module = inspect.getmodule(original_loader)
         original_module_device = loader_module.device
+
+        vace_model = kwargs.pop("vace_model", None)
+        if kwargs.get("extra_model") is None and vace_model is not None:
+            kwargs["extra_model"] = vace_model
 
         set_current_device(compute_device)      
         compute_device_to_be_patched = mm.get_torch_device()
