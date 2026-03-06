@@ -1,19 +1,11 @@
 import logging
 import torch
-import sys
 import inspect
 import copy
 import folder_paths
 import comfy.model_management as mm
 from nodes import NODE_CLASS_MAPPINGS
 from .device_utils import get_device_list
-from .model_management_mgpu import multigpu_memory_log
-from comfy.utils import load_torch_file, ProgressBar
-import gc
-import numpy as np
-from accelerate import init_empty_weights
-import os
-import importlib.util
 
 logger = logging.getLogger("MultiGPU")
 
@@ -45,7 +37,7 @@ class WanVideoModelLoader:
                 "model": (folder_paths.get_filename_list("unet_gguf") + folder_paths.get_filename_list("diffusion_models"), {"tooltip": "These models are loaded from the 'ComfyUI/models/diffusion_models' -folder",}),
 
             "base_precision": (["fp32", "bf16", "fp16", "fp16_fast"], {"default": "bf16"}),
-            "quantization": (["disabled", "fp8_e4m3fn", "fp8_e4m3fn_fast", "fp8_e4m3fn_scaled", "fp8_e4m3fn_scaled_fast", "fp8_e5m2", "fp8_e5m2_fast", "fp8_e5m2_scaled", "fp8_e5m2_scaled_fast"], {"default": "disabled", 
+            "quantization": (["disabled", "fp8_e4m3fn", "fp8_e4m3fn_fast", "fp8_e4m3fn_scaled", "fp8_e4m3fn_scaled_fast", "fp8_e5m2", "fp8_e5m2_fast", "fp8_e5m2_scaled", "fp8_e5m2_scaled_fast"], {"default": "disabled",
                             "tooltip": "Optional quantization method, 'disabled' acts as autoselect based by weights. Scaled modes only work with matching weights, _fast modes (fp8 matmul) require CUDA compute capability >= 8.9 (NVIDIA 4000 series and up), e4m3fn generally can not be torch.compiled on compute capability < 8.9 (3000 series and under)"}),
             "load_device": (["main_device", "offload_device"], {"default": "offload_device", "tooltip": "Initial device to load the model to, NOT recommended with the larger models unless you have 48GB+ VRAM"}),
             "compute_device": (devices, {"default": default_device}),
@@ -64,6 +56,7 @@ class WanVideoModelLoader:
                 "lora": ("WANVIDLORA", {"default": None}),
                 "vram_management_args": ("VRAM_MANAGEMENTARGS", {"default": None, "tooltip": "Alternative offloading method from DiffSynth-Studio, more aggressive in reducing memory use than block swapping, but can be slower"}),
                 "extra_model": ("VACEPATH", {"default": None, "tooltip": "Extra model to add to the main model, ie. VACE or MTV Crafter"}),
+                "vace_model": ("VACEPATH", {"default": None, "tooltip": "Backward-compatible alias for extra_model"}),
                 "fantasytalking_model": ("FANTASYTALKINGMODEL", {"default": None, "tooltip": "FantasyTalking model https://github.com/Fantasy-AMAP"}),
                 "multitalk_model": ("MULTITALKMODEL", {"default": None, "tooltip": "Multitalk model"}),
                 "fantasyportrait_model": ("FANTASYPORTRAITMODEL", {"default": None, "tooltip": "FantasyPortrait model"}),
@@ -83,7 +76,11 @@ class WanVideoModelLoader:
         loader_module = inspect.getmodule(original_loader)
         original_module_device = loader_module.device
 
-        set_current_device(compute_device)      
+        vace_model = kwargs.pop("vace_model", None)
+        if kwargs.get("extra_model") is None and vace_model is not None:
+            kwargs["extra_model"] = vace_model
+
+        set_current_device(compute_device)
         compute_device_to_be_patched = mm.get_torch_device()
 
         loader_module.device = compute_device_to_be_patched
@@ -138,16 +135,16 @@ class WanVideoSampler:
                 "add_noise_to_samples": ("BOOLEAN", {"default": False, "tooltip": "Add noise to the samples before sampling, needed for video2video sampling when starting from clean video"}),
             }
         }
-    
+
     RETURN_TYPES = ("LATENT", "LATENT",)
     RETURN_NAMES = ("samples", "denoised_samples",)
     FUNCTION = "process"
     CATEGORY = "multigpu/WanVideoWrapper"
     DESCRIPTION = "MultiGPU-aware sampler that ensures correct device for each model"
-    
+
     def process(self, model, compute_device, **kwargs):
         from . import set_current_device
-        
+
         original_sampler = NODE_CLASS_MAPPINGS["WanVideoSampler"]()
         sampler_module = inspect.getmodule(original_sampler)
 
@@ -250,7 +247,7 @@ class LoadWanVideoT5TextEncoder:
         from . import set_current_device
 
         set_current_device(device)
-        
+
         if device == "cpu":
             load_device = "offload_device"
         else:
@@ -288,7 +285,7 @@ class LoadWanVideoClipTextEncoder:
         from . import set_current_device
 
         set_current_device(device)
-        
+
         if device == "cpu":
             load_device = "offload_device"
         else:
@@ -425,7 +422,7 @@ class WanVideoTinyVAELoader:
             },
             "optional": {
                 "load_device": (devices, {"default": default_device}),
-                "precision": (["fp16", "fp32", "bf16"], {"default": "fp16"}), 
+                "precision": (["fp16", "fp32", "bf16"], {"default": "fp16"}),
                 "parallel": ("BOOLEAN", {"default": False, "tooltip": "uses more memory but is faster"}),
             }
         }
@@ -505,8 +502,8 @@ class WanVideoImageToVideoEncode:
     FUNCTION = "process"
     CATEGORY = "multigpu/WanVideoWrapper"
 
-    def process(self, width, height, num_frames, force_offload, noise_aug_strength, 
-                    start_latent_strength, end_latent_strength, start_image=None, end_image=None, control_embeds=None, fun_or_fl2v_model=False, 
+    def process(self, width, height, num_frames, force_offload, noise_aug_strength,
+                    start_latent_strength, end_latent_strength, start_image=None, end_image=None, control_embeds=None, fun_or_fl2v_model=False,
                     temporal_mask=None, extra_latents=None, clip_embeds=None, tiled_vae=False, add_cond_latents=None, vae=None, load_device=None):
         from . import set_current_device
 
@@ -576,7 +573,7 @@ class WanVideoDecode:
         decode_module = inspect.getmodule(original_decode)
         original_module_device = decode_module.device
 
-        set_current_device(load_device)      
+        set_current_device(load_device)
         compute_device_to_be_patched = mm.get_torch_device()
         decode_module.device = compute_device_to_be_patched
 
@@ -678,7 +675,7 @@ class WanVideoClipVisionEncode:
             "clip_vision": ("CLIP_VISION",),
             "load_device": ("MULTIGPUDEVICE",),
             "image_1": ("IMAGE", {"tooltip": "Image to encode"}),
-            "strength_1": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 10.0, "step": 0.001, "tooltip": "Additional clip embed multiplier"}), 
+            "strength_1": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 10.0, "step": 0.001, "tooltip": "Additional clip embed multiplier"}),
             "strength_2": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 10.0, "step": 0.001, "tooltip": "Additional clip embed multiplier"}),
             "crop": (["center", "disabled"], {"default": "center", "tooltip": "Crop image to 224x224 before encoding"}),
             "combine_embeds": (["average", "sum", "concat", "batch"], {"default": "average", "tooltip": "Method to combine multiple clip embeds"}),
@@ -738,7 +735,7 @@ class WanVideoControlnetLoader:
         from . import set_current_device
 
         set_current_device(device)
-        
+
         original_loader = NODE_CLASS_MAPPINGS["WanVideoControlnetLoader"]()
         return original_loader.loadmodel(model, base_precision, load_device, quantization)
 
@@ -765,7 +762,7 @@ class FantasyTalkingModelLoader:
         from . import set_current_device
 
         set_current_device(device)
-        
+
         original_loader = NODE_CLASS_MAPPINGS["FantasyTalkingModelLoader"]()
         return original_loader.loadmodel(model, base_precision)
 
@@ -793,7 +790,7 @@ class Wav2VecModelLoader:
         from . import set_current_device
 
         set_current_device(device)
-        
+
         original_loader = NODE_CLASS_MAPPINGS["Wav2VecModelLoader"]()
         return original_loader.loadmodel(model, base_precision, load_device)
 
@@ -826,7 +823,7 @@ class DownloadAndLoadWav2VecModel:
         from . import set_current_device
 
         set_current_device(device)
-        
+
         original_loader = NODE_CLASS_MAPPINGS["DownloadAndLoadWav2VecModel"]()
         return original_loader.loadmodel(model, base_precision, load_device)
 
@@ -861,6 +858,6 @@ class WanVideoUni3C_ControlnetLoader:
         from . import set_current_device
 
         set_current_device(device)
-        
+
         original_loader = NODE_CLASS_MAPPINGS["WanVideoUni3C_ControlnetLoader"]()
         return original_loader.loadmodel(model, base_precision, load_device, quantization, attention_mode, compile_args)

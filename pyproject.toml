@@ -1,7 +1,7 @@
 [project]
 name = "comfyui-multigpu"
 description = "Provides a suite of custom nodes to manage multiple GPUs for ComfyUI, including advanced model offloading for both GGUF and Safetensor formats with DisTorch, and bespoke MultiGPU support for WanVideoWrapper and other custom nodes."
-version = "2.5.11"
+version = "2.6.0"
 license = {file = "LICENSE"}
 
 [project.urls]
@@ -12,3 +12,79 @@ Repository = "https://github.com/pollockjj/ComfyUI-MultiGPU"
 PublisherId = "pollockjj"
 DisplayName = "ComfyUI-MultiGPU"
 Icon = "https://raw.githubusercontent.com/pollockjj/ComfyUI-MultiGPU/main/assets/multigpu_icon.png"
+
+[tool.ruff]
+lint.select = [
+  "N805", # invalid-first-argument-name-for-method
+  "S307", # suspicious-eval-usage
+  "S102", # exec
+  "E",
+  "T",    # print-usage
+  "W",
+  # The "F" series in Ruff stands for "Pyflakes" rules, which catch various Python syntax errors and undefined names.
+  # See all rules here: https://docs.astral.sh/ruff/rules/#pyflakes-f
+  "F",
+]
+
+lint.ignore = ["E501", "E722", "E731", "E712", "E402", "E741"]
+
+exclude = ["*.ipynb", "**/generated/*.pyi"]
+
+[tool.pylint]
+master.py-version = "3.10"
+master.init-hook = "import os, sys; sys.path.insert(0, os.path.abspath(os.path.join(os.getcwd(), '../..')))"
+master.extension-pkg-allow-list = [
+  "pydantic",
+]
+reports.output-format = "colorized"
+similarities.ignore-imports = "yes"
+messages_control.disable = [
+  "missing-module-docstring",
+  "missing-class-docstring",
+  "missing-function-docstring",
+  "line-too-long",
+  "too-few-public-methods",
+  "too-many-public-methods",
+  "too-many-instance-attributes",
+  "too-many-positional-arguments",
+  "broad-exception-raised",
+  "too-many-lines",
+  "invalid-name",
+  "unused-argument",
+  "broad-exception-caught",
+  "consider-using-with",
+  "fixme",
+  "too-many-statements",
+  "too-many-branches",
+  "too-many-locals",
+  "too-many-arguments",
+  "too-many-return-statements",
+  "too-many-nested-blocks",
+  "duplicate-code",
+  "abstract-method",
+  "superfluous-parens",
+  "arguments-differ",
+  "redefined-builtin",
+  "unnecessary-lambda",
+  "dangerous-default-value",
+  "invalid-overridden-method",
+  # next warnings should be fixed in future
+  "bad-classmethod-argument",  # Class method should have 'cls' as first argument
+  "wrong-import-order",  # Standard imports should be placed before third party imports
+  "ungrouped-imports",
+  "unnecessary-pass",
+  "unnecessary-lambda-assignment",
+  "no-else-return",
+  "unused-variable",
+  "arguments-renamed",
+  "cyclic-import",
+  "global-statement",
+  "import-outside-toplevel",
+  "logging-format-interpolation",
+  "logging-fstring-interpolation",
+  "protected-access",
+  "redefined-outer-name",
+  "reimported",
+  "useless-import-alias",
+  "wrong-import-position",
+]

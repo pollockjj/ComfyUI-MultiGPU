@@ -1,25 +1,28 @@
 import torch
 import logging
-import weakref
 import os
-import copy
 import json
+import importlib
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
+from types import MethodType
 import folder_paths
 import comfy.model_management as mm
+import comfy.memory_management
 import comfy.model_patcher
+import comfy.sample as comfy_sample
 from nodes import NODE_CLASS_MAPPINGS as GLOBAL_NODE_CLASS_MAPPINGS
 from .device_utils import (
     get_device_list,
     is_accelerator_available,
-    soft_empty_cache_multigpu,
+    soft_empty_cache_multigpu as soft_empty_cache_multigpu,
 )
 from .model_management_mgpu import (
-    trigger_executor_cache_reset,
-    check_cpu_memory_threshold,
-    multigpu_memory_log,
-    force_full_system_cleanup,
+    trigger_executor_cache_reset as trigger_executor_cache_reset,
+    check_cpu_memory_threshold as check_cpu_memory_threshold,
+    multigpu_memory_log as multigpu_memory_log,
+    force_full_system_cleanup as force_full_system_cleanup,
 )
 
 WEB_DIRECTORY = "./web"
@@ -134,21 +137,45 @@ def mgpu_mm_log_method(self, msg):
             f"[MultiGPU Model Management] {msg}",
             extra={"mgpu_context": {"component": "model_management"}},
         )
-logger.mgpu_mm_log = mgpu_mm_log_method.__get__(logger, type(logger))
+logger.mgpu_mm_log = MethodType(mgpu_mm_log_method, logger)
+
+def _normalize_module_name(module_name):
+    """Normalize a custom node directory name for tolerant matching."""
+    return "".join(char for char in os.path.basename(module_name).lower() if char.isalnum())
 
 def check_module_exists(module_path):
     """Check if a custom node module exists in ComfyUI custom_nodes directory."""
-    full_path = os.path.join(folder_paths.get_folder_paths("custom_nodes")[0], module_path)
-    logger.debug(f"[MultiGPU] Checking for module at {full_path}")
-    if not os.path.exists(full_path):
-        logger.debug(f"[MultiGPU] Module {module_path} not found - skipping")
-        return False
-    logger.debug(f"[MultiGPU] Found {module_path}, creating compatible MultiGPU nodes")
-    return True
+    custom_nodes_paths = folder_paths.get_folder_paths("custom_nodes")
+    normalized_module_path = _normalize_module_name(module_path)
+
+    for custom_nodes_path in custom_nodes_paths:
+        full_path = os.path.join(custom_nodes_path, module_path)
+        logger.debug(f"[MultiGPU] Checking for module at {full_path}")
+        if os.path.isdir(full_path):
+            logger.debug(f"[MultiGPU] Found exact module match for {module_path} at {full_path}")
+            return True
+
+    for custom_nodes_path in custom_nodes_paths:
+        try:
+            with os.scandir(custom_nodes_path) as entries:
+                for entry in entries:
+                    if not entry.is_dir():
+                        continue
+                    if _normalize_module_name(entry.name) == normalized_module_path:
+                        logger.debug(f"[MultiGPU] Found normalized module match for {module_path} at {entry.path}")
+                        return True
+        except OSError:
+            continue
+
+    logger.debug(f"[MultiGPU] Module {module_path} not found - skipping")
+    return False
 
 current_device = mm.get_torch_device()
 current_text_encoder_device = mm.text_encoder_device()
 current_unet_offload_device = mm.unet_offload_device()
+_aimdo_initialized_devices = set()
+if isinstance(current_device, torch.device) and current_device.type == "cuda" and current_device.index is not None:
+    _aimdo_initialized_devices.add(current_device.index)
 
 def set_current_device(device):
     """Set the current device context for MultiGPU operations."""
@@ -183,6 +210,73 @@ def get_current_unet_offload_device():
     """Get the current UNet offload device context at runtime."""
     return current_unet_offload_device
 
+def _coerce_torch_device(device):
+    """Best-effort conversion to torch.device for guard and patch helpers."""
+    if device is None:
+        return None
+    if isinstance(device, torch.device):
+        return device
+    try:
+        return torch.device(device)
+    except (TypeError, RuntimeError, ValueError):
+        return None
+
+@contextmanager
+def cuda_device_guard(device, reason="runtime"):
+    """Temporarily switch the real CUDA current device for non-primary execution paths."""
+    target_device = _coerce_torch_device(device)
+    previous_device_index = None
+    switched_device = False
+
+    if (
+        target_device is not None
+        and target_device.type == "cuda"
+        and target_device.index is not None
+        and torch.cuda.is_available()
+    ):
+        previous_device_index = torch.cuda.current_device()
+        if previous_device_index != target_device.index:
+            logger.info(
+                f"[MultiGPU CUDA Guard] Switching CUDA current device {previous_device_index} -> {target_device.index} ({reason})"
+            )
+            torch.cuda.set_device(target_device.index)
+            switched_device = True
+
+    try:
+        yield target_device
+    finally:
+        if switched_device and previous_device_index is not None:
+            torch.cuda.set_device(previous_device_index)
+            logger.info(
+                f"[MultiGPU CUDA Guard] Restored CUDA current device {target_device.index} -> {previous_device_index} ({reason})"
+            )
+
+def _get_runtime_device_from_model(model):
+    """Resolve the actual execution device from a model or patcher wrapper."""
+    if hasattr(model, "load_device"):
+        return getattr(model, "load_device")
+    patcher = getattr(model, "patcher", None)
+    if patcher is not None and hasattr(patcher, "load_device"):
+        return patcher.load_device
+    inner_model = getattr(model, "model", None)
+    if inner_model is not None and hasattr(inner_model, "load_device"):
+        return inner_model.load_device
+    return None
+
+@contextmanager
+def multigpu_runtime_device_guard(device, reason="runtime"):
+    """Align MultiGPU logical device state with the real runtime device for inference."""
+    original_device = get_current_device()
+    target_device = _coerce_torch_device(device) or device
+    if target_device is not None:
+        set_current_device(target_device)
+        logger.info(f"[MultiGPU Runtime] Using runtime device {target_device} ({reason})")
+    try:
+        with cuda_device_guard(target_device, reason=reason):
+            yield _coerce_torch_device(target_device)
+    finally:
+        set_current_device(original_device)
+
 def get_torch_device_patched():
     """Return MultiGPU-aware device selection for patched mm.get_torch_device."""
     device = None
@@ -216,7 +310,112 @@ def unet_offload_device_patched():
     logger.debug(f"[MultiGPU Core Patching] unet_offload_device_patched returning device: {device} (current_unet_offload_device={current_unet_offload_device})")
     return device
 
-logger.info(f"[MultiGPU Core Patching] Patching mm.get_torch_device, mm.text_encoder_device, mm.unet_offload_device")
+def _patch_model_management_current_stream():
+    """Make ComfyUI stream lookup honor the requested CUDA device."""
+    current_stream = getattr(mm, "current_stream", None)
+    if current_stream is None:
+        return False
+    if getattr(current_stream, "_multigpu_cuda_device_aware", False):
+        return True
+
+    def current_stream_device_aware(device):
+        target_device = _coerce_torch_device(device)
+        if target_device is not None and target_device.type == "cuda":
+            return torch.cuda.current_stream(device=target_device)
+        return current_stream(device)
+
+    current_stream_device_aware._multigpu_cuda_device_aware = True
+    current_stream_device_aware._multigpu_original = current_stream
+    mm.current_stream = current_stream_device_aware
+    logger.info("[MultiGPU] Patched comfy.model_management.current_stream to honor CUDA device arguments")
+    return True
+
+def _initialize_aimdo_visible_cuda_devices():
+    """Ensure DynamicVRAM initializes every visible CUDA device once when enabled."""
+    if not getattr(comfy.memory_management, "aimdo_enabled", False):
+        logger.info("[MultiGPU] DynamicVRAM not enabled; skipping multi-device aimdo initialization")
+        return False
+    if not torch.cuda.is_available():
+        logger.info("[MultiGPU] CUDA unavailable; skipping multi-device aimdo initialization")
+        return False
+
+    try:
+        from comfy_aimdo import control as aimdo_control
+    except ImportError:
+        logger.warning("[MultiGPU] comfy_aimdo unavailable during multi-device initialization")
+        return False
+
+    init_device = getattr(aimdo_control, "init_device", None)
+    if not callable(init_device):
+        logger.warning("[MultiGPU] comfy_aimdo.control.init_device missing; skipping multi-device initialization")
+        return False
+
+    initialized_any = False
+    for device_index in range(torch.cuda.device_count()):
+        if device_index in _aimdo_initialized_devices:
+            continue
+        logger.info(f"[MultiGPU] Initializing comfy_aimdo for CUDA device {device_index}")
+        initialized = bool(init_device(device_index))
+        logger.info(f"[MultiGPU] comfy_aimdo init_device({device_index}) -> {initialized}")
+        if initialized:
+            _aimdo_initialized_devices.add(device_index)
+            initialized_any = True
+
+    return initialized_any
+
+def _patch_comfy_sample_runtime_device():
+    """Wrap Comfy sampling entrypoints so runtime device state matches the model load device."""
+    sample_fn = getattr(comfy_sample, "sample", None)
+    if callable(sample_fn) and not getattr(sample_fn, "_multigpu_runtime_device_guard", False):
+        def sample_with_runtime_device(model, *args, **kwargs):
+            runtime_device = _get_runtime_device_from_model(model)
+            with multigpu_runtime_device_guard(runtime_device, reason=f"comfy.sample.sample:{type(model).__name__}"):
+                return sample_fn(model, *args, **kwargs)
+
+        sample_with_runtime_device._multigpu_runtime_device_guard = True
+        sample_with_runtime_device._multigpu_original = sample_fn
+        comfy_sample.sample = sample_with_runtime_device
+        logger.info("[MultiGPU] Patched comfy.sample.sample with runtime device guard")
+
+    sample_custom_fn = getattr(comfy_sample, "sample_custom", None)
+    if callable(sample_custom_fn) and not getattr(sample_custom_fn, "_multigpu_runtime_device_guard", False):
+        def sample_custom_with_runtime_device(model, *args, **kwargs):
+            runtime_device = _get_runtime_device_from_model(model)
+            with multigpu_runtime_device_guard(runtime_device, reason=f"comfy.sample.sample_custom:{type(model).__name__}"):
+                return sample_custom_fn(model, *args, **kwargs)
+
+        sample_custom_with_runtime_device._multigpu_runtime_device_guard = True
+        sample_custom_with_runtime_device._multigpu_original = sample_custom_fn
+        comfy_sample.sample_custom = sample_custom_with_runtime_device
+        logger.info("[MultiGPU] Patched comfy.sample.sample_custom with runtime device guard")
+
+def _patch_comfy_kitchen_dlpack_device_guard():
+    """Guard comfy_kitchen DLPack export by switching to the tensor's CUDA device."""
+    try:
+        comfy_kitchen_cuda = importlib.import_module("comfy_kitchen.backends.cuda")
+    except ImportError:
+        logger.debug("[MultiGPU] comfy_kitchen not found - skipping CUDA DLPack compat patch")
+        return False
+
+    wrap_for_dlpack = getattr(comfy_kitchen_cuda, "_wrap_for_dlpack", None)
+    if wrap_for_dlpack is None:
+        logger.debug("[MultiGPU] comfy_kitchen.backends.cuda._wrap_for_dlpack not found - skipping compat patch")
+        return False
+
+    if getattr(wrap_for_dlpack, "_multigpu_cuda_device_guard", False):
+        return True
+
+    def wrap_for_dlpack_with_device_guard(*args, **kwargs):
+        tensor = args[0] if args else kwargs.get("tensor")
+        with cuda_device_guard(getattr(tensor, "device", None), reason="comfy_kitchen._wrap_for_dlpack"):
+            return wrap_for_dlpack(*args, **kwargs)
+
+    wrap_for_dlpack_with_device_guard._multigpu_cuda_device_guard = True
+    comfy_kitchen_cuda._wrap_for_dlpack = wrap_for_dlpack_with_device_guard
+    logger.info("[MultiGPU] Applied comfy_kitchen CUDA DLPack device guard patch")
+    return True
+
+logger.info("[MultiGPU Core Patching] Patching mm.get_torch_device, mm.text_encoder_device, mm.unet_offload_device")
 logger.info(f"[MultiGPU DEBUG] Initial current_device: {current_device}")
 logger.info(f"[MultiGPU DEBUG] Initial current_text_encoder_device: {current_text_encoder_device}")
 logger.info(f"[MultiGPU DEBUG] Initial current_unet_offload_device: {current_unet_offload_device}")
@@ -224,8 +423,13 @@ logger.info(f"[MultiGPU DEBUG] Initial current_unet_offload_device: {current_une
 mm.get_torch_device = get_torch_device_patched
 mm.text_encoder_device = text_encoder_device_patched
 mm.unet_offload_device = unet_offload_device_patched
+_patch_model_management_current_stream()
+_patch_comfy_sample_runtime_device()
+_patch_comfy_kitchen_dlpack_device_guard()
+_initialize_aimdo_visible_cuda_devices()
 
 from .nodes import (
+    DeviceSelectorMultiGPU,
     UnetLoaderGGUF,
     UnetLoaderGGUFAdvanced,
     CLIPLoaderGGUF,
@@ -246,47 +450,24 @@ from .nodes import (
     UNetLoaderLP,
 )
 
-from .wanvideo import (
-    LoadWanVideoT5TextEncoder,
-    WanVideoTextEncode,
-    WanVideoTextEncodeCached,
-    WanVideoTextEncodeSingle,
-    WanVideoVAELoader,
-    WanVideoTinyVAELoader,
-    WanVideoBlockSwap,
-    WanVideoImageToVideoEncode,
-    WanVideoDecode,
-    WanVideoModelLoader,
-    WanVideoSampler,
-    WanVideoVACEEncode,
-    WanVideoEncode,
-    LoadWanVideoClipTextEncoder,
-    WanVideoClipVisionEncode,
-    WanVideoControlnetLoader,
-    FantasyTalkingModelLoader,
-    Wav2VecModelLoader,
-    WanVideoUni3C_ControlnetLoader,
-    DownloadAndLoadWav2VecModel,
-)
-
 from .wrappers import (
     override_class,
     override_class_offload,
     override_class_clip,
     override_class_clip_no_device,
     override_class_with_distorch_gguf,
-    override_class_with_distorch_gguf_v2,
+    override_class_with_distorch_gguf_v2 as override_class_with_distorch_gguf_v2,
     override_class_with_distorch_clip,
     override_class_with_distorch_clip_no_device,
-    override_class_with_distorch,
+    override_class_with_distorch as override_class_with_distorch,
     override_class_with_distorch_safetensor_v2,
     override_class_with_distorch_safetensor_v2_clip,
     override_class_with_distorch_safetensor_v2_clip_no_device,
 )
 from .distorch_2 import (
-    register_patched_safetensor_modelpatcher,
-    analyze_safetensor_loading,
-    calculate_safetensor_vvram_allocation,
+    register_patched_safetensor_modelpatcher as register_patched_safetensor_modelpatcher,
+    analyze_safetensor_loading as analyze_safetensor_loading,
+    calculate_safetensor_vvram_allocation as calculate_safetensor_vvram_allocation,
 )
 
 from .checkpoint_multigpu import (
@@ -294,9 +475,57 @@ from .checkpoint_multigpu import (
     CheckpointLoaderAdvancedDisTorch2MultiGPU
 )
 
+def _load_wanvideo_nodes():
+    from .wanvideo import (
+        LoadWanVideoT5TextEncoder,
+        WanVideoTextEncode,
+        WanVideoTextEncodeCached,
+        WanVideoTextEncodeSingle,
+        WanVideoVAELoader,
+        WanVideoTinyVAELoader,
+        WanVideoBlockSwap,
+        WanVideoImageToVideoEncode,
+        WanVideoDecode,
+        WanVideoModelLoader,
+        WanVideoSampler,
+        WanVideoVACEEncode,
+        WanVideoEncode,
+        LoadWanVideoClipTextEncoder,
+        WanVideoClipVisionEncode,
+        WanVideoControlnetLoader,
+        FantasyTalkingModelLoader,
+        Wav2VecModelLoader,
+        WanVideoUni3C_ControlnetLoader,
+        DownloadAndLoadWav2VecModel,
+    )
+
+    return {
+        "LoadWanVideoT5TextEncoderMultiGPU": LoadWanVideoT5TextEncoder,
+        "WanVideoTextEncodeMultiGPU": WanVideoTextEncode,
+        "WanVideoTextEncodeCachedMultiGPU": WanVideoTextEncodeCached,
+        "WanVideoTextEncodeSingleMultiGPU": WanVideoTextEncodeSingle,
+        "WanVideoVAELoaderMultiGPU": WanVideoVAELoader,
+        "WanVideoTinyVAELoaderMultiGPU": WanVideoTinyVAELoader,
+        "WanVideoBlockSwapMultiGPU": WanVideoBlockSwap,
+        "WanVideoImageToVideoEncodeMultiGPU": WanVideoImageToVideoEncode,
+        "WanVideoDecodeMultiGPU": WanVideoDecode,
+        "WanVideoModelLoaderMultiGPU": WanVideoModelLoader,
+        "WanVideoSamplerMultiGPU": WanVideoSampler,
+        "WanVideoVACEEncodeMultiGPU": WanVideoVACEEncode,
+        "WanVideoEncodeMultiGPU": WanVideoEncode,
+        "LoadWanVideoClipTextEncoderMultiGPU": LoadWanVideoClipTextEncoder,
+        "WanVideoClipVisionEncodeMultiGPU": WanVideoClipVisionEncode,
+        "WanVideoControlnetLoaderMultiGPU": WanVideoControlnetLoader,
+        "FantasyTalkingModelLoaderMultiGPU": FantasyTalkingModelLoader,
+        "Wav2VecModelLoaderMultiGPU": Wav2VecModelLoader,
+        "WanVideoUni3C_ControlnetLoaderMultiGPU": WanVideoUni3C_ControlnetLoader,
+        "DownloadAndLoadWav2VecModelMultiGPU": DownloadAndLoadWav2VecModel,
+    }
+
 NODE_CLASS_MAPPINGS = {
     "CheckpointLoaderAdvancedMultiGPU": CheckpointLoaderAdvancedMultiGPU,
     "CheckpointLoaderAdvancedDisTorch2MultiGPU": CheckpointLoaderAdvancedDisTorch2MultiGPU,
+    "DeviceSelectorMultiGPU": DeviceSelectorMultiGPU,
     "UNetLoaderLP": UNetLoaderLP,
 }
 
@@ -339,14 +568,20 @@ def register_and_count(module_names, node_map):
         if check_module_exists(name):
             found = True
             break
-    
+
     count = 0
     if found:
+        try:
+            resolved_node_map = node_map() if callable(node_map) else node_map
+        except Exception as exc:
+            logger.warning(f"[MultiGPU] Failed to register nodes for {module_names[0]}: {exc}")
+            resolved_node_map = {}
+
         initial_len = len(NODE_CLASS_MAPPINGS)
-        for key, value in node_map.items():
+        for key, value in resolved_node_map.items():
             NODE_CLASS_MAPPINGS[key] = value
         count = len(NODE_CLASS_MAPPINGS) - initial_len
-        
+
     registration_data.append({"name": module_names[0], "found": "Y" if found else "N", "count": count})
     return found
 
@@ -401,29 +636,7 @@ pulid_nodes = {
 }
 register_and_count(["PuLID_ComfyUI", "pulid_comfyui"], pulid_nodes)
 
-wanvideo_nodes = {
-    "LoadWanVideoT5TextEncoderMultiGPU": LoadWanVideoT5TextEncoder,
-    "WanVideoTextEncodeMultiGPU": WanVideoTextEncode,
-    "WanVideoTextEncodeCachedMultiGPU": WanVideoTextEncodeCached,
-    "WanVideoTextEncodeSingleMultiGPU": WanVideoTextEncodeSingle,
-    "WanVideoVAELoaderMultiGPU": WanVideoVAELoader,
-    "WanVideoTinyVAELoaderMultiGPU": WanVideoTinyVAELoader,
-    "WanVideoBlockSwapMultiGPU": WanVideoBlockSwap,
-    "WanVideoImageToVideoEncodeMultiGPU": WanVideoImageToVideoEncode,
-    "WanVideoDecodeMultiGPU": WanVideoDecode,
-    "WanVideoModelLoaderMultiGPU": WanVideoModelLoader,
-    "WanVideoSamplerMultiGPU": WanVideoSampler,
-    "WanVideoVACEEncodeMultiGPU": WanVideoVACEEncode,
-    "WanVideoEncodeMultiGPU": WanVideoEncode,
-    "LoadWanVideoClipTextEncoderMultiGPU": LoadWanVideoClipTextEncoder,
-    "WanVideoClipVisionEncodeMultiGPU": WanVideoClipVisionEncode,
-    "WanVideoControlnetLoaderMultiGPU": WanVideoControlnetLoader,
-    "FantasyTalkingModelLoaderMultiGPU": FantasyTalkingModelLoader,
-    "Wav2VecModelLoaderMultiGPU": Wav2VecModelLoader,
-    "WanVideoUni3C_ControlnetLoaderMultiGPU": WanVideoUni3C_ControlnetLoader,
-    "DownloadAndLoadWav2VecModelMultiGPU": DownloadAndLoadWav2VecModel,
-}
-register_and_count(["ComfyUI-WanVideoWrapper", "comfyui-wanvideowrapper"], wanvideo_nodes)
+register_and_count(["ComfyUI-WanVideoWrapper", "comfyui-wanvideowrapper"], _load_wanvideo_nodes)
 
 for item in registration_data:
     logger.info(fmt_reg.format(item['name'], item['found'], str(item['count'])))

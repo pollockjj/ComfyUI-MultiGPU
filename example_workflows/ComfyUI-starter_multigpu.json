@@ -1,0 +1,743 @@
+{
+  "id": "73611c02-cdf1-4ae8-a41a-d9c057e201ed",
+  "revision": 0,
+  "last_node_id": 116,
+  "last_link_id": 156,
+  "nodes": [
+    {
+      "id": 74,
+      "type": "MarkdownNote",
+      "pos": [
+        10906.666666666668,
+        -1101.6666666666667
+      ],
+      "size": [
+        210,
+        34
+      ],
+      "flags": {
+        "collapsed": true
+      },
+      "order": 0,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "title": "Hit run 👆",
+      "properties": {},
+      "widgets_values": [
+        ""
+      ],
+      "color": "#222",
+      "bgcolor": "#000"
+    },
+    {
+      "id": 84,
+      "type": "MarkdownNote",
+      "pos": [
+        10898.333333333334,
+        -960
+      ],
+      "size": [
+        229.36197916666669,
+        92.65625
+      ],
+      "flags": {
+        "collapsed": false
+      },
+      "order": 1,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "title": "Step 2 - Download image",
+      "properties": {},
+      "widgets_values": [
+        "1. The result is here\n👈✨\n\n2. Right-click and download the image."
+      ],
+      "color": "#222",
+      "bgcolor": "#000"
+    },
+    {
+      "id": 81,
+      "type": "MarkdownNote",
+      "pos": [
+        7882.315398447294,
+        -1132.6809840806743
+      ],
+      "size": [
+        210,
+        90
+      ],
+      "flags": {
+        "collapsed": false
+      },
+      "order": 2,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "title": "Step 1",
+      "properties": {},
+      "widgets_values": [
+        "1. Download all relevant models and place them inside your ComfyUI/models folder 👇"
+      ],
+      "color": "#222",
+      "bgcolor": "#000"
+    },
+    {
+      "id": 83,
+      "type": "MarkdownNote",
+      "pos": [
+        10004.246413879386,
+        -1279.1407138616241
+      ],
+      "size": [
+        220.32552083333334,
+        88
+      ],
+      "flags": {
+        "collapsed": false
+      },
+      "order": 3,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "title": "Step 1 - Connect nodes",
+      "properties": {},
+      "widgets_values": [
+        "Try to connect these 2 nodes 👇"
+      ],
+      "color": "#222",
+      "bgcolor": "#000"
+    },
+    {
+      "id": 107,
+      "type": "ModelSamplingAuraFlow",
+      "pos": [
+        9213.292447420406,
+        -979.6763617965224
+      ],
+      "size": [
+        310,
+        85
+      ],
+      "flags": {},
+      "order": 9,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 147
+        }
+      ],
+      "outputs": [
+        {
+          "name": "MODEL",
+          "type": "MODEL",
+          "slot_index": 0,
+          "links": [
+            152
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.3.64",
+        "Node name for S&R": "ModelSamplingAuraFlow",
+        "enableTabs": false,
+        "hasSecondTab": false,
+        "secondTabOffset": 80,
+        "secondTabText": "Send Back",
+        "secondTabWidth": 65,
+        "tabWidth": 65,
+        "tabXOffset": 10
+      },
+      "widgets_values": [
+        3
+      ]
+    },
+    {
+      "id": 108,
+      "type": "ConditioningZeroOut",
+      "pos": [
+        8963.292447420406,
+        -599.6763617965224
+      ],
+      "size": [
+        204.134765625,
+        51.00000000000001
+      ],
+      "flags": {},
+      "order": 11,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "conditioning",
+          "type": "CONDITIONING",
+          "link": 148
+        }
+      ],
+      "outputs": [
+        {
+          "name": "CONDITIONING",
+          "type": "CONDITIONING",
+          "links": [
+            154
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.3.73",
+        "Node name for S&R": "ConditioningZeroOut",
+        "enableTabs": false,
+        "hasSecondTab": false,
+        "secondTabOffset": 80,
+        "secondTabText": "Send Back",
+        "secondTabWidth": 65,
+        "tabWidth": 65,
+        "tabXOffset": 10
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 109,
+      "type": "VAELoader",
+      "pos": [
+        8433.556257604858,
+        -704.4218567543277
+      ],
+      "size": [
+        270,
+        83
+      ],
+      "flags": {},
+      "order": 4,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "VAE",
+          "type": "VAE",
+          "links": [
+            150
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.3.73",
+        "Node name for S&R": "VAELoader",
+        "enableTabs": false,
+        "hasSecondTab": false,
+        "models": [
+          {
+            "name": "ae.safetensors",
+            "url": "https://huggingface.co/Comfy-Org/z_image_turbo/resolve/main/split_files/vae/ae.safetensors",
+            "directory": "vae"
+          }
+        ],
+        "secondTabOffset": 80,
+        "secondTabText": "Send Back",
+        "secondTabWidth": 65,
+        "tabWidth": 65,
+        "tabXOffset": 10
+      },
+      "widgets_values": [
+        "ae.safetensors"
+      ]
+    },
+    {
+      "id": 110,
+      "type": "EmptySD3LatentImage",
+      "pos": [
+        8433.292447420406,
+        -539.6763617965224
+      ],
+      "size": [
+        269.4929183224277,
+        133.85035641015304
+      ],
+      "flags": {},
+      "order": 5,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "LATENT",
+          "type": "LATENT",
+          "slot_index": 0,
+          "links": [
+            155
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.3.64",
+        "Node name for S&R": "EmptySD3LatentImage",
+        "enableTabs": false,
+        "hasSecondTab": false,
+        "secondTabOffset": 80,
+        "secondTabText": "Send Back",
+        "secondTabWidth": 65,
+        "tabWidth": 65,
+        "tabXOffset": 10
+      },
+      "widgets_values": [
+        1280,
+        720,
+        1
+      ]
+    },
+    {
+      "id": 113,
+      "type": "MarkdownNote",
+      "pos": [
+        7659.877374560984,
+        -967.4803967921797
+      ],
+      "size": [
+        533.3333333333334,
+        558.3333333333334
+      ],
+      "flags": {
+        "collapsed": false
+      },
+      "order": 6,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "title": "For local users",
+      "properties": {},
+      "widgets_values": [
+        "## Report workflow issue\n\nIf you found any issues when running this workflow, [report template issue here](https://github.com/Comfy-Org/workflow_templates/issues).\n\n\n## Model links\n\n**diffusion_models**\n\n- [z_image_turbo_bf16.safetensors](https://huggingface.co/Comfy-Org/z_image_turbo/resolve/main/split_files/diffusion_models/z_image_turbo_bf16.safetensors)\n\n\n**text_encoders**\n\n- [qwen_3_4b.safetensors](https://huggingface.co/Comfy-Org/z_image_turbo/resolve/main/split_files/text_encoders/qwen_3_4b.safetensors)\n\n\n**vae**\n\n- [ae.safetensors](https://huggingface.co/Comfy-Org/z_image_turbo/resolve/main/split_files/vae/ae.safetensors)\n\n\n## Model Storage Location\n\n```\n📂 ComfyUI/\n├── 📂 models/\n│   ├── 📂 diffusion_models/\n│   │      └── z_image_turbo_bf16.safetensors\n│   ├── 📂 text_encoders/\n│   │      └── qwen_3_4b.safetensors\n│   └── 📂 vae/\n│          └── ae.safetensors\n```\n"
+      ],
+      "color": "#222",
+      "bgcolor": "#000"
+    },
+    {
+      "id": 116,
+      "type": "KSampler",
+      "pos": [
+        9214.293768995101,
+        -873.9826233663099
+      ],
+      "size": [
+        312.33082247057655,
+        499
+      ],
+      "flags": {},
+      "order": 12,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 152
+        },
+        {
+          "name": "positive",
+          "type": "CONDITIONING",
+          "link": 153
+        },
+        {
+          "name": "negative",
+          "type": "CONDITIONING",
+          "link": 154
+        },
+        {
+          "name": "latent_image",
+          "type": "LATENT",
+          "link": 155
+        }
+      ],
+      "outputs": [
+        {
+          "name": "LATENT",
+          "type": "LATENT",
+          "slot_index": 0,
+          "links": [
+            149
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.3.64",
+        "Node name for S&R": "KSampler",
+        "enableTabs": false,
+        "hasSecondTab": false,
+        "secondTabOffset": 80,
+        "secondTabText": "Send Back",
+        "secondTabWidth": 65,
+        "tabWidth": 65,
+        "tabXOffset": 10
+      },
+      "widgets_values": [
+        25220804433832,
+        "randomize",
+        8,
+        1,
+        "res_multistep",
+        "simple",
+        1
+      ]
+    },
+    {
+      "id": 111,
+      "type": "VAEDecode",
+      "pos": [
+        9543.292447420406,
+        -979.6763617965224
+      ],
+      "size": [
+        210,
+        71
+      ],
+      "flags": {
+        "collapsed": false
+      },
+      "order": 13,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "samples",
+          "type": "LATENT",
+          "link": 149
+        },
+        {
+          "name": "vae",
+          "type": "VAE",
+          "link": 150
+        }
+      ],
+      "outputs": [
+        {
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "slot_index": 0,
+          "links": [
+            156
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.3.64",
+        "Node name for S&R": "VAEDecode",
+        "enableTabs": false,
+        "hasSecondTab": false,
+        "secondTabOffset": 80,
+        "secondTabText": "Send Back",
+        "secondTabWidth": 65,
+        "tabWidth": 65,
+        "tabXOffset": 10
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 115,
+      "type": "CLIPTextEncode",
+      "pos": [
+        8753.292447420406,
+        -979.6763617965224
+      ],
+      "size": [
+        408.4818178377949,
+        359.99707452069583
+      ],
+      "flags": {},
+      "order": 10,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "clip",
+          "type": "CLIP",
+          "link": 151
+        }
+      ],
+      "outputs": [
+        {
+          "name": "CONDITIONING",
+          "type": "CONDITIONING",
+          "links": [
+            148,
+            153
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.3.73",
+        "Node name for S&R": "CLIPTextEncode",
+        "enableTabs": false,
+        "hasSecondTab": false,
+        "secondTabOffset": 80,
+        "secondTabText": "Send Back",
+        "secondTabWidth": 65,
+        "tabWidth": 65,
+        "tabXOffset": 10
+      },
+      "widgets_values": [
+        "A towering technological monolith in a cyberpunk cityscape at night, with \"Multi-GPU\" emblazoned across its surface in massive neon blue-green mixed with purple letters that illuminate the surrounding buildings. The text occupies the central third of the frame, crafted from glowing plasma tubes and crackling energy.  Rain-slicked streets below reflect the brilliant signage, while holographic advertisements and flying vehicles populate the background. Moody atmospheric lighting, heavy contrast, photorealistic textures, cinematic color grading. "
+      ],
+      "color": "#232",
+      "bgcolor": "#353"
+    },
+    {
+      "id": 76,
+      "type": "SaveImage",
+      "pos": [
+        9973.333671371092,
+        -959.9988781468267
+      ],
+      "size": [
+        783.3333333333334,
+        575
+      ],
+      "flags": {
+        "collapsed": false
+      },
+      "order": 14,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 156
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.3.71"
+      },
+      "widgets_values": [
+        "starter_multigpu"
+      ]
+    },
+    {
+      "id": 114,
+      "type": "UNETLoaderMultiGPU",
+      "pos": [
+        8440.866118819535,
+        -978.949997949714
+      ],
+      "size": [
+        270,
+        106
+      ],
+      "flags": {},
+      "order": 7,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "MODEL",
+          "type": "MODEL",
+          "links": [
+            147
+          ]
+        }
+      ],
+      "properties": {
+        "aux_id": "pollockjj/ComfyUI-MultiGPU",
+        "ver": "7af256ab6ea86b105777631fce116c4174547362",
+        "Node name for S&R": "UNETLoaderMultiGPU"
+      },
+      "widgets_values": [
+        "z_image_turbo_bf16.safetensors",
+        "default",
+        "cuda:0"
+      ]
+    },
+    {
+      "id": 112,
+      "type": "CLIPLoaderMultiGPU",
+      "pos": [
+        8437.79119373746,
+        -840.6484188479288
+      ],
+      "size": [
+        270,
+        106
+      ],
+      "flags": {},
+      "order": 8,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "CLIP",
+          "type": "CLIP",
+          "links": [
+            151
+          ]
+        }
+      ],
+      "properties": {
+        "aux_id": "pollockjj/ComfyUI-MultiGPU",
+        "ver": "7af256ab6ea86b105777631fce116c4174547362",
+        "Node name for S&R": "CLIPLoaderMultiGPU"
+      },
+      "widgets_values": [
+        "qwen_3_4b.safetensors",
+        "lumina2",
+        "cuda:1"
+      ]
+    }
+  ],
+  "links": [
+    [
+      147,
+      114,
+      0,
+      107,
+      0,
+      "MODEL"
+    ],
+    [
+      148,
+      115,
+      0,
+      108,
+      0,
+      "CONDITIONING"
+    ],
+    [
+      149,
+      116,
+      0,
+      111,
+      0,
+      "LATENT"
+    ],
+    [
+      150,
+      109,
+      0,
+      111,
+      1,
+      "VAE"
+    ],
+    [
+      151,
+      112,
+      0,
+      115,
+      0,
+      "CLIP"
+    ],
+    [
+      152,
+      107,
+      0,
+      116,
+      0,
+      "MODEL"
+    ],
+    [
+      153,
+      115,
+      0,
+      116,
+      1,
+      "CONDITIONING"
+    ],
+    [
+      154,
+      108,
+      0,
+      116,
+      2,
+      "CONDITIONING"
+    ],
+    [
+      155,
+      110,
+      0,
+      116,
+      3,
+      "LATENT"
+    ],
+    [
+      156,
+      111,
+      0,
+      76,
+      0,
+      "IMAGE"
+    ]
+  ],
+  "groups": [
+    {
+      "id": 2,
+      "title": "Step2 - Image size",
+      "bounding": [
+        8423.292447420406,
+        -609.6763617965224,
+        290,
+        220
+      ],
+      "color": "#3f789e",
+      "font_size": 24,
+      "flags": {}
+    },
+    {
+      "id": 3,
+      "title": "Step3 - Prompt",
+      "bounding": [
+        8733.292447420406,
+        -1049.6763617965225,
+        450,
+        660
+      ],
+      "color": "#3f789e",
+      "font_size": 24,
+      "flags": {}
+    },
+    {
+      "id": 4,
+      "title": "Step1 - Load models",
+      "bounding": [
+        8423.292447420406,
+        -1049.6763617965225,
+        290,
+        420
+      ],
+      "color": "#3f789e",
+      "font_size": 24,
+      "flags": {}
+    },
+    {
+      "id": 6,
+      "title": "Step4 - Sampling",
+      "bounding": [
+        9203.292447420406,
+        -1049.6763617965225,
+        570,
+        660
+      ],
+      "color": "#3f789e",
+      "font_size": 24,
+      "flags": {}
+    }
+  ],
+  "config": {},
+  "extra": {
+    "VHS_KeepIntermediate": true,
+    "VHS_MetadataImage": true,
+    "VHS_latentpreview": false,
+    "VHS_latentpreviewrate": 0,
+    "frontendVersion": "1.39.19",
+    "workflowRendererVersion": "LG",
+    "ds": {
+      "scale": 0.8374407695202094,
+      "offset": [
+        -8150.250707826723,
+        1637.4975835478049
+      ]
+    }
+  },
+  "version": 0.4
+}

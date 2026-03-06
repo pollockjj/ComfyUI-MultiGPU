@@ -1,14 +1,28 @@
-import torch
 import folder_paths
 from pathlib import Path
 from nodes import NODE_CLASS_MAPPINGS
 from .device_utils import get_device_list
-from .model_management_mgpu import force_full_system_cleanup
+
+class DeviceSelectorMultiGPU:
+    @classmethod
+    def INPUT_TYPES(s):
+        devices = get_device_list()
+        return {"required": {"device": (devices,)}}
+
+    RETURN_TYPES = ("MULTIGPUDEVICE",)
+    RETURN_NAMES = ("device",)
+    FUNCTION = "select_device"
+    CATEGORY = "multigpu"
+    TITLE = "Device Selector (MultiGPU)"
+
+    def select_device(self, device):
+        """Return the selected device label without side effects."""
+        return (device,)
 
 class UnetLoaderGGUF:
     @classmethod
     def INPUT_TYPES(s):
-        unet_names = [x for x in folder_paths.get_filename_list("unet_gguf")]
+        unet_names = list(folder_paths.get_filename_list("unet_gguf"))
         return {
             "required": {
                 "unet_name": (unet_names,),
@@ -28,7 +42,7 @@ class UnetLoaderGGUF:
 class UnetLoaderGGUFAdvanced(UnetLoaderGGUF):
     @classmethod
     def INPUT_TYPES(s):
-        unet_names = [x for x in folder_paths.get_filename_list("unet_gguf")]
+        unet_names = list(folder_paths.get_filename_list("unet_gguf"))
         return {
             "required": {
                 "unet_name": (unet_names,),
@@ -208,7 +222,7 @@ class DownloadAndLoadFlorence2Model:
     def INPUT_TYPES(s):
         return {"required": {
             "model": (
-                    [ 
+                    [
                     'microsoft/Florence-2-base',
                     'microsoft/Florence-2-base-ft',
                     'microsoft/Florence-2-large',
@@ -428,12 +442,14 @@ class UNetLoaderLP:
     def load_unet(self, unet_name):
         """Load UNet with low-precision LoRA flag for CPU storage optimization."""
         original_loader = NODE_CLASS_MAPPINGS["UNETLoader"]()
-        out = original_loader.load_unet(unet_name)
-        
+        out = original_loader.load_unet(unet_name, "default")
+
         # Set the low-precision LoRA flag on the loaded model
         if hasattr(out[0], 'model'):
             out[0].model._distorch_high_precision_loras = False
-        elif hasattr(out[0], 'patcher') and hasattr(out[0].patcher, 'model'):
-            out[0].patcher.model._distorch_high_precision_loras = False
-            
+        else:
+            patcher = getattr(out[0], "patcher", None)
+            if patcher is not None and hasattr(patcher, "model"):
+                patcher.model._distorch_high_precision_loras = False
+
         return out

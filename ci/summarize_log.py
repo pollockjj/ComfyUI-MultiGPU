@@ -3,8 +3,14 @@
 
 import argparse
 import json
+import sys
 from pathlib import Path
 from typing import Iterator, Dict, Any
+
+
+def _write_stdout(message: str = "") -> None:
+    sys.stdout.write(f"{message}\n")
+    sys.stdout.flush()
 
 
 def load_json_lines(path: Path) -> Iterator[Dict[str, Any]]:
@@ -32,11 +38,11 @@ def main() -> int:
 
     entries = list(load_json_lines(args.logfile))
     if not entries:
-        print("No entries found in log file.")
+        _write_stdout("No entries found in log file.")
         return 0
 
-    print("| Timestamp | Level | Component | Message |")
-    print("| --- | --- | --- | --- |")
+    _write_stdout("| Timestamp | Level | Component | Message |")
+    _write_stdout("| --- | --- | --- | --- |")
     for entry in entries:
         level = entry.get("level", "")
         if args.severity and level not in args.severity:
@@ -50,7 +56,7 @@ def main() -> int:
             continue
         timestamp = entry.get("timestamp", "")
         message = entry.get("message", "").replace("|", "\u2502")
-        print(f"| {timestamp} | {level} | {component} | {message} |")
+        _write_stdout(f"| {timestamp} | {level} | {component} | {message} |")
 
     return 0
 
