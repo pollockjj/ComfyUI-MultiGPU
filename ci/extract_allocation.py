@@ -3,8 +3,14 @@
 
 import argparse
 import json
+import sys
 from pathlib import Path
 from typing import Iterable, Iterator, Dict, Any
+
+
+def _write_stdout(message: str = "") -> None:
+    sys.stdout.write(f"{message}\n")
+    sys.stdout.flush()
 
 
 def load_json_lines(path: Path) -> Iterator[Dict[str, Any]]:
@@ -37,12 +43,12 @@ def main() -> int:
 
     entries = list(load_json_lines(args.logfile))
     if not entries:
-        print("No entries found in log file.")
+        _write_stdout("No entries found in log file.")
         return 0
 
     matched = [entry for entry in entries if is_allocation_event(entry, args.keywords)]
     if not matched:
-        print("No allocation events matched provided keywords.")
+        _write_stdout("No allocation events matched provided keywords.")
         return 0
 
     for entry in matched:
@@ -51,9 +57,9 @@ def main() -> int:
         component = entry.get("component", "")
         header_bits = [bit for bit in (timestamp, category, component) if bit]
         header = " | ".join(header_bits) if header_bits else "allocation"
-        print(f"## {header}")
-        print(entry.get("message", ""))
-        print()
+        _write_stdout(f"## {header}")
+        _write_stdout(entry.get("message", ""))
+        _write_stdout()
 
     return 0
 

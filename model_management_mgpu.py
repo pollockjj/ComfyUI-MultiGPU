@@ -8,10 +8,8 @@ import logging
 import hashlib
 import psutil
 import comfy.model_management as mm
-import gc
 from datetime import datetime, timezone
 import server
-from collections import defaultdict
 
 
 
@@ -46,13 +44,13 @@ def _capture_memory_snapshot():
     """Capture memory snapshot for CPU and all devices"""
     # Import here to avoid circular dependency
     from .device_utils import get_device_list
-    
+
     snapshot = {}
-    
+
     # CPU
     vm = psutil.virtual_memory()
     snapshot["cpu"] = (vm.used, vm.total)
-    
+
     # GPU devices
     devices = [d for d in get_device_list() if d != "cpu"]
     for dev_str in devices:
@@ -85,26 +83,26 @@ def multigpu_memory_log(identifier, tag):
 
     ts = datetime.now(timezone.utc)
     curr = _capture_memory_snapshot()
-    
+
     # Store in series
     if identifier not in _MEM_SNAPSHOT_SERIES:
         _MEM_SNAPSHOT_SERIES[identifier] = []
     _MEM_SNAPSHOT_SERIES[identifier].append((ts, tag, curr))
-    
+
     # Clean aligned format: timestamp + padded tag + memory values
     ts_str = ts.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
     tag_padded = f"{identifier}_{tag}".ljust(35)
-    
+
     parts = []
     cpu_used, _ = curr.get("cpu", (0, 0))
     parts.append(f"cpu|{cpu_used/(1024**3):.2f}")
-    
-    for dev in sorted([k for k in curr.keys() if k != "cpu"]):
+
+    for dev in sorted(k for k in curr if k != "cpu"):
         used, _ = curr[dev]
         parts.append(f"{dev}|{used/(1024**3):.2f}")
-    
+
     logger.mgpu_mm_log(f"{ts_str} {tag_padded} {' '.join(parts)}")
-    
+
     _MEM_SNAPSHOT_LAST[identifier] = (tag, curr)
 
 

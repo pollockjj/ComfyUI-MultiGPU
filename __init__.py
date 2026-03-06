@@ -1,13 +1,12 @@
 import torch
 import logging
-import weakref
 import os
-import copy
 import json
 import importlib
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
+from types import MethodType
 import folder_paths
 import comfy.model_management as mm
 import comfy.memory_management
@@ -17,13 +16,13 @@ from nodes import NODE_CLASS_MAPPINGS as GLOBAL_NODE_CLASS_MAPPINGS
 from .device_utils import (
     get_device_list,
     is_accelerator_available,
-    soft_empty_cache_multigpu,
+    soft_empty_cache_multigpu as soft_empty_cache_multigpu,
 )
 from .model_management_mgpu import (
-    trigger_executor_cache_reset,
-    check_cpu_memory_threshold,
-    multigpu_memory_log,
-    force_full_system_cleanup,
+    trigger_executor_cache_reset as trigger_executor_cache_reset,
+    check_cpu_memory_threshold as check_cpu_memory_threshold,
+    multigpu_memory_log as multigpu_memory_log,
+    force_full_system_cleanup as force_full_system_cleanup,
 )
 
 WEB_DIRECTORY = "./web"
@@ -138,7 +137,7 @@ def mgpu_mm_log_method(self, msg):
             f"[MultiGPU Model Management] {msg}",
             extra={"mgpu_context": {"component": "model_management"}},
         )
-logger.mgpu_mm_log = mgpu_mm_log_method.__get__(logger, type(logger))
+logger.mgpu_mm_log = MethodType(mgpu_mm_log_method, logger)
 
 def _normalize_module_name(module_name):
     """Normalize a custom node directory name for tolerant matching."""
@@ -416,7 +415,7 @@ def _patch_comfy_kitchen_dlpack_device_guard():
     logger.info("[MultiGPU] Applied comfy_kitchen CUDA DLPack device guard patch")
     return True
 
-logger.info(f"[MultiGPU Core Patching] Patching mm.get_torch_device, mm.text_encoder_device, mm.unet_offload_device")
+logger.info("[MultiGPU Core Patching] Patching mm.get_torch_device, mm.text_encoder_device, mm.unet_offload_device")
 logger.info(f"[MultiGPU DEBUG] Initial current_device: {current_device}")
 logger.info(f"[MultiGPU DEBUG] Initial current_text_encoder_device: {current_text_encoder_device}")
 logger.info(f"[MultiGPU DEBUG] Initial current_unet_offload_device: {current_unet_offload_device}")
@@ -457,18 +456,18 @@ from .wrappers import (
     override_class_clip,
     override_class_clip_no_device,
     override_class_with_distorch_gguf,
-    override_class_with_distorch_gguf_v2,
+    override_class_with_distorch_gguf_v2 as override_class_with_distorch_gguf_v2,
     override_class_with_distorch_clip,
     override_class_with_distorch_clip_no_device,
-    override_class_with_distorch,
+    override_class_with_distorch as override_class_with_distorch,
     override_class_with_distorch_safetensor_v2,
     override_class_with_distorch_safetensor_v2_clip,
     override_class_with_distorch_safetensor_v2_clip_no_device,
 )
 from .distorch_2 import (
-    register_patched_safetensor_modelpatcher,
-    analyze_safetensor_loading,
-    calculate_safetensor_vvram_allocation,
+    register_patched_safetensor_modelpatcher as register_patched_safetensor_modelpatcher,
+    analyze_safetensor_loading as analyze_safetensor_loading,
+    calculate_safetensor_vvram_allocation as calculate_safetensor_vvram_allocation,
 )
 
 from .checkpoint_multigpu import (
@@ -569,7 +568,7 @@ def register_and_count(module_names, node_map):
         if check_module_exists(name):
             found = True
             break
-    
+
     count = 0
     if found:
         try:
@@ -582,7 +581,7 @@ def register_and_count(module_names, node_map):
         for key, value in resolved_node_map.items():
             NODE_CLASS_MAPPINGS[key] = value
         count = len(NODE_CLASS_MAPPINGS) - initial_len
-        
+
     registration_data.append({"name": module_names[0], "found": "Y" if found else "N", "count": count})
     return found
 

@@ -19,6 +19,16 @@ DEFAULT_CONNECT_TIMEOUT = int(os.environ.get("COMFYUI_CONNECT_TIMEOUT", "60"))
 DEFAULT_WORKFLOW_TIMEOUT = int(os.environ.get("COMFYUI_WORKFLOW_TIMEOUT", "900"))
 
 
+def _write_stdout(message: str) -> None:
+    sys.stdout.write(f"{message}\n")
+    sys.stdout.flush()
+
+
+def _write_stderr(message: str) -> None:
+    sys.stderr.write(f"{message}\n")
+    sys.stderr.flush()
+
+
 class ComfyWorkflowRunner:
     def __init__(self, host: str, port: int, connect_timeout: int, workflow_timeout: int, secure: bool = False) -> None:
         self.host = host
@@ -78,7 +88,7 @@ class ComfyWorkflowRunner:
             except websocket.WebSocketTimeoutException:
                 continue
             except Exception as exc:  # noqa: BLE001
-                print(f"WebSocket error: {exc}", file=sys.stderr, flush=True)
+                _write_stderr(f"WebSocket error: {exc}")
                 return False
 
             if isinstance(message, bytes):
@@ -94,16 +104,16 @@ class ComfyWorkflowRunner:
 
             if message_type == "execution_error":
                 if data.get("prompt_id") == prompt_id:
-                    print(f"Execution error: {payload}", file=sys.stderr, flush=True)
+                    _write_stderr(f"Execution error: {payload}")
                     return False
             elif message_type == "status" and data.get("status") == "error":
                 if data.get("prompt_id") == prompt_id:
-                    print(f"Status error: {payload}", file=sys.stderr, flush=True)
+                    _write_stderr(f"Status error: {payload}")
                     return False
             elif message_type == "executing":
                 if data.get("prompt_id") == prompt_id and data.get("node") is None:
                     return True
-        print("Workflow timed out", file=sys.stderr, flush=True)
+        _write_stderr("Workflow timed out")
         return False
 
     def run_workflow(self, workflow_path: Path) -> bool:
@@ -126,25 +136,25 @@ class ComfyWorkflowRunner:
             with workflow_path.open("r", encoding="utf-8") as handle:
                 workflow = json.load(handle)
         except (OSError, json.JSONDecodeError) as exc:
-            print(f"Failed to load workflow {workflow_path}: {exc}", file=sys.stderr, flush=True)
+            _write_stderr(f"Failed to load workflow {workflow_path}: {exc}")
             restore_env()
             return False
 
-        print(f"Running workflow {workflow_path}", flush=True)
+        _write_stdout(f"Running workflow {workflow_path}")
         start = time.monotonic()
         try:
             prompt_id = self.queue_prompt(workflow)
             os.environ["MGPU_JSON_PROMPT"] = prompt_id
         except requests.HTTPError as exc:
-            print(f"HTTP error while queueing workflow: {exc}", file=sys.stderr, flush=True)
+            _write_stderr(f"HTTP error while queueing workflow: {exc}")
             restore_env()
             return False
         except requests.RequestException as exc:
-            print(f"Request error while queueing workflow: {exc}", file=sys.stderr, flush=True)
+            _write_stderr(f"Request error while queueing workflow: {exc}")
             restore_env()
             return False
         except RuntimeError as exc:
-            print(str(exc), file=sys.stderr, flush=True)
+            _write_stderr(str(exc))
             restore_env()
             return False
 
@@ -152,7 +162,7 @@ class ComfyWorkflowRunner:
             if not self.wait_for_completion(prompt_id):
                 return False
             duration = time.monotonic() - start
-            print(f"Workflow {workflow_path} completed in {duration:.2f}s", flush=True)
+            _write_stdout(f"Workflow {workflow_path} completed in {duration:.2f}s")
             return True
         finally:
             restore_env()
