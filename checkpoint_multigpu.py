@@ -32,7 +32,7 @@ def patch_load_state_dict_guess_config():
 
 def patched_load_state_dict_guess_config(sd, output_vae=True, output_clip=True, output_clipvision=False,
                                         embedding_directory=None, output_model=True, model_options={},
-                                        te_model_options={}, metadata=None):
+                                        te_model_options={}, metadata=None, disable_dynamic=False):
     """Patched checkpoint loader with MultiGPU and DisTorch2 device placement support."""
     from . import set_current_device, set_current_text_encoder_device, get_current_device, get_current_text_encoder_device
 
@@ -42,7 +42,18 @@ def patched_load_state_dict_guess_config(sd, output_vae=True, output_clip=True, 
     distorch_config = checkpoint_distorch_config.get(config_hash)
 
     if not device_config and not distorch_config:
-        return original_load_state_dict_guess_config(sd, output_vae, output_clip, output_clipvision, embedding_directory, output_model, model_options, te_model_options, metadata)
+        return original_load_state_dict_guess_config(
+            sd,
+            output_vae=output_vae,
+            output_clip=output_clip,
+            output_clipvision=output_clipvision,
+            embedding_directory=embedding_directory,
+            output_model=output_model,
+            model_options=model_options,
+            te_model_options=te_model_options,
+            metadata=metadata,
+            disable_dynamic=disable_dynamic,
+        )
 
     logger.debug("[MultiGPU Checkpoint] ENTERING Patched Checkpoint Loader")
     logger.debug(f"[MultiGPU Checkpoint] Received Device Config: {device_config}")
@@ -73,7 +84,12 @@ def patched_load_state_dict_guess_config(sd, output_vae=True, output_clip=True, 
             logger.warning("[MultiGPU] Warning: Not a standard checkpoint file. Trying to load as diffusion model only.")
             # Simplified fallback for non-checkpoints
             set_current_device(device_config.get('unet_device', original_main_device))
-            diffusion_model = comfy.sd.load_diffusion_model_state_dict(sd, model_options={})
+            diffusion_model = comfy.sd.load_diffusion_model_state_dict(
+                sd,
+                model_options={},
+                metadata=metadata,
+                disable_dynamic=disable_dynamic,
+            )
             if diffusion_model is None:
                 return None
             return (diffusion_model, None, VAE(sd={}), None)
@@ -90,11 +106,11 @@ def patched_load_state_dict_guess_config(sd, output_vae=True, output_clip=True, 
         if unet_dtype is None:
             unet_dtype = mm.unet_dtype(model_params=parameters, supported_dtypes=unet_weight_dtype, weight_dtype=weight_dtype)
 
-        unet_compute_device = device_config.get('unet_device', original_main_device)
+        unet_compute_device = torch.device(device_config.get('unet_device', original_main_device))
         if model_config.scaled_fp8 is not None:
-            manual_cast_dtype = mm.unet_manual_cast(None, torch.device(unet_compute_device), model_config.supported_inference_dtypes)
+            manual_cast_dtype = mm.unet_manual_cast(None, unet_compute_device, model_config.supported_inference_dtypes)
         else:
-            manual_cast_dtype = mm.unet_manual_cast(unet_dtype, torch.device(unet_compute_device), model_config.supported_inference_dtypes)
+            manual_cast_dtype = mm.unet_manual_cast(unet_dtype, unet_compute_device, model_config.supported_inference_dtypes)
         model_config.set_inference_dtype(unet_dtype, manual_cast_dtype)
         logger.info(f"UNet DType: {unet_dtype}, Manual Cast: {manual_cast_dtype}")
 
@@ -103,19 +119,20 @@ def patched_load_state_dict_guess_config(sd, output_vae=True, output_clip=True, 
             clipvision = comfy.clip_vision.load_clipvision_from_sd(sd, model_config.clip_vision_prefix, True)
 
         if output_model:
-            unet_compute_device = device_config.get('unet_device', original_main_device)
+            unet_compute_device = torch.device(device_config.get('unet_device', original_main_device))
             set_current_device(unet_compute_device)
             inital_load_device = mm.unet_inital_load_device(parameters, unet_dtype)
 
             multigpu_memory_log(f"unet:{config_hash[:8]}", "pre-load")
 
             model = model_config.get_model(sd, diffusion_model_prefix, device=inital_load_device)
-            model.load_model_weights(sd, diffusion_model_prefix)
+            model_patcher_class = comfy.model_patcher.ModelPatcher if disable_dynamic else comfy.model_patcher.CoreModelPatcher
+            model_patcher = model_patcher_class(model, load_device=unet_compute_device, offload_device=mm.unet_offload_device())
+            model.load_model_weights(sd, diffusion_model_prefix, assign=model_patcher.is_dynamic())
             multigpu_memory_log(f"unet:{config_hash[:8]}", "post-weights")
 
             logger.mgpu_mm_log("Invoking soft_empty_cache_multigpu before UNet ModelPatcher setup")
             soft_empty_cache_multigpu()
-            model_patcher = comfy.model_patcher.ModelPatcher(model, load_device=unet_compute_device, offload_device=mm.unet_offload_device())
             multigpu_memory_log(f"unet:{config_hash[:8]}", "post-model")
 
             if distorch_config and 'unet_allocation' in distorch_config:
@@ -159,7 +176,7 @@ def patched_load_state_dict_guess_config(sd, output_vae=True, output_clip=True, 
                             out_sd[k] = quant_sd[k]
                         sd = out_sd
 
-            clip_target_device = device_config.get('clip_device', original_clip_device)
+            clip_target_device = torch.device(device_config.get('clip_device', original_clip_device))
             set_current_text_encoder_device(clip_target_device)
 
             clip_target = model_config.clip_target(state_dict=sd)
@@ -170,7 +187,15 @@ def patched_load_state_dict_guess_config(sd, output_vae=True, output_clip=True, 
                     multigpu_memory_log(f"clip:{config_hash[:8]}", "pre-load")
                     soft_empty_cache_multigpu()
                     clip_params = comfy.utils.calculate_parameters(clip_sd)
-                    clip = CLIP(clip_target, embedding_directory=embedding_directory, tokenizer_data=clip_sd, parameters=clip_params, model_options=te_model_options)
+                    clip = CLIP(
+                        clip_target,
+                        embedding_directory=embedding_directory,
+                        tokenizer_data=clip_sd,
+                        parameters=clip_params,
+                        state_dict=clip_sd,
+                        model_options=te_model_options,
+                        disable_dynamic=disable_dynamic,
+                    )
 
                     if distorch_config and 'clip_allocation' in distorch_config:
                         clip_alloc = distorch_config['clip_allocation']
@@ -181,11 +206,6 @@ def patched_load_state_dict_guess_config(sd, output_vae=True, output_clip=True, 
                             logger.info(f"[CHECKPOINT_META] CLIP inner_model id=0x{id(inner_clip):x}")
                             clip.patcher.model._distorch_high_precision_loras = distorch_config.get('high_precision_loras', True)
 
-                    m, u = clip.load_sd(clip_sd, full_model=True) # This respects the patched text_encoder_device
-                    if len(m) > 0:
-                        logger.warning(f"CLIP missing keys: {m}")
-                    if len(u) > 0:
-                        logger.debug(f"CLIP unexpected keys: {u}")
                     logger.info("CLIP Loaded.")
                     multigpu_memory_log(f"clip:{config_hash[:8]}", "post-load")
                 else:
