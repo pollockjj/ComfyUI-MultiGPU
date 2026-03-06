@@ -447,7 +447,7 @@ override_class_with_distorch = override_class_with_distorch_gguf
 
 def override_class(cls):
     """Standard MultiGPU device override for UNet/VAE models"""
-    from . import set_current_device, get_current_device
+    from . import set_current_device, get_current_device, cuda_device_guard
     
     class NodeOverride(cls):
         @classmethod
@@ -466,10 +466,11 @@ def override_class(cls):
             original_device = get_current_device()
             if device is not None:
                 set_current_device(device)
+            target_device = device if device is not None else get_current_device()
             fn = getattr(super(), cls.FUNCTION)
-            out = fn(*args, **kwargs)
             try:
-                return out
+                with cuda_device_guard(target_device, reason=f"{type(self).__name__}.{cls.FUNCTION}"):
+                    return fn(*args, **kwargs)
             finally:
                 set_current_device(original_device)
 
@@ -477,7 +478,13 @@ def override_class(cls):
 
 def override_class_offload(cls):
     """Standard MultiGPU device override for UNet/VAE models"""
-    from . import set_current_device, set_current_unet_offload_device, get_current_device, get_current_unet_offload_device
+    from . import (
+        set_current_device,
+        set_current_unet_offload_device,
+        get_current_device,
+        get_current_unet_offload_device,
+        cuda_device_guard,
+    )
     
     class NodeOverride(cls):
         @classmethod
@@ -500,10 +507,11 @@ def override_class_offload(cls):
                 set_current_device(device)
             if offload_device is not None:
                 set_current_unet_offload_device(offload_device)
+            target_device = device if device is not None else get_current_device()
             fn = getattr(super(), cls.FUNCTION)
-            out = fn(*args, **kwargs)
             try:
-                return out
+                with cuda_device_guard(target_device, reason=f"{type(self).__name__}.{cls.FUNCTION}"):
+                    return fn(*args, **kwargs)
             finally:
                 set_current_device(original_device)
                 set_current_unet_offload_device(original_offload_device)
