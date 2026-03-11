@@ -409,6 +409,11 @@ class WanVideoVAELoader:
         original_loader = NODE_CLASS_MAPPINGS["WanVideoVAELoader"]()
         vae_model = original_loader.loadmodel(model_name, precision, compile_args)
 
+        if isinstance(vae_model, tuple):
+            if len(vae_model) != 1:
+                raise ValueError(f"WanVideoVAELoader returned unexpected tuple length: {len(vae_model)}")
+            vae_model = vae_model[0]
+
         return vae_model, load_device
 
 class WanVideoTinyVAELoader:
@@ -440,6 +445,11 @@ class WanVideoTinyVAELoader:
 
         original_loader = NODE_CLASS_MAPPINGS["WanVideoTinyVAELoader"]()
         vae_model = original_loader.loadmodel(model_name, precision, parallel)
+
+        if isinstance(vae_model, tuple):
+            if len(vae_model) != 1:
+                raise ValueError(f"WanVideoTinyVAELoader returned unexpected tuple length: {len(vae_model)}")
+            vae_model = vae_model[0]
 
         return vae_model, load_device
 
