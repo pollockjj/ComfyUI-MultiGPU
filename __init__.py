@@ -390,7 +390,7 @@ def _patch_comfy_sample_runtime_device():
         logger.info("[MultiGPU] Patched comfy.sample.sample_custom with runtime device guard")
 
 def _patch_comfy_kitchen_dlpack_device_guard():
-    """Guard comfy_kitchen DLPack export by switching to the tensor's CUDA device."""
+    """Guard comfy_kitchen DLPack export with P2P-aware CPU-staging fallback."""
     try:
         comfy_kitchen_cuda = importlib.import_module("comfy_kitchen.backends.cuda")
     except ImportError:
@@ -405,14 +405,43 @@ def _patch_comfy_kitchen_dlpack_device_guard():
     if getattr(wrap_for_dlpack, "_multigpu_cuda_device_guard", False):
         return True
 
+    from .p2p_registry import p2p_registry
+
     def wrap_for_dlpack_with_device_guard(*args, **kwargs):
         tensor = args[0] if args else kwargs.get("tensor")
-        with cuda_device_guard(getattr(tensor, "device", None), reason="comfy_kitchen._wrap_for_dlpack"):
-            return wrap_for_dlpack(*args, **kwargs)
+        tensor_device = getattr(tensor, "device", None)
+        exec_device = get_current_device()
+        exec_device = _coerce_torch_device(exec_device)
+
+        # Determine if cross-device staging is needed
+        needs_staging = False
+        def _valid_cuda(d):
+            return d is not None and d.type == "cuda" and d.index is not None
+
+        if _valid_cuda(tensor_device) and _valid_cuda(exec_device):
+            if tensor_device.index != exec_device.index and not p2p_registry.can_access_peer(tensor_device.index, exec_device.index):
+                needs_staging = True
+
+        if needs_staging:
+            logger.info(
+                f"[MultiGPU DLPack] CPU-staging tensor from cuda:{tensor_device.index} "
+                f"to cuda:{exec_device.index} (P2P unavailable)"
+            )
+            staged_tensor = tensor.to("cpu").to(exec_device)
+            wrap_for_dlpack_with_device_guard._dlpack_staging_count += 1
+            with cuda_device_guard(exec_device, reason="comfy_kitchen._wrap_for_dlpack(staged)"):
+                if args:
+                    return wrap_for_dlpack(staged_tensor, *args[1:], **kwargs)
+                else:
+                    return wrap_for_dlpack(staged_tensor, **kwargs)
+        else:
+            with cuda_device_guard(tensor_device, reason="comfy_kitchen._wrap_for_dlpack"):
+                return wrap_for_dlpack(*args, **kwargs)
 
     wrap_for_dlpack_with_device_guard._multigpu_cuda_device_guard = True
+    wrap_for_dlpack_with_device_guard._dlpack_staging_count = 0
     comfy_kitchen_cuda._wrap_for_dlpack = wrap_for_dlpack_with_device_guard
-    logger.info("[MultiGPU] Applied comfy_kitchen CUDA DLPack device guard patch")
+    logger.info("[MultiGPU] Applied comfy_kitchen CUDA DLPack device guard patch (P2P-aware)")
     return True
 
 logger.info("[MultiGPU Core Patching] Patching mm.get_torch_device, mm.text_encoder_device, mm.unet_offload_device")
