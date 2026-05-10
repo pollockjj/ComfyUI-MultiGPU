@@ -192,80 +192,39 @@ class LTXVLoader:
 class Florence2ModelLoader:
     @classmethod
     def INPUT_TYPES(s):
-        return {"required": {
-            "model": ([item.name for item in Path(folder_paths.models_dir, "LLM").iterdir() if item.is_dir()], {"tooltip": "models are expected to be in Comfyui/models/LLM folder"}),
-            "precision": (['fp16','bf16','fp32'],),
-            "attention": (
-                    [ 'flash_attention_2', 'sdpa', 'eager'],
-                    {
-                    "default": 'sdpa'
-                    }),
-            },
-            "optional": {
-                "lora": ("PEFTLORA",),
-                "convert_to_safetensors": ("BOOLEAN", {"default": False, "tooltip": "Some of the older model weights are not saved in .safetensors format, which seem to cause longer loading times, this option converts the .bin weights to .safetensors"}),
-            }
-        }
+        # Delegate to upstream so the input set tracks Florence2 verbatim
+        # (e.g. post-rewrite removal of `attention` from required) and so
+        # upstream's `model_paths` class attribute gets populated as a
+        # side-effect — `loadmodel` reads it via `Florence2ModelLoader.model_paths.get(model)`.
+        return NODE_CLASS_MAPPINGS["Florence2ModelLoader"].INPUT_TYPES()
 
     RETURN_TYPES = ("FL2MODEL",)
     RETURN_NAMES = ("florence2_model",)
     FUNCTION = "loadmodel"
     CATEGORY = "Florence2"
 
-    def loadmodel(self, model, precision, attention, lora=None, convert_to_safetensors=False):
-        """Load Florence2 vision model with specified precision and attention mode."""
+    def loadmodel(self, *args, **kwargs):
+        """Forward to the upstream Florence2 loader without re-binding args."""
         original_loader = NODE_CLASS_MAPPINGS["Florence2ModelLoader"]()
-        return original_loader.loadmodel(model, precision, attention, lora, convert_to_safetensors)
+        return original_loader.loadmodel(*args, **kwargs)
 
 class DownloadAndLoadFlorence2Model:
     @classmethod
     def INPUT_TYPES(s):
-        return {"required": {
-            "model": (
-                    [
-                    'microsoft/Florence-2-base',
-                    'microsoft/Florence-2-base-ft',
-                    'microsoft/Florence-2-large',
-                    'microsoft/Florence-2-large-ft',
-                    'HuggingFaceM4/Florence-2-DocVQA',
-                    'thwri/CogFlorence-2.1-Large',
-                    'thwri/CogFlorence-2.2-Large',
-                    'gokaygokay/Florence-2-SD3-Captioner',
-                    'gokaygokay/Florence-2-Flux-Large',
-                    'MiaoshouAI/Florence-2-base-PromptGen-v1.5',
-                    'MiaoshouAI/Florence-2-large-PromptGen-v1.5',
-                    'MiaoshouAI/Florence-2-base-PromptGen-v2.0',
-                    'MiaoshouAI/Florence-2-large-PromptGen-v2.0',
-                    'PJMixers-Images/Florence-2-base-Castollux-v0.5'
-                    ],
-                    {
-                    "default": 'microsoft/Florence-2-base'
-                    }),
-            "precision": ([ 'fp16','bf16','fp32'],
-                    {
-                    "default": 'fp16'
-                    }),
-            "attention": (
-                    [ 'flash_attention_2', 'sdpa', 'eager'],
-                    {
-                    "default": 'sdpa'
-                    }),
-            },
-            "optional": {
-                "lora": ("PEFTLORA",),
-                "convert_to_safetensors": ("BOOLEAN", {"default": False, "tooltip": "Some of the older model weights are not saved in .safetensors format, which seem to cause longer loading times, this option converts the .bin weights to .safetensors"}),
-            }
-        }
+        # Delegate to upstream so the model list and signature stay in sync
+        # with kijai/ComfyUI-Florence2 (e.g. PromptGen v2.0 and Castollux
+        # additions, attention parameter relocation).
+        return NODE_CLASS_MAPPINGS["DownloadAndLoadFlorence2Model"].INPUT_TYPES()
 
     RETURN_TYPES = ("FL2MODEL",)
     RETURN_NAMES = ("florence2_model",)
     FUNCTION = "loadmodel"
     CATEGORY = "Florence2"
 
-    def loadmodel(self, model, precision, attention, lora=None, convert_to_safetensors=False):
-        """Download and load Florence2 model from HuggingFace."""
+    def loadmodel(self, *args, **kwargs):
+        """Forward to the upstream HuggingFace downloader/loader."""
         original_loader = NODE_CLASS_MAPPINGS["DownloadAndLoadFlorence2Model"]()
-        return original_loader.loadmodel(model, precision, attention, lora, convert_to_safetensors)
+        return original_loader.loadmodel(*args, **kwargs)
 
 class CheckpointLoaderNF4:
     @classmethod
