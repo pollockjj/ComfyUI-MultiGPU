@@ -791,7 +791,7 @@ gguf_nodes = {
     "TripleCLIPLoaderGGUFMultiGPU": override_class_clip_no_device(TripleCLIPLoaderGGUF),
     "QuadrupleCLIPLoaderGGUFMultiGPU": override_class_clip_no_device(QuadrupleCLIPLoaderGGUF)
 }
-register_and_count(["ComfyUI-GGUF", "comfyui-gguf"], gguf_nodes)
+register_and_count(["ComfyUI-GGUF", "ComfyUI-GGUF-Loader","comfyui-gguf-loader", "comfyui-gguf"], gguf_nodes)
 
 pulid_nodes = {
     "PulidModelLoaderMultiGPU": override_class(PulidModelLoader),
