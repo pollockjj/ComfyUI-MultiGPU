@@ -1,3 +1,10 @@
+> [!IMPORTANT]
+> **This repository will be archived on 30 September 2026. It is no longer maintained.**
+>
+> There will be no further code updates or support from the maintainer.
+>
+> Fork maintainers can announce themselves in the [pinned coordination issue](https://github.com/pollockjj/ComfyUI-MultiGPU/issues/223). The repository is not being transferred and no fork is endorsed.
+
 # ComfyUI-MultiGPU v2: Universal .safetensors and GGUF Multi-GPU Distribution with DisTorch
 <p align="center">
   <img src="https://raw.githubusercontent.com/pollockjj/ComfyUI-MultiGPU/main/assets/distorch_average.png" width="600">
@@ -296,10 +303,10 @@ All workflows have been tested on a 2x 3090 + 1060ti linux setup, a 4070 win 11 
 
 ## Support
 
-If you encounter problems, please [open an issue](https://github.com/pollockjj/ComfyUI-MultiGPU/issues/new). Attach the workflow if possible.
+Maintenance has ended. Until the repository is archived on 30 September 2026, fork maintainers and users can coordinate in the [pinned issue](https://github.com/pollockjj/ComfyUI-MultiGPU/issues/223). Bug reports will not be acted on here. After archiving, the repository remains available to read; future compatibility with ComfyUI, ComfyUI-Manager or other custom nodes is unsupported.
 
 ## Credits
 
-Currently maintained by [pollockjj](https://github.com/pollockjj).
+Maintained by [pollockjj](https://github.com/pollockjj) until September 2026.
 Originally created by [Alexander Dzhoganov](https://github.com/AlexanderDzhoganov).
 With deepest thanks to [City96](https://v100s.net/).
