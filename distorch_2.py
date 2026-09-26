@@ -748,12 +748,44 @@ def calculate_safetensor_vvram_allocation(model_patcher, virtual_vram_str):
     model = model_patcher.model if hasattr(model_patcher, 'model') else model_patcher
     total_memory = 0
 
+    def _param_storage_bytes(mod, name):
+        # Return the on-device byte cost of `mod.<name>` accounting for
+        # `torch.nn.utils.parametrize` registrations.
+        #
+        # When a parametrization (e.g. `weight_norm`, `spectral_norm`, or any
+        # user-registered transform from `torch.nn.utils.parametrizations`)
+        # is applied to a parameter, that name is removed from `_parameters`
+        # and replaced with a *computed* property — `getattr(mod, name)`
+        # synthesizes the tensor on each access from one or more underlying
+        # `originalN` Parameters held in `mod.parametrizations[name]` (a
+        # `ParametrizationList`). The synthesized tensor's shape can differ
+        # from the storage cost (e.g. weight_norm splits storage into a
+        # magnitude vector `original0` plus a direction tensor `original1`),
+        # so summing the underlying parameters is the only generally correct
+        # answer. See pollockjj/ComfyUI-MultiGPU#196 (AceStep audio VAE
+        # uses weight_norm-wrapped Conv1d in `ResBlock1`).
+        parametrizations = getattr(mod, "parametrizations", None)
+        if (
+            isinstance(parametrizations, torch.nn.ModuleDict)
+            and name in parametrizations
+        ):
+            return sum(
+                p.numel() * p.element_size()
+                for p in parametrizations[name].parameters()
+            )
+        # `named_modules()` also yields the `parametrizations` ModuleDict and
+        # its `ParametrizationList` children. `getattr(<ModuleDict>, "weight")`
+        # returns the ParametrizationList (not a Tensor); `getattr(<plist>,
+        # "weight")` returns None. The `isinstance` guard keeps this helper
+        # safe on those passes — no panic, no double-count.
+        val = getattr(mod, name, None)
+        if isinstance(val, torch.Tensor):
+            return val.numel() * val.element_size()
+        return 0
+
     for name, module in model.named_modules():
-        if hasattr(module, "weight"):
-            if module.weight is not None:
-                total_memory += module.weight.numel() * module.weight.element_size()
-            if hasattr(module, "bias") and module.bias is not None:
-                total_memory += module.bias.numel() * module.bias.element_size()
+        total_memory += _param_storage_bytes(module, "weight")
+        total_memory += _param_storage_bytes(module, "bias")
 
     model_size_gb = total_memory / (1024**3)
     new_model_size_gb = max(0, model_size_gb - virtual_vram_gb)
